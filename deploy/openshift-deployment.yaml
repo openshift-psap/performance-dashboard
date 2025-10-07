@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rhaiis-dashboard
+  namespace: rhaiis-dashboard
+  labels:
+    app: rhaiis-dashboard
+    app.kubernetes.io/name: rhaiis-dashboard
+    app.kubernetes.io/component: web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: rhaiis-dashboard
+  template:
+    metadata:
+      labels:
+        app: rhaiis-dashboard
+        app.kubernetes.io/name: rhaiis-dashboard
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+
+      containers:
+        - name: dashboard
+          # TODO: Replace <your quay username> with your actual Quay.io username or organization
+          image: quay.io/<your quay username>/rhaiis-dashboard:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8501
+              name: http
+              protocol: TCP
+
+          # Environment variables
+          env:
+            - name: STREAMLIT_SERVER_HEADLESS
+              value: "true"
+            - name: STREAMLIT_SERVER_PORT
+              value: "8501"
+            - name: STREAMLIT_SERVER_ADDRESS
+              value: "0.0.0.0"
+
+          # Resource limits
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Container security context for OpenShift
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+
+      restartPolicy: Always
