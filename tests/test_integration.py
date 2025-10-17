@@ -364,3 +364,312 @@ class TestJSONImport:
         assert len(df) == len(sample_benchmark_json["benchmarks"])
         assert "output_tok/sec" in df.columns
         assert (df["output_tok/sec"] > 0).all()
+
+
+@pytest.mark.integration
+class TestVersionComparison:
+    """Test the Compare Versions section functionality."""
+
+    def test_version_comparison_data_filtering(self, version_comparison_data):
+        """Test that version comparison correctly filters data for two versions."""
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        df_v1 = version_comparison_data[version_comparison_data["version"] == version_1]
+        df_v2 = version_comparison_data[version_comparison_data["version"] == version_2]
+
+        # Verify filtering worked
+        assert len(df_v1) > 0
+        assert len(df_v2) > 0
+        assert (df_v1["version"] == version_1).all()
+        assert (df_v2["version"] == version_2).all()
+
+    def test_common_model_identification(self, version_comparison_data):
+        """Test identification of common models between versions."""
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        df_v1 = version_comparison_data[version_comparison_data["version"] == version_1]
+        df_v2 = version_comparison_data[version_comparison_data["version"] == version_2]
+
+        # Get common models
+        v1_models = set(df_v1["model"].unique())
+        v2_models = set(df_v2["model"].unique())
+        common_models = v1_models.intersection(v2_models)
+
+        # Verify common models found
+        assert len(common_models) > 0
+        assert "meta-llama/Llama-3.1-8B" in common_models
+
+    def test_common_configuration_identification(self, version_comparison_data):
+        """Test identification of common configurations between versions."""
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        df_v1 = version_comparison_data[version_comparison_data["version"] == version_1]
+        df_v2 = version_comparison_data[version_comparison_data["version"] == version_2]
+
+        # Group by model, accelerator, TP, and intended concurrency
+        v1_configs = (
+            df_v1.groupby(["model", "accelerator", "TP", "intended concurrency"])
+            .size()
+            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
+        )
+        v2_configs = (
+            df_v2.groupby(["model", "accelerator", "TP", "intended concurrency"])
+            .size()
+            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
+        )
+
+        # Find common configurations
+        common_configs = pd.merge(
+            v1_configs,
+            v2_configs,
+            on=["model", "accelerator", "TP", "intended concurrency"],
+            how="inner",
+        )
+
+        # Verify common configurations found
+        assert not common_configs.empty
+        assert "model" in common_configs.columns
+        assert "accelerator" in common_configs.columns
+        assert "TP" in common_configs.columns
+
+    def test_throughput_comparison_calculation(self, version_comparison_data):
+        """Test throughput percentage change calculation."""
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        # Filter for specific model and config
+        model = "meta-llama/Llama-3.1-8B"
+        accelerator = "H200"
+        tp = 1
+        concurrency = 10
+
+        v1_data = version_comparison_data[
+            (version_comparison_data["version"] == version_1)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+            & (version_comparison_data["intended concurrency"] == concurrency)
+        ]
+
+        v2_data = version_comparison_data[
+            (version_comparison_data["version"] == version_2)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+            & (version_comparison_data["intended concurrency"] == concurrency)
+        ]
+
+        # Calculate percentage change (v1 compared to v2)
+        if not v1_data.empty and not v2_data.empty:
+            v1_throughput = v1_data["output_tok/sec"].iloc[0]
+            v2_throughput = v2_data["output_tok/sec"].iloc[0]
+            pct_change = ((v1_throughput - v2_throughput) / v2_throughput) * 100
+
+            # Verify calculation
+            assert isinstance(pct_change, float)
+            # v1: 150.0, v2: 165.0, so v1 is worse by ~9.09%
+            assert pct_change < 0  # v1 is worse
+            assert abs(pct_change - (-9.09)) < 1.0  # Approximately -9.09%
+
+    def test_latency_comparison_calculation(self, version_comparison_data):
+        """Test latency percentage change calculation at max throughput."""
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        # Filter for specific model and accelerator
+        model = "meta-llama/Llama-3.1-8B"
+        accelerator = "H200"
+        tp = 1
+
+        v1_data = version_comparison_data[
+            (version_comparison_data["version"] == version_1)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+        ]
+
+        v2_data = version_comparison_data[
+            (version_comparison_data["version"] == version_2)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+        ]
+
+        # Find max throughput indices
+        v1_max_idx = v1_data["output_tok/sec"].idxmax()
+        v2_max_idx = v2_data["output_tok/sec"].idxmax()
+
+        # Get latency at max throughput
+        v1_latency = v1_data.loc[v1_max_idx, "ttft_p95_s"]
+        v2_latency = v2_data.loc[v2_max_idx, "ttft_p95_s"]
+
+        # Calculate percentage change
+        pct_change = ((v1_latency - v2_latency) / v2_latency) * 100
+
+        # Verify calculation
+        assert isinstance(pct_change, float)
+        # Lower latency is better, positive pct_change means v1 has higher latency (worse)
+
+    def test_summary_statistics_calculation(self, version_comparison_data):
+        """Test calculation of median, max, and min statistics."""
+        version_1 = "vLLM-0.10.0"
+
+        # Filter for specific model and config
+        model = "meta-llama/Llama-3.1-8B"
+        accelerator = "H200"
+        tp = 1
+
+        v1_data = version_comparison_data[
+            (version_comparison_data["version"] == version_1)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+        ]
+
+        # Calculate statistics
+        median_throughput = v1_data["output_tok/sec"].median()
+        max_throughput = v1_data["output_tok/sec"].max()
+        min_throughput = v1_data["output_tok/sec"].min()
+
+        # Verify calculations
+        assert median_throughput > 0
+        assert max_throughput >= median_throughput >= min_throughput
+        assert max_throughput == 200.0  # Based on test data
+        assert min_throughput == 150.0  # Based on test data
+
+    def test_concurrency_finding_for_extremes(self, version_comparison_data):
+        """Test finding concurrency levels where max/min values occur."""
+        version_1 = "vLLM-0.10.0"
+
+        # Filter for specific model and config
+        model = "meta-llama/Llama-3.1-8B"
+        accelerator = "H200"
+        tp = 1
+
+        v1_data = version_comparison_data[
+            (version_comparison_data["version"] == version_1)
+            & (version_comparison_data["model"] == model)
+            & (version_comparison_data["accelerator"] == accelerator)
+            & (version_comparison_data["TP"] == tp)
+        ]
+
+        # Find concurrency at max throughput
+        max_throughput = v1_data["output_tok/sec"].max()
+        max_concurrency = v1_data[v1_data["output_tok/sec"] == max_throughput][
+            "intended concurrency"
+        ].iloc[0]
+
+        # Verify finding
+        assert max_concurrency in [10, 25]  # Should be one of the test concurrencies
+        assert max_concurrency == 25  # Max throughput (200) is at concurrency 25
+
+    def test_improvement_categorization(self):
+        """Test categorization of improvements (better/worse/similar)."""
+        # Test scenarios
+        scenarios = [
+            (10.0, "better"),  # >=5% improvement
+            (-10.0, "worse"),  # >=5% decline
+            (3.0, "similar"),  # <5% difference
+            (-3.0, "similar"),  # <5% difference
+        ]
+
+        for pct_change, expected_category in scenarios:
+            improvement = pct_change  # For throughput
+            if improvement >= 5:
+                category = "better"
+            elif improvement <= -5:
+                category = "worse"
+            else:
+                category = "similar"
+
+            assert category == expected_category
+
+    def test_empty_version_handling(self, version_comparison_data):
+        """Test handling of non-existent version."""
+        version_1 = "non-existent-version"
+
+        df_v1 = version_comparison_data[version_comparison_data["version"] == version_1]
+
+        # Verify empty result
+        assert df_v1.empty
+
+    def test_no_common_configurations(self):
+        """Test handling when no common configurations exist."""
+        # Create data with no overlapping configs
+        data = {
+            "run": ["run1", "run2"],
+            "model": ["model1", "model2"],
+            "accelerator": ["H200", "MI300X"],
+            "version": ["v1", "v2"],
+            "TP": [1, 2],
+            "intended concurrency": [10, 20],
+            "output_tok/sec": [150, 160],
+            "ttft_p95": [50, 55],
+            "ttft_p95_s": [0.05, 0.055],
+            "itl_p95": [20, 22],
+        }
+        df = pd.DataFrame(data)
+
+        df_v1 = df[df["version"] == "v1"]
+        df_v2 = df[df["version"] == "v2"]
+
+        # Try to find common configurations
+        v1_configs = (
+            df_v1.groupby(["model", "accelerator", "TP", "intended concurrency"])
+            .size()
+            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
+        )
+        v2_configs = (
+            df_v2.groupby(["model", "accelerator", "TP", "intended concurrency"])
+            .size()
+            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
+        )
+
+        common_configs = pd.merge(
+            v1_configs,
+            v2_configs,
+            on=["model", "accelerator", "TP", "intended concurrency"],
+            how="inner",
+        )
+
+        # Verify no common configs
+        assert common_configs.empty
+
+    def test_multiple_accelerator_tp_combinations(self, version_comparison_data):
+        """Test handling of multiple accelerator-TP combinations."""
+        model = "meta-llama/Llama-3.1-8B"
+        version_1 = "vLLM-0.10.0"
+        version_2 = "vLLM-0.10.1"
+
+        df_v1 = version_comparison_data[
+            (version_comparison_data["version"] == version_1)
+            & (version_comparison_data["model"] == model)
+        ]
+        df_v2 = version_comparison_data[
+            (version_comparison_data["version"] == version_2)
+            & (version_comparison_data["model"] == model)
+        ]
+
+        # Get unique accelerator-TP combinations
+        v1_configs = df_v1[["accelerator", "TP"]].drop_duplicates()
+        v2_configs = df_v2[["accelerator", "TP"]].drop_duplicates()
+
+        # Find common configurations
+        common_configs = pd.merge(v1_configs, v2_configs, on=["accelerator", "TP"])
+
+        # Verify multiple configs found
+        assert len(common_configs) >= 2  # Should have H200-TP1 and MI300X-TP2
+
+    def test_ttft_seconds_conversion(self, version_comparison_data):
+        """Test that TTFT is properly converted to seconds."""
+        # Verify ttft_p95_s is properly calculated
+        assert "ttft_p95_s" in version_comparison_data.columns
+        assert "ttft_p95" in version_comparison_data.columns
+
+        # Check conversion (ttft_p95 in ms, ttft_p95_s in seconds)
+        for _, row in version_comparison_data.iterrows():
+            expected_seconds = row["ttft_p95"] / 1000
+            assert abs(row["ttft_p95_s"] - expected_seconds) < 0.001

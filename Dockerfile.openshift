@@ -15,7 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy only necessary application files
 COPY dashboard.py .
 COPY dashboard_styles.py .
+COPY mlperf_datacenter.py .
 COPY consolidated_dashboard.csv .
+COPY mlperf.csv .
 
 
 RUN mkdir -p /app/.streamlit && \
