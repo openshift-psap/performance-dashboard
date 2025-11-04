@@ -892,13 +892,21 @@ def create_benchmark_comparison_chart(
     system_col = "System Name"
 
     # Select columns, handling cases where '# of Accelerators' might not exist
+    cols_to_include = [system_col, "Accelerator", "Organization", metric_col]
+
     if "# of Accelerators" in df.columns:
-        plot_df = df[
-            [system_col, "Accelerator", "Organization", "# of Accelerators", metric_col]
-        ].copy()
-    else:
-        plot_df = df[[system_col, "Accelerator", "Organization", metric_col]].copy()
+        cols_to_include.insert(3, "# of Accelerators")
+
+    if "# of Nodes" in df.columns:
+        cols_to_include.insert(3, "# of Nodes")
+
+    plot_df = df[cols_to_include].copy()
+
+    # Fill missing columns
+    if "# of Accelerators" not in plot_df.columns:
         plot_df["# of Accelerators"] = None
+    if "# of Nodes" not in plot_df.columns:
+        plot_df["# of Nodes"] = None
 
     # Only drop rows where the actual metric is missing
     plot_df = plot_df.dropna(subset=[metric_col])
@@ -929,32 +937,40 @@ def create_benchmark_comparison_chart(
     colors = generate_color_palette(len(unique_orgs))
     color_map = dict(zip(unique_orgs, colors))
 
-    # Build customdata array explicitly
-    customdata = plot_df[["Organization", "Accelerator", "# of Accelerators"]].values
-
-    # Create bar chart
+    # Create bar chart with hover_data for proper data alignment
     fig = px.bar(
         plot_df,
         x=metric_col,
         y="System_Display",
         color="Organization",
         color_discrete_map=color_map,
+        hover_data={
+            "Organization": True,
+            "Accelerator": True,
+            "# of Nodes": ":.0f",
+            "# of Accelerators": ":.0f",
+            "System_Display": False,
+            metric_col: ":,.2f",
+        },
         orientation="h",
         title=f"{benchmark} - {scenario} Scenario<br><sub>Higher is Better ↑</sub>",
-        labels={metric_col: f"Performance ({unit})", "System_Display": "System Name"},
+        labels={
+            metric_col: f"Performance ({unit})",
+            "System_Display": "System Name",
+            "# of Nodes": "# of Nodes",
+            "# of Accelerators": "# of Accelerators",
+        },
         height=max(400, len(plot_df) * 25),
     )
 
-    # Set the customdata explicitly
-    fig.update_traces(customdata=customdata)
-
     # Add custom hover template with bolded important metrics
-    # customdata order: Organization, Accelerator, # of Accelerators
+    # hover_data order: Organization, Accelerator, # of Nodes, # of Accelerators, metric
     hover_template = (
         "<b>%{y}</b><br>"
         "Organization: %{customdata[0]}<br>"
         "Accelerator: %{customdata[1]}<br>"
-        "# of Accelerators: %{customdata[2]:.0f}<br>"
+        "# of Nodes: %{customdata[2]}<br>"
+        "# of Accelerators: %{customdata[3]}<br>"
         f"<b>Performance: %{{x:,.2f}} {unit}</b>"
         "<extra></extra>"
     )
