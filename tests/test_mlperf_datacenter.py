@@ -257,7 +257,7 @@ class TestCreateNormalizedComparisonChart:
             "scenarios": ["Offline"],
         }
 
-        fig = create_normalized_comparison_chart(
+        fig, baseline_info = create_normalized_comparison_chart(
             sample_mlperf_df,
             "llama3.1-8b-datacenter",
             "Offline",
@@ -266,7 +266,8 @@ class TestCreateNormalizedComparisonChart:
         )
 
         # Should create a figure for GPU systems (CPU runs excluded)
-        assert fig is not None or fig is None  # May be None if no GPU data
+        assert fig is not None  # Should have GPU data in sample
+        # baseline_info may be None if no valid baseline data after filtering
 
     def test_per_8gpu_node_normalization(self, sample_mlperf_df):
         """Test per 8-GPU node normalization calculation."""
@@ -275,7 +276,7 @@ class TestCreateNormalizedComparisonChart:
             "scenarios": ["Offline"],
         }
 
-        fig = create_normalized_comparison_chart(
+        fig, baseline_info = create_normalized_comparison_chart(
             sample_mlperf_df,
             "llama3.1-8b-datacenter",
             "Offline",
@@ -284,7 +285,8 @@ class TestCreateNormalizedComparisonChart:
         )
 
         # Should create a figure for GPU systems
-        assert fig is not None or fig is None
+        assert fig is not None  # Should have GPU data in sample
+        # baseline_info may be None if no valid baseline data after filtering
 
     def test_cpu_runs_excluded_from_normalization(self, sample_mlperf_df):
         """Test that CPU runs are excluded from normalized charts."""
