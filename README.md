@@ -5,6 +5,7 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 ## Features
 
 ### RHAIIS Dashboard
+
 - **Interactive Performance Plots**: Compare throughput, latency, and efficiency metrics
 - **Cost Analysis**: Calculate cost per million tokens with cloud provider pricing
 - **Performance Rankings**: Identify top performers by throughput and latency
@@ -14,6 +15,7 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 - **Multi-Accelerator Support**: Compare H200, MI300X, and TPU performance
 
 ### MLPerf Dashboard
+
 - **Multi-Version Support**: Compare MLPerf v4.1, v5.0, and v5.1 submissions
 - **Benchmark Comparisons**: Analyze performance across different models and scenarios
 - **Normalized Result Analysis**: Compare systems with different accelerator counts
@@ -173,9 +175,9 @@ See [Code Quality Documentation](docs/CODE_QUALITY.md) for detailed information.
    ```bash
    # Ensure you have the latest consolidated_dashboard.csv in the root directory
    # You can download it from the AWS S3 bucket or generate it using the scripts
-   
+
    # MLPerf data files are included in mlperf-data/ directory
-   # Dataset summaries are in mlperf-data/summaries/ 
+   # Dataset summaries are in mlperf-data/summaries/
    ```
 
 3. **Build and push the container image**:
@@ -256,15 +258,14 @@ These files are version controlled and included in the repository.
 The "Dataset Representation" section uses lightweight CSV summaries of token length distributions:
 
 **Available summaries** (in `mlperf-data/summaries/`):
+
 - `deepseek-r1.csv` - DeepSeek-R1 evaluation dataset
 - `llama3-1-8b-datacenter.csv` - Llama 3.1 8B CNN dataset
 - `llama2-70b-99.csv` - Llama 2 70B Open Orca dataset
 
-
 ### Managing Original Datasets
 
 Original dataset files are stored in `mlperf-data/original/` and are **NOT version controlled** due to their size.
-
 
 **To download and add a new dataset:**
 

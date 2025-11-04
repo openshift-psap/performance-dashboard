@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Helper script to generate CSV summary files from MLPerf dataset files.
+"""Helper script to generate CSV summary files from MLPerf dataset files.
 
 This script processes the original dataset files (pickle, JSON, etc.) and extracts
 only the input_length and output_length information into lightweight CSV files.
@@ -22,7 +21,7 @@ import csv
 import gzip
 import json
 import os
-import pickle
+import pickle  # nosec B403 - Used only for trusted MLCommons official datasets
 
 
 def process_deepseek_r1():
@@ -40,7 +39,7 @@ def process_deepseek_r1():
         import pandas as pd
 
         with open(input_path, "rb") as f:
-            data = pickle.load(f)
+            data = pickle.load(f)  # nosec B301 - Loading trusted MLCommons dataset
 
         # Extract token length columns (deepseek uses tok_input_len and tok_ref_output_len)
         if isinstance(data, pd.DataFrame):
@@ -127,7 +126,7 @@ def process_llama2_70b():
         import pandas as pd
 
         with gzip.open(input_path, "rb") as f:
-            data = pickle.load(f)
+            data = pickle.load(f)  # nosec B301 - Loading trusted MLCommons dataset
 
         # Extract token length columns (llama2-70b uses tok_input_length and tok_output_length)
         if isinstance(data, pd.DataFrame):
