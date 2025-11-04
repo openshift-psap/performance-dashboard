@@ -16,7 +16,7 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 
 ### MLPerf Dashboard
 
-- **Multi-Version Support**: Compare MLPerf v4.1, v5.0, and v5.1 submissions
+- **Multi-Version Support**: Compare MLPerf v5.0 and v5.1 submissions
 - **Benchmark Comparisons**: Analyze performance across different models and scenarios
 - **Normalized Result Analysis**: Compare systems with different accelerator counts
 - **Dataset Representation**: View token length distributions for evaluation datasets
