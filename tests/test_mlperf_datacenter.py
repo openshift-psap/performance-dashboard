@@ -293,7 +293,7 @@ class TestCreateNormalizedComparisonChart:
             "scenarios": ["Offline"],
         }
 
-        fig = create_normalized_comparison_chart(
+        fig, baseline_info = create_normalized_comparison_chart(
             sample_mlperf_df,
             "llama3.1-8b-datacenter",
             "Offline",
@@ -319,12 +319,13 @@ class TestCreateNormalizedComparisonChart:
             }
         )
 
-        fig = create_normalized_comparison_chart(
+        fig, baseline_info = create_normalized_comparison_chart(
             incomplete_df, "test", "Offline", {}, "Per GPU (÷ total GPUs)"
         )
 
         # Should return None due to missing required columns
         assert fig is None
+        assert baseline_info is None
 
     def test_normalization_with_zero_accelerators(self):
         """Test normalization handles zero accelerators correctly."""
@@ -341,7 +342,7 @@ class TestCreateNormalizedComparisonChart:
         }
         zero_acc_df = pd.DataFrame(data)
 
-        fig = create_normalized_comparison_chart(
+        fig, baseline_info = create_normalized_comparison_chart(
             zero_acc_df, "test", "Offline", {}, "Per GPU (÷ total GPUs)"
         )
 

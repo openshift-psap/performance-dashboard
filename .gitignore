@@ -6,11 +6,29 @@ __pycache__/
 # C extensions
 *.so
 
-# data files
+# data files (with exceptions for versioned files)
 *.csv
 *.json
 *.jsonl
 *.jsonl.gz
+
+# Allow specific CSV files that should be version controlled
+!mlperf-data/mlperf-*.csv
+!mlperf-data/summaries/*.csv
+
+mlperf-datasets/
+
+# Ignore original dataset files in mlperf-data (large files, not version controlled)
+mlperf-data/original/*
+!mlperf-data/original/*.py
+!mlperf-data/original/*.md
+
+# Ignore large dataset files anywhere in mlperf-data
+mlperf-data/**/*.pkl
+mlperf-data/**/*.pkl.gz
+mlperf-data/**/*.json
+mlperf-data/**/*.jsonl
+mlperf-data/**/*.jsonl.gz
 
 
 # Distribution / packaging

@@ -835,6 +835,169 @@ def apply_theme_css():
         st.markdown(get_light_mode_css(), unsafe_allow_html=True)
 
 
+def get_mlperf_dashboard_css():
+    """Get MLPerf dashboard specific CSS for tabs, tooltips, and filters.
+
+    Returns:
+        CSS string for MLPerf dashboard styling
+    """
+    theme_mode = st.session_state.get("theme_mode", "auto")
+
+    # Build tooltip CSS based on theme
+    tooltip_css = ""
+    if theme_mode == "light":
+        tooltip_css = """
+        /* Force light mode for all tooltips and popovers */
+        [role="tooltip"],
+        [data-testid="stTooltipContent"],
+        .stTooltipIcon,
+        [data-baseweb="tooltip"],
+        div[class*="tooltip"],
+        div[class*="Tooltip"] {
+            background-color: white !important;
+            color: #262730 !important;
+            border: 1px solid #d1d5db !important;
+        }
+
+        /* Nested divs in tooltips */
+        [role="tooltip"] *,
+        [data-testid="stTooltipContent"] *,
+        [data-baseweb="tooltip"] * {
+            color: #262730 !important;
+        }
+        """
+
+    return f"""
+    <style>
+    /* Make MLPerf tabs bigger */
+    .stTabs [data-baseweb="tab-list"] button {{
+        font-size: 2rem;
+        padding: 1.5rem 3rem;
+        font-weight: 700;
+        height: auto;
+        min-height: 70px;
+    }}
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
+        font-size: 2.1rem;
+    }}
+
+    {tooltip_css}
+
+    /* Fix dropdown/multiselect visibility in light mode */
+    [data-baseweb="popover"] {{
+        background-color: white !important;
+        color: #262730 !important;
+    }}
+
+    [data-baseweb="select"] [data-baseweb="menu"] {{
+        background-color: white !important;
+        color: #262730 !important;
+    }}
+
+    [data-baseweb="menu"] li {{
+        background-color: white !important;
+        color: #262730 !important;
+    }}
+
+    [data-baseweb="menu"] li:hover {{
+        background-color: #f0f2f6 !important;
+        color: #262730 !important;
+    }}
+
+    /* Fix multiselect tags visibility */
+    [data-baseweb="tag"] {{
+        background-color: #ff4b4b !important;
+        color: white !important;
+    }}
+    </style>
+    """
+
+
+def get_mlperf_table_tooltip_css():
+    """Get CSS for MLPerf detailed results table tooltips in light mode.
+
+    Returns:
+        CSS string for table tooltip styling, or empty string if not in light mode
+    """
+    theme_mode = st.session_state.get("theme_mode", "auto")
+
+    if theme_mode == "light":
+        return """
+        <style>
+        /* Override ALL tooltip styling for light mode - very aggressive */
+        [role="tooltip"],
+        [data-testid="stTooltipContent"],
+        [data-baseweb="tooltip"],
+        .stTooltip,
+        div[class*="tooltip"],
+        div[class*="Tooltip"],
+        div[data-baseweb="tooltip"],
+        body [role="tooltip"] {
+            background: white !important;
+            background-color: white !important;
+            color: #262730 !important;
+            border: 1px solid #d1d5db !important;
+        }
+
+        /* Override all child elements */
+        [role="tooltip"] *,
+        [data-testid="stTooltipContent"] *,
+        [data-baseweb="tooltip"] *,
+        div[class*="tooltip"] *,
+        div[class*="Tooltip"] * {
+            background: transparent !important;
+            color: #262730 !important;
+        }
+        </style>
+        """
+    return ""
+
+
+def generate_color_palette(n_colors: int) -> list[str]:
+    """Generate a list of maximally distinct colors for visualization.
+
+    Args:
+        n_colors: Number of colors needed
+
+    Returns:
+        List of hex color strings
+    """
+    base_colors = [
+        "#e6194b",  # Red
+        "#3cb44b",  # Green
+        "#ffe119",  # Yellow
+        "#4363d8",  # Blue
+        "#f58231",  # Orange
+        "#46f0f0",  # Cyan
+        "#f032e6",  # Magenta
+        "#bcf60c",  # Lime
+        "#9a6324",  # Brown
+        "#800000",  # Maroon
+        "#000075",  # Navy
+        "#808080",  # Grey
+        "#ff6347",  # Tomato
+        "#ee82ee",  # Violet
+        "#00ced1",  # DarkTurquoise
+        "#ff1493",  # DeepPink
+        "#1e90ff",  # DodgerBlue
+        "#ff69b4",  # HotPink
+        "#cd5c5c",  # IndianRed
+        "#4b0082",  # Indigo
+        "#7cfc00",  # LawnGreen
+        "#add8e6",  # LightBlue
+        "#ff00ff",  # Magenta2
+        "#800080",  # Purple2
+        "#ff0000",  # Red2
+        "#fa8072",  # Salmon
+        "#2e8b57",  # SeaGreen
+    ]
+
+    if n_colors <= len(base_colors):
+        return base_colors[:n_colors]
+
+    return base_colors
+
+
 def initialize_session_state():
     """Initialize session state variables for styling."""
     # Initialize theme state with auto-detection
