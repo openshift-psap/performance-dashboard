@@ -400,7 +400,7 @@ def render_mlperf_filters(
             else 0
         )
 
-        selected_benchmark = st.selectbox(
+        selected_benchmark: Optional[str] = st.selectbox(
             "1️⃣ Select MLC Model",
             options=all_benchmarks,
             index=default_idx,
@@ -467,7 +467,7 @@ def render_mlperf_filters(
             else:
                 default_scenarios = baseline_scenarios
 
-            selected_scenarios = st.multiselect(
+            selected_scenarios: list[str] = st.multiselect(
                 "2️⃣ Select Scenario(s)",
                 options=available_scenarios,
                 default=default_scenarios,
@@ -546,7 +546,7 @@ def render_mlperf_filters(
             else:
                 default_orgs = baseline_orgs
 
-            selected_orgs = st.multiselect(
+            selected_orgs: list[str] = st.multiselect(
                 "3️⃣ Select Organization(s)",
                 options=available_orgs,
                 default=default_orgs,
@@ -647,7 +647,7 @@ def render_mlperf_filters(
             else:
                 default_accelerators = baseline_accelerators
 
-            selected_accelerators = st.multiselect(
+            selected_accelerators: list[str] = st.multiselect(
                 "4️⃣ Select Accelerator(s)",
                 options=available_accelerators,
                 default=default_accelerators,
@@ -747,7 +747,7 @@ def render_mlperf_filters(
             else:
                 default_acc_counts = baseline_acc_counts
 
-            selected_acc_counts = st.multiselect(
+            selected_acc_counts: list[int] = st.multiselect(
                 "5️⃣ Select Total # of Accelerators",
                 options=available_acc_counts,
                 default=default_acc_counts,
@@ -1890,7 +1890,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
         )
 
         # Normalization selector
-        norm_method = st.radio(
+        norm_method: str = st.radio(
             "Normalize by:",
             options=[
                 "Per GPU (÷ total GPUs)",
