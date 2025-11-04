@@ -1,0 +1,52 @@
+# Ignore the old mlperf-datasets folder (we now use mlperf-data with lightweight CSV summaries)
+mlperf-datasets/
+
+# Ignore any large original dataset files if they exist in mlperf-data
+mlperf-data/**/*.pkl
+mlperf-data/**/*.pkl.gz
+mlperf-data/**/*.json
+mlperf-data/**/*.md5
+mlperf-data/original/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+README.md
+LICENSE
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing and CI
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Logs
+*.log

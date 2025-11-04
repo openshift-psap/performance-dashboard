@@ -4,12 +4,24 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 
 ## Features
 
+### RHAIIS Dashboard
+
 - **Interactive Performance Plots**: Compare throughput, latency, and efficiency metrics
 - **Cost Analysis**: Calculate cost per million tokens with cloud provider pricing
 - **Performance Rankings**: Identify top performers by throughput and latency
 - **Regression Analysis**: Track performance changes between versions
+- **Pareto Tradeoff Analysis**: Visualize performance trade-offs between competing objectives
 - **Runtime Configuration Tracking**: View inference server arguments used
 - **Multi-Accelerator Support**: Compare H200, MI300X, and TPU performance
+
+### MLPerf Dashboard
+
+- **Multi-Version Support**: Compare MLPerf v5.0 and v5.1 submissions
+- **Benchmark Comparisons**: Analyze performance across different models and scenarios
+- **Normalized Result Analysis**: Compare systems with different accelerator counts
+- **Dataset Representation**: View token length distributions for evaluation datasets
+- **Offline vs Server Comparison**: Analyze performance degradation between scenarios
+- **Cross-Version Analysis**: Track how systems perform across MLPerf versions
 
 ## Key Metrics Analyzed
 
@@ -26,11 +38,24 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 performance-dashboard/
 ├── dashboard.py                    # Main dashboard application
 ├── dashboard_styles.py             # CSS styling file
+├── mlperf_datacenter.py            # MLPerf dashboard module
 ├── pyproject.toml                  # Project metadata and dependencies
 ├── requirements.txt                # Python dependencies
 ├── Dockerfile.openshift            # Container build configuration
 ├── .pre-commit-config.yaml         # Pre-commit hooks configuration
 ├── Makefile                        # Development commands
+├── consolidated_dashboard.csv      # RHAIIS benchmark data. Get the latest csv data from the AWS S3 bucket.
+├── mlperf-data/                    # MLPerf data files
+│   ├── mlperf-5.1.csv              # MLPerf v5.1 submission data
+│   ├── mlperf-5.0.csv              # MLPerf v5.0 submission data
+│   ├── summaries/                  # Dataset summaries (version controlled)
+│   │   ├── README.md               # Dataset summary documentation
+│   │   ├── deepseek-r1.csv         # DeepSeek-R1 token length summary
+│   │   ├── llama3-1-8b-datacenter.csv  # Llama 3.1 8B token length summary
+│   │   └── llama2-70b-99.csv       # Llama 2 70B token length summary
+│   └── original/                   # Original datasets (NOT version controlled)
+│       ├── README.md               # Download and usage instructions
+│       └── generate_dataset_summaries.py  # Script to generate CSV summaries
 ├── manual_runs/scripts/            # Data processing scripts
 │   └── import_manual_run_jsons.py  # Import manual benchmark results
 ├── deploy/                         # OpenShift deployment files
@@ -41,12 +66,11 @@ performance-dashboard/
 │   ├── test_data_processing.py     # Data processing unit tests
 │   ├── test_import_script.py       # Import script tests
 │   ├── test_integration.py         # Integration tests
+│   ├── test_mlperf_datacenter.py   # MLPerf module tests
 │   ├── conftest.py                 # Shared fixtures
 │   └── README.md                   # Test documentation
-├── docs/                           # Documentation
-│   └── CODE_QUALITY.md             # Code quality guidelines
-└── data/                           # Data files (excluded from git)
-    └── consolidated_dashboard.csv  # Benchmark data, Get the latest csv data from the AWS S3 bucket.
+└── docs/                           # Documentation
+    └── CODE_QUALITY.md             # Code quality guidelines
 ```
 
 ## Quick Start
@@ -69,7 +93,8 @@ performance-dashboard/
    ```
 
 3. **Add your data**:
-   - Place your `consolidated_dashboard.csv` in the root directory
+   - **RHAIIS data**: Place your `consolidated_dashboard.csv` in the root directory
+   - **MLPerf data**: MLPerf CSV files are included in `mlperf-data/` directory
    - Use the utilities in `manual_runs/scripts/` to process new benchmark data
 
 4. **Run the dashboard**:
@@ -79,6 +104,7 @@ performance-dashboard/
    ```
 
 5. **Access**: Open http://localhost:8501 in your browser
+   - Use the sidebar to switch between "RHAIIS Dashboard" and "MLPerf Dashboard" views
 
 ### Development Environment Setup
 
@@ -149,6 +175,9 @@ See [Code Quality Documentation](docs/CODE_QUALITY.md) for detailed information.
    ```bash
    # Ensure you have the latest consolidated_dashboard.csv in the root directory
    # You can download it from the AWS S3 bucket or generate it using the scripts
+
+   # MLPerf data files are included in mlperf-data/ directory
+   # Dataset summaries are in mlperf-data/summaries/
    ```
 
 3. **Build and push the container image**:
@@ -212,6 +241,40 @@ When you have new data or code changes:
    ```
 
 2. **Consolidate data**: Merge new results with existing CSV file
+
+## MLPerf Data Management
+
+### MLPerf CSV Files
+
+The dashboard supports multiple MLPerf Inference versions:
+
+- **v5.1**: Latest submission results (`mlperf-data/mlperf-5.1.csv`)
+- **v5.0**: Previous version results (`mlperf-data/mlperf-5.0.csv`)
+
+These files are version controlled and included in the repository.
+
+### MLPerf Dataset Summaries
+
+The "Dataset Representation" section uses lightweight CSV summaries of token length distributions:
+
+**Available summaries** (in `mlperf-data/summaries/`):
+
+- `deepseek-r1.csv` - DeepSeek-R1 evaluation dataset
+- `llama3-1-8b-datacenter.csv` - Llama 3.1 8B CNN dataset
+- `llama2-70b-99.csv` - Llama 2 70B Open Orca dataset
+
+### Managing Original Datasets
+
+Original dataset files are stored in `mlperf-data/original/` and are **NOT version controlled** due to their size.
+
+**To download and add a new dataset:**
+
+1. Download the dataset to `mlperf-data/original/`
+2. Update `generate_dataset_summaries.py` with a new processor function
+3. Run the script to generate the summary
+4. Update `mlperf_datacenter.py` to map the model name to the summary file
+
+See `mlperf-data/original/README.md` and `mlperf-data/summaries/README.md` for detailed instructions.
 
 ### Testing
 

@@ -1,0 +1,337 @@
+,,,,,,,,,,,,,,,Benchmark  /  Model MLC  /  Scenario  /  Units,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Inference,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,deepseek-r1,,dlrm-v2-99,,dlrm-v2-99.9,,llama2-70b-99,,,llama2-70b-99.9,,,llama3.1-8b-datacenter,,,llama3.1-405b,,,mixtral-8x7b,,retinanet,,rgat,stable-diffusion-xl,,whisper
+,,,,,,,,,,,,,,,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Interactive,Offline,Server,Interactive,Offline,Server,Interactive,Offline,Server,Interactive,Offline,Server,Offline,Server,Offline,Offline,Server,Offline
+Public ID,Organization,Availability,System Name (click + for details),# of Nodes,Accelerator,# of Accelerators,Code,Availability,Accelerator,Host Processor Core Count,Processor,# of  Processors ,Division/Power,,Samples/s,Queries/s,Samples/s,Queries/s,Samples/s,Queries/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Samples/s,Queries/s,Queries/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Samples/s,Queries/s,Samples/s,Samples/s,Queries/s,Samples/s
+5.1-0001,AMD,available,Supermicro AS-8125GS-TNMR2,1,AMD Instinct MI300X 192GB HBM3,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/AMD/code,available,AMD Instinct MI300X 192GB HBM3,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"27,803.90","24,593.77","8,840.42","27,803.90","24,593.77","8,840.42",,,,,,,"53,017.30","47,804.30",,,,,,
+5.1-0002,AMD,available,QuantaGrid D74A-7U,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/AMD/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,520.40","32,027.57",,"34,520.40","32,027.57",,,,,,,,"68,781.40","59,783.60",,,,,,
+5.1-0003,AMD,available,QuantaGrid D74A-7U,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/AMD/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,,2,2,,2,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,,8,8,,8,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,,1,1,,1,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,555.00",,"18,407.20","34,555.00",,"18,407.20",,,,,,,,,,,,,,
+5.1-0004,AMD,available,Quanta S7PA,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/AMD/code,available,AMD Instinct MI325X 256GB HBM3e,0,2xAMD EPYC 9655,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,18.59,16.20,
+5.1-0005,ASUSTeK,available,ESC8000A-E12 (8x H200-NVL-141GB TensorRT),1,NVIDIA H200-NVL-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/ASUSTeK/code,available,NVIDIA H200-NVL-141GB,32,AMD EPYC 9374F 32-Core Processor,2,Closed ,# of  Processors ,,,2,2,2,2,2,2,,2,2,,,,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,8,8,8,8,8,8,,8,8,,,,,,,,,,8,8,,,,
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,,1,1,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"580,460.00","450,100.00","348,225.00","330,555.00","30,487.00","25,614.68",,"30,490.80","24,554.71",,,,,,,,,,"13,319.50","12,801.90",,,,
+5.1-0006,ASUSTeK,available,ESC_A8A_MI325X_256GBx8,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/ASUSTeK/code,available,AMD Instinct MI325X 256GB HBM3e,48,2x AMD EPYC 9475F,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"33,987.40","31,241.01","15,566.20","33,987.40","31,241.01","15,566.20",,,,,,,"68,121.20","55,800.30",,,,,,
+5.1-0007,ASUSTeK,available,ASUSTeK ESC N8 H200 (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/ASUSTeK/code,available,NVIDIA H200-SXM-141GB,60,INTEL(R) XEON(R) PLATINUM 8580,2,Closed ,# of  Processors ,,,2,2,2,2,2,2,,2,2,,,,,,,,2,2,2,2,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,8,8,8,8,8,8,,8,8,,,,,,,,8,8,8,8,,,,
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,,1,1,,,,,,,,1,1,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"643,122.00","591,162.00","388,058.00","370,066.00","35,075.10","34,193.81",,"34,887.20","29,026.93",,,,,,,,"61,372.40","59,992.80","14,451.70","14,406.00",,,,
+5.1-0008,Azure,available,ND_GB200_v6,1,NVIDIA GB200,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Azure/code,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,,,,,,,2,2,,,,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,4,4,,,,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,,,,,,,1,1,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"52,061.60","46,016.49",,,,,,,,847.23,584.01,,,,,,,,,
+5.1-0009,Broadcom_Supermicro,available,Supermicro SYS-422GA-NBRT-LCC (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Broadcom_Supermicro/code,available,NVIDIA B200-SXM-180GB,192,AMD TURIN 9965,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,2,2,,,,,,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,8,8,,,,,,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,1,1,,,,,,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,"1,650.43","1,243.86",,,,,,,31.84,28.70,"41,927.40"
+5.1-0010,Cisco,available,C240M8-1-node-2S-GNR_86C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,2,2,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,0,0,,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,498.42,400.42,,,,"1,403.84"
+5.1-0011,Cisco,available,Cisco UCS C845A M8 (8x H200-NVL-141GB TensorRT),1,NVIDIA H200-NVL-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA H200-NVL-141GB,64,AMD EPYC 9575F 64-Core Processor,2,Closed ,# of  Processors ,,,,,,,,,,,,,2,2,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,8,8,,,,,,,8,8,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,1,1,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,"50,776.80","38,696.90",,,,,,,"13,263.40","13,202.80",,,,
+5.1-0012,Cisco,available,Cisco UCS C845A M8 (8x L40S-48GB TensorRT),1,NVIDIA L40S,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA L40S,64,AMD EPYC 9575F 64-Core Processor,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,8,8,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,"6,518.39","6,101.41",,,,
+5.1-0013,Cisco,available,Cisco UCS C885A M8 (16x H200-SXM-141GB TensorRT),2,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA H200-SXM-141GB,128,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,8,8,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"68,894.80","66,438.96",,"68,894.80","66,438.96",,,,,"1,086.01",584.29,,,,,,,,,
+5.1-0014,Cisco,available,Cisco UCS C885A M8 (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA H200-SXM-141GB,64,AMD EPYC 9575F 64-Core Processor,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,2,2,,,,,,,2,2,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,,,,,,,8,8,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,,,,,,,1,1,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,548.20","33,163.34","19,621.90","34,548.20","33,163.34","19,621.90","58,304.30","41,291.00",,,,,,,"14,923.30","14,355.80",,19.12,18.37,
+5.1-0015,Cisco,available,HPF HGX System (16xH100-SXM-80GB TensorRT),2,NVIDIA H100-SXM-80GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA H100-SXM-80GB,64,INTEL(R) XEON(R) PLATINUM 8592+,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,8,8,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"62,351.60","61,101.32",,"62,351.60","61,101.32",,,,,783.13,563.37,,,,,,,,,
+5.1-0016,Cisco,available,HPF HGX System (32xH100-SXM-80GB TensorRT),4,NVIDIA H100-SXM-80GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,NVIDIA H100-SXM-80GB,64,INTEL(R) XEON(R) PLATINUM 8592+,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,8,8,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,4,4,,4,4,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"124,879.00","122,273.72",,"124,879.00","122,273.72",,,,,"1,561.57","1,126.94",,,,,,,,,
+5.1-0017,Cisco,available,X210M8-1-node-2S-GNR_86C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Cisco/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"12,503.30","11,801.70",,,,,,,819.62,257.75,,,,,,,501.26,400.42,"16,102.20",,,"1,418.60"
+5.1-0018,Dell,available,PowerEdge R470 (2x L4-PCIE-24GB TensorRT),1,NVIDIA L4-PCIe-24GB,2,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA L4-PCIe-24GB,86,Intel(R) Xeon(R) 6787P,1,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,458.51,428.12,,,,
+5.1-0019,Dell,available,PowerEdge R570 (4x L4-PCIE-24GBx4 TensorRT),1,NVIDIA L4-PCIe-24GB,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA L4-PCIe-24GB,64,Intel(R) Xeon(R) 6761P,1,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,4,4,,4,4,4
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,905.51,813.99,,1.01,0.88,"1,397.01"
+5.1-0020,Dell,available,R770_XEON6787Px2,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"12,421.20","11,801.80",,,,,,,,,,,,,,,,,,,,
+5.1-0021,Dell,available,Dell PowerEdge R7715 (3x H100-NVL-94GB TensorRT),1,NVIDIA H100-NVL-94GB,3,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA H100-NVL-94GB,96,AMD EPYC 9655P,1,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,3
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,"8,301.90"
+5.1-0022,Dell,available,Dell PowerEdge XE7740 (8x L40S TensorRT),1,NVIDIA L40S,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA L40S,172,Intel Xeon 6787P 86-Core Processor,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,2,2,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,8,8,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,"6,509.66","6,101.31",,5.52,5.90,"9,272.00"
+5.1-0023,Dell,available,Dell PowerEdge XE7745 (8x H200-NVL-141GB TensorRT),1,NVIDIA H200-NVL-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA H200-NVL-141GB,96,AMD EPYC 9655 96-Core Processor,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,,,2,2,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,,,8,8,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"31,267.40","29,070.31","16,419.20","31,267.40","29,070.31","16,419.20",,,,,,,,,"13,421.40","12,601.30",,17.09,16.22,"31,674.10"
+5.1-0024,Dell,available,Dell PowerEdge XE9680L (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA B200-SXM-180GB,64,INTEL(R) XEON(R) PLATINUM 8562Y+,2,Closed ,# of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,"30,493.30","13,913.30",,,,,"101,253.00","99,139.18","60,137.60","101,253.00","99,139.18","60,137.60","143,309.00","128,787.00","102,907.00","1,648.03","1,243.17",751.37,,,,,,,,"45,024.20"
+5.1-0025,Dell,available,Dell PowerEdge XE9680L (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA H200-SXM-141GB,120,INTEL(R) XEON(R) PLATINUM 8580,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,2,2,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,8,8,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,1,1,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,588.30","33,161.44",,"34,588.30","33,161.44",,,,,,,,,,"14,542.80","13,603.30",,,,"34,014.30"
+5.1-0026,Dell,available,Dell PowerEdge XE9680 (8xH200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA H200-SXM-141GB,48,INTEL(R) XEON(R) PLATINUM 8568Y+,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,,,8,8,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"35,316.70","33,244.25","21,915.60","35,316.70","33,244.25","21,915.60",,,,,,,,,"14,960.70","13,603.30",,,,
+5.1-0027,Dell,available,Dell Poweredge XE9680,1,AMD Instinct MI300X 192GB HBM3,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,AMD Instinct MI300X 192GB HBM3,32,Intel Xeon 8462Y+,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"27,325.90","24,747.58","8,455.14","27,325.90","24,747.58","8,455.14",,,,,,,"53,333.90","47,801.90",,,,,,
+5.1-0028,Dell,available,Dell PowerEdge XE9685L (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell/code,available,NVIDIA B200-SXM-180GB,192,AMD EPYC 9965 192-Core Processor,2,Closed ,# of  Processors ,2,2,,,,,2,2,,2,2,,2,2,,2,2,2,,,,,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,8,8,,,,,8,8,,8,8,,8,8,,8,8,8,,,,,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,,1,1,,1,1,,1,1,1,,,,,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,"30,766.50","13,963.00",,,,,"102,131.00","99,214.41",,"102,131.00","99,214.41",,"143,904.00","128,794.00",,"1,660.71","1,246.56",751.59,,,,,,32.29,28.47,"44,922.40"
+5.1-0029,Dell_Broadcom,available,Dell PowerEdge XE9680 (8x H200-SXM-141GBVMware ESXi 9.0.0),1,Virtualized NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell_Broadcom/code,available,Virtualized NVIDIA H200-SXM-141GB,48,Intel(R) Xeon(R) Platinum 8568Y,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,8,8,,,,,,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,1,1,,,,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,301.90","33,384.69",,"34,485.70","33,370.58",,,,,547.26,277.33,,,,,,,18.64,17.95,
+5.1-0030,Dell_MangoBoost,available,Dell PowerEdge XE9680 (2x8x MI300X-192GB MangoBoost-LLMBoost),2,AMD Instinct MI300X 192GB HBM3,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell_MangoBoost/code,available,AMD Instinct MI300X 192GB HBM3,80,Intel Xeon Platinum 8460Y+,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"53,572.20","47,561.71",,"53,572.20","47,561.71",,,,,,,,,,,,,,,
+5.1-0031,Dell_MangoBoost,available,Dell PowerEdge XE9680 (8x MI300X-192GB MangoBoost-LLMBoost),1,AMD Instinct MI300X 192GB HBM3,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Dell_MangoBoost/code,available,AMD Instinct MI300X 192GB HBM3,80,Intel Xeon Platinum 8460Y+,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"27,678.10","24,532.70",,"27,678.10","24,532.70",,,,,,,,,,,,,,,
+5.1-0032,GATEOverflow,available,GATE Overflow Intel Sapphire Rapids (2x RTX 4090),1,NVIDIA GeForce RTX 4090,2,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/GATEOverflow/code,available,NVIDIA GeForce RTX 4090,24,Intel(R) Xeon(R) w7-2495X,1,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,2,2,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,"1,760.45","1,448.97",,,,
+5.1-0033,GATEOverflow,available,GATE Overflow Intel Sapphire Rapids (2x RTX 4090),1,NVIDIA GeForce RTX 4090,2,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/GATEOverflow/code,available,NVIDIA GeForce RTX 4090,24,Intel(R) Xeon(R) w7-2495X,1,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,104.95
+5.1-0045,GigaComputing,available,G893-ZX1-AAX2,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/GigaComputing/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,483.20","32,139.41","18,825.90","34,483.20","32,139.41","18,825.90",,,,,,,"69,692.00","58,242.70",,,,,,
+5.1-0046,GigaComputing,available,G894-SD1,1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/GigaComputing/code,available,NVIDIA B200-SXM-180GB,32,Intel(R) Xeon(R) 6745P,2,Closed ,# of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8
+,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,"30,873.90","15,977.90",,,,,"98,607.70","99,065.98","62,851.20","98,607.70","99,065.98","62,851.20","142,136.00","128,660.00","102,829.00","1,625.66","1,244.97",719.41,,,,,"632,483.00",31.58,28.46,"42,565.20"
+5.1-0047,Google,available,NVIDIA DGX B200 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Google/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,,2,2,2,,,,,2,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,,8,8,8,,,,,8,8,8,8
+,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,,1,1,1,,,,,1,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,"31,920.30","14,630.70",,,,,"78,463.50","99,169.78","52,140.70","78,463.50","99,169.78","52,140.70","141,138.00","119,628.00",,"1,655.36","1,246.79",750.45,,,,,"630,364.00",32.12,28.46,"42,755.70"
+5.1-0048,Google,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Google/code,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of  Processors ,,,,,,,2,,2,2,,2,,,,,,,,,2,2,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,,8,8,,8,,,,,,,,,8,8,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,,1,1,,1,,,,,,,,,1,1,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"35,043.70",,"19,554.70","35,043.70",,"19,554.70",,,,,,,,,"14,718.80","13,603.30",,,,"34,088.70"
+5.1-0049,HPE,available,HPE Cray XD670 (8x H200-SXM-141GB),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/HPE/code,available,NVIDIA H200-SXM-141GB,32,Intel(R) Xeon(R) Platinum 8562Y+,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,2,2,2,,,,2,2,2,2,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,8,,,,8,8,8,8,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,1,,,,1,1,1,1,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,964.60","33,164.39","20,432.10","34,797.00","33,144.07","20,356.80","66,036.80","64,914.60","53,475.20",,,,"62,108.40","60,955.10","14,996.60","14,205.60",,,,"34,450.70"
+5.1-0050,HPE,available,HPE ProLiant Compute DL380a Gen12 (10x H200-NVL-141GB),1,NVIDIA H200-NVL-141GB,10,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/HPE/code,available,NVIDIA H200-NVL-141GB,172,Intel(R) Xeon(R) 6787P,2,Closed ,# of  Processors ,,,2,2,2,2,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,10,10,10,10,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"713,817.00","650,211.00","433,591.00","413,565.00",,,,,,,,,,,,,,,,,,,,
+5.1-0051,HPE,available,HPE ProLiant Compute DL380a Gen12 (8x RTX Pro 6000 Blackwell Server Edition),1,NVIDIA RTX PRO 6000 Blackwell Server Edition,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/HPE/code,available,NVIDIA RTX PRO 6000 Blackwell Server Edition,172,Intel(R) Xeon(R) 6787P,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,2,2,2,,,,2,2,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,8,8,8,,,,8,8,,,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,1,1,1,,,,1,1,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"26,205.80","26,005.90",,"26,205.30","26,001.04",,"46,841.80","46,060.00","36,052.30",,,,"32,738.80","30,134.30",,,,11.08,10.88,
+5.1-0052,HPE,available,HPE ProLiant DL385 Gen11 (2x H200-NVL-141GB),1,NVIDIA H200-NVL-141GB,2,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/HPE/code,available,NVIDIA H200-NVL-141GB,48,AMD EPYC 9455,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,"7,925.55"
+5.1-0053,HPE,available,HPE ProLiant Compute DL384 Gen12 (2x GH200-144GB_aarch64),1,NVIDIA GH200 Grace Hopper Superchip 144GB,2,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/HPE/code,available,NVIDIA GH200 Grace Hopper Superchip 144GB,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,,,2,2,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,2,2,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,1,1,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"174,456.00","161,030.00",,,,,,,,,,,,,,,,,,,,,,
+5.1-0055,Intel,available,1-node-2S-GNR_128C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Intel/code,available,N/A,128,INTEL(R) XEON(R) 6980P,2,Closed ,# of  Processors ,,,2,2,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,0,0,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"18,495.50","18,190.10","18,495.50","18,190.10",,,,,,,"1,232.89",450.84,,,,,,,708.25,579.51,"24,121.90",,,"2,187.39"
+5.1-0056,Intel,available,1-node-4x-BMG-Pro-B60-Dual,1,[MAXSUN] MS-Intel Arc Pro B60 Dual 48G Turbo,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Intel/code,available,[MAXSUN] MS-Intel Arc Pro B60 Dual 48G Turbo,36,Intel(R) Xeon(R) w9-3475X,1,Closed ,# of  Processors ,,,,,,,1,1,,1,1,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,4,4,,4,4,,4,4,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"3,009.38","2,110.05",,"3,009.38","2,110.05",,"6,472.37","5,348.45",,,,,,,,,,,,
+5.1-0058,Intel_VMware,available,1-node-2S-GNR_86C_BareMetal,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Intel_VMware/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"12,274.30","11,801.60",,,,,,,797.84,289.97,,,,,,,479.57,365.42,"13,847.60",,,"1,481.52"
+5.1-0059,Intel_VMware,available,1-node-2S-GNR_86C_ESXi_172VCPU-VM,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Intel_VMware/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"11,981.70","11,566.10",,,,,,,774.12,260.99,,,,,,,467.45,361.65,"12,771.00",,,"1,420.50"
+5.1-0060,Lambda,available,NVIDIA DGX B200 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Lambda/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,,,,,,,2,2,,,,,,,,2,2,,,,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,,,,,,,8,8,,,,,,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,,,,,,,1,1,,,,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"102,725.00","99,993.91",,,,,,,,"1,648.60","1,246.79",,,,,,,32.57,28.46,
+5.1-0061,Lenovo,available,ThinkSystem SR680a V3 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Lenovo/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8568Y+,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"102,909.00","99,159.27",,"102,909.00","99,203.92",,,,,,,,,,,,,,,"43,698.60"
+5.1-0062,Lenovo,available,ThinkSystem SR780a V3 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Lenovo/code,available,NVIDIA B200-SXM-180GB,48,Intel(R) Xeon(R) Platinum 8568Y+,2,Closed ,# of  Processors ,,,,,,,,,,,,,2,2,,2,2,2,,,,,2,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,8,8,,8,8,8,,,,,8,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,1,1,,1,1,1,,,,,1,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,"146,960.00","128,689.00",,"1,637.11","1,249.04",752.62,,,,,"618,486.00",31.78,28.46,"44,365.80"
+5.1-0063,Lenovo,available,ThinkSystem_SR650_V4_GNR_86C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Lenovo/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"12,230.00","11,991.50",,,,,,,776.85,275.78,,,,,,,468.73,375.46,"13,621.20",,,"1,411.80"
+5.1-0065,MangoBoost,available,MangoBoost Heterogeneous Cluster (4x8x MI300X-192GB 2x8x MI325X-256GB LLMBoost),6,AMD Instinct MI300X 192GB HBM3 (x32) AMD Instinct MI325X 256GB HBM3e (x16),8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/MangoBoost/code,available,AMD Instinct MI300X 192GB HBM3 (x32) AMD Instinct MI325X 256GB HBM3e (x16),0,AMD EPYC 9534 (on MI300X node) AMD EPYC 9655 (on MI325X node),2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,6,6,,6,6,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"169,197.00","153,076.32",,"169,197.00","153,076.32",,,,,,,,,,,,,,,
+5.1-0066,MangoBoost,available,Supermicro AS-8125GS-TNMR2 (8x MI300X-192GB MangoBoost-LLMBoost),1,AMD Instinct MI300X 192GB HBM3,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/MangoBoost/code,available,AMD Instinct MI300X 192GB HBM3,64,AMD EPYC 9534,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"27,854.40","24,860.48",,"27,854.40","24,860.48",,,,,,,,,,,,,,,
+5.1-0067,MangoBoost,available,MangoBoost (8x MI325X-256GB LLMBoost),1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/MangoBoost/code,available,AMD Instinct MI325X 256GB HBM3e,96,AMD EPYC 9655,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,454.40","31,671.85",,"34,454.40","31,671.85",,,,,,,,,,,,,,,
+5.1-0068,MiTAC,available,G8825Z5,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/MiTAC/code,available,AMD Instinct MI325X 256GB HBM3e,128,AMD EPYC 9755,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"33,703.00","31,755.66","18,846.10","33,703.00","31,755.66","18,846.10",,,,,,,"67,964.40","57,087.10",,,,,,
+5.1-0069,NVIDIA,available,NVIDIA DGX B200 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/NVIDIA/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8
+,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,"33,379.00","18,592.20",,,,,"101,527.00","99,123.04","59,545.40","101,527.00","99,123.04","59,545.40","136,752.00","128,541.00","102,903.00","1,624.11","1,240.42",751.37,,,,,"651,230.00",31.78,28.46,"45,333.40"
+5.1-0070,NVIDIA,available,(4x GB200-186GB_aarch64 TensorRT),1,NVIDIA GB200,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/NVIDIA/code,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,4,4,4,4,4,4,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"51,736.90","49,359.61","29,745.60","51,736.90","49,359.61","29,745.60",,,,,,,,,,,,,,
+5.1-0071,NVIDIA,available,(72x GB200-186GB_aarch64 TensorRT),18,NVIDIA GB200,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/NVIDIA/code,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,2,2,,,,,,,,,,,,,,2,2,2,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,4,4,,,,,,,,,,,,,,4,4,4,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,18,18,,,,,,,,,,,,,,18,18,18,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,"289,712.00","167,578.00",,,,,,,,,,,,,,"14,774.30","11,614.30","9,921.02",,,,,,,,
+5.1-0072,NVIDIA,available,(72x GB300-288GB_aarch64 TensorRT),18,NVIDIA GB300,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/NVIDIA/code,available,NVIDIA GB300,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,2,2,,,,,,,,,,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,4,4,,,,,,,,,,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,18,18,,,,,,,,,,,,,,18,18,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,"420,659.00","209,328.00",,,,,,,,,,,,,,"16,104.10","12,248.40",,,,,,,,,
+5.1-0073,Nebius,available,Nebius B200 (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Nebius/code,available,NVIDIA B200-SXM-180GB,60,Intel(R) Xeon(R) Platinum 8580,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,2,2,2,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,8,8,8,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,1,1,1,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"101,246.00","101,610.58","59,622.70","101,246.00","101,610.58","59,622.70",,,,"1,659.50","1,279.53",770.67,,,,,,,,
+5.1-0074,Nebius,available,Nebius GB200 (4x GB200-186GB_aarch64 TensorRT),1,NVIDIA GB200,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Nebius/code,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,2,2,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,4,4,,4,4,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,1,1,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"49,683.50","49,215.88",,"49,683.50","49,215.88",,,,,855.82,596.11,,,,,,,,,
+5.1-0075,Nebius,available,Nebius H200 (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Nebius/code,available,NVIDIA H200-SXM-141GB,48,Intel(R) Xeon(R) Platinum 8468,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,2,2,2,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,8,8,8,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,1,1,1,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"34,812.10","34,029.38","23,079.90","34,812.10","34,029.38","23,079.90",,,,552.75,295.36,202.78,,,,,,,,
+5.1-0076,Oracle,available,BM.GPU.B200.8,1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Oracle/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,,,,,,,,,,,,,2,2,,2,2,,,,,,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,8,8,,8,8,,,,,,8,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,1,1,,1,1,,,,,,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,"145,789.00","128,649.00",,"1,615.85","1,243.67",,,,,,"614,344.00",,,"43,164.30"
+5.1-0077,Oracle,available,BM.GPU.GB200.4,1,NVIDIA GB200,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Oracle/code,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,4
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,"22,272.60"
+5.1-0078,Quanta_Cloud_Technology,available,1-node-2S-GNR_86C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Quanta_Cloud_Technology/code,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,,,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,,,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,,,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"12,560.10","11,801.50",,,,,,,,,,,,,,,458.85,365.41,"12,927.40",,,"1,414.52"
+5.1-0079,Quanta_Cloud_Technology,available,QuantaGrid D74H-7U (8x H200-SXM-141GB TensorRT),1,NVIDIA H200-SXM-141GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Quanta_Cloud_Technology/code,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480+,2,Closed ,# of  Processors ,,,2,2,2,2,2,2,,2,2,,2,2,2,2,2,,,,2,2,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,8,8,8,8,8,8,,8,8,,8,8,8,8,8,,,,8,8,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,,1,1,,1,1,1,1,1,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"647,861.00","585,168.00","389,330.00","370,068.00","35,091.50","33,356.25",,"34,876.40","33,352.57",,"56,917.30","57,970.40","54,117.60",550.11,295.52,,,,"14,539.50","13,603.30",,19.19,18.42,"33,363.80"
+5.1-0080,Quanta_Cloud_Technology,available,D75E-4U_H200-NVL-141GBx4,1,NVIDIA H200-NVL-141GB,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Quanta_Cloud_Technology/code,available,NVIDIA H200-NVL-141GB,86,Intel(R) Xeon(R) Platinum 6787P,2,Closed ,# of  Processors ,,,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,2,2,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,4,4,4,4,4,4,4,4,4,4,4,4,4,,,,,,4,4,,4,4,4
+,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,1,1,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,"263,090.00","202,030.00","159,060.00","154,025.00","15,057.60","13,736.12","6,709.74","15,167.10","13,730.69","6,712.97","25,180.80","25,753.80","21,944.10",,,,,,"6,618.99","6,600.50",,8.36,7.83,"15,061.70"
+5.1-0081,Quanta_Cloud_Technology,available,D75T-7U_8xMI325X,1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Quanta_Cloud_Technology/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9755,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"32,760.50","31,401.37","17,633.00","32,760.50","31,401.37","17,633.00",,,,,,,"68,218.70","59,040.80",,,,,,
+5.1-0082,RedHat,available,IBM Cloud gx3 instance 1xL40S-PCIE-48GB vLLM,1,NVIDIA L40S,1,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/RedHat/code,available,NVIDIA L40S,48,Intel Xeon Processor (SapphireRapids),2,Closed ,# of  Processors ,,,,,,,,,,,,,2,2,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,"1,642.22","1,207.14",,,,,,,,,,,,
+5.1-0083,RedHat,available,Dell PowerEdge XE8640 (1xH100-SXM-80GB vLLM),1,NVIDIA H100-SXM-80GB,1,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/RedHat/code,available,NVIDIA H100-SXM-80GB,64,Intel Xeon 6448Y 2.1GHz(2x 32 cores each),2,Closed ,# of  Processors ,,,,,,,,,,,,,2,2,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,1,1,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,"5,777.08","5,103.99",,,,,,,,,,,,
+5.1-0084,Supermicro,available,1-node-2S-GNR_128C,1,N/A,0,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro/code,available,N/A,128,INTEL(R) XEON(R) 6980P,2,Closed ,# of  Processors ,,,,,2,2,,,,,,,2,2,,,,,,,2,2,2,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,0,0,,,,,,,0,0,,,,,,,0,0,0,,,0
+,,,,,,,,,,,,,,# of Nodes,,,,,1,1,,,,,,,1,1,,,,,,,1,1,1,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,"18,928.60","18,704.20",,,,,,,"1,195.93",450.87,,,,,,,716.68,579.51,"25,182.20",,,"2,196.65"
+5.1-0085,Supermicro,available,AS-8126GS-TNMR (8x MI325X),1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"33,468.40","31,646.17",,"33,468.40","31,646.17",,,,,,,,,,,,,,,
+5.1-0086,Supermicro,available,AS-4126GS-NBR-LCC (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro/code,available,NVIDIA B200-SXM-180GB,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,2,2,2,,,,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,8,8,8,,,,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,,1,1,,1,1,1,,,,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"101,516.00","99,186.48",,"101,865.00","99,182.26",,"142,955.00","128,701.00","122,269.00",,,,,,,,,,,"44,708.60"
+5.1-0087,Supermicro,available,SYS-422GS-NBRT-LCC (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro/code,available,NVIDIA B200-SXM-180GB,86,Intel(R) Xeon(R) 6787P,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,2,2,,2,2,2,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,,8,8,8,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,,1,1,1,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"102,498.00","99,181.07","60,131.00","101,696.00","99,179.63","60,119.90","141,056.00","122,331.00",,"1,650.51","1,244.69",750.94,,,,,,,,"43,615.30"
+5.1-0088,Supermicro,available,SYS-A21GE-NBRT (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro_1/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,,,,,,,,,,2,2,2,,,,2,2,2,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,8,8,8,,,,8,8,8,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,1,1,1,,,,1,1,1,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,"101,359.00","99,128.19","57,418.00",,,,"1,621.72","1,242.84",750.41,,,,,,,,"44,140.90"
+5.1-0089,Supermicro,available,SYS-422GA-NBRT-LCC (8x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro_2/code,available,NVIDIA B200-SXM-180GB,72,Intel(R) Xeon(R) 6960P,2,Closed ,# of  Processors ,,,,,,,,,,2,2,2,,,,2,2,2,,,,,,,,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,8,8,8,,,,8,8,8,,,,,,,,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,1,1,1,,,,1,1,1,,,,,,,,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,"101,859.00","99,195.83","60,140.30",,,,"1,641.34","1,240.44",751.39,,,,,,,,"42,827.10"
+5.1-0090,Supermicro_MangoBoost,available,Supermicro AS-8126GS-TNMR (2x8x MI325X-256GB MangoBoost-LLMBoost),2,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro_MangoBoost/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"65,320.10","57,391.79",,"65,320.10","57,391.79",,,,,,,,,,,,,,,
+5.1-0091,Supermicro_MangoBoost,available,Supermicro AS-8126GS-TNMR (2x8x MI325X-256GB MangoBoost-LLMBoost) and Supermicro AS-8125GS-TNMR2 (1x8x MI300X-192GB MangoBoost-LLMBoost),3,AMD Instinct MI325X 256GB HBM3E (x16) AMD Instinct MI300X 192GB HBM3 (x8),8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Supermicro_MangoBoost/code,available,AMD Instinct MI325X 256GB HBM3E (x16) AMD Instinct MI300X 192GB HBM3 (x8),64,AMD EPYC 9575F (MI325X) AMD EPYC 9654 (MI300X),2,Closed ,# of  Processors ,,,,,,,2,2,,2,2,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,3,3,,3,3,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"92,158.20","80,594.88",,"92,158.20","80,594.88",,,,,,,,,,,,,,,
+5.1-0092,TheStage AI,available,Nebius H100 (8x H100-SXM-80GB TheStageAI),1,NVIDIA H100-SXM-80GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/The_Stage/code,available,NVIDIA H100-SXM-80GB,128,Intel(R) Xeon(R) Platinum 8468,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,8,8,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,18.10,17.86,
+5.1-0093,University-of-Florida,available,NVIDIA DGX B200 (1x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,1,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/University-of-Florida/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,2,2,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,1,1,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,1,1,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,3.99,3.48,
+5.1-0094,University-of-Florida,available,NVIDIA DGX B200 (1x B200-SXM-180GB TensorRT),1,NVIDIA B200-SXM-180GB,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/University-of-Florida/code,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,2,2,2
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,8,8,8
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,1,1,1
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,31.94,28.46,"41,918.30"
+5.1-0095,Vultr,available,Supermicro AS -8126GS-TNMR (8x MI325X),1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Vultr/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,2,2,2,2,2,2,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,8,8,8,8,8,8,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"33,762.50","30,339.40","17,709.60","33,762.50","30,339.40","17,709.60",,,,,,,,,,,,,,
+5.1-0096,Vultr,available,Supermicro AS -8126GS-TNMR (8x MI325X),1,AMD Instinct MI325X 256GB HBM3e,8,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/Vultr/code,available,AMD Instinct MI325X 256GB HBM3e,64,AMD EPYC 9575F,2,Closed ,# of  Processors ,,,,,,,,,,,,,,,,,,,2,2,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,,,,,,,,,,,,,,,,,,,8,8,,,,,,
+,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,1,1,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,"70,035.60","56,653.70",,,,,,
+5.1-0097,CoreWeave,preview,(8x GB300-288GB_aarch64 TensorRT),2,NVIDIA GB300,4,https://github.com/mlcommons/inference_results_v5.1/tree/main/closed/CoreWeave/code,preview,NVIDIA GB300,144,NVIDIA Grace CPU,2,Closed ,# of  Processors ,2,2,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Accelerators,4,4,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,# of Nodes,2,2,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,Avg. Result at System Name,"48,047.00","22,545.10",,,,,,,,,,,,,,,,,,,,,,,,

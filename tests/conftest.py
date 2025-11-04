@@ -56,6 +56,95 @@ def sample_csv_data():
 
 
 @pytest.fixture
+def version_comparison_data():
+    """Provide sample data for testing version comparison functionality."""
+    data = {
+        "run": [
+            "run1",
+            "run2",
+            "run3",
+            "run4",
+            "run5",
+            "run6",
+            "run7",
+            "run8",
+            "run9",
+            "run10",
+        ],
+        "accelerator": [
+            "H200",
+            "H200",
+            "H200",
+            "H200",
+            "MI300X",
+            "MI300X",
+            "MI300X",
+            "MI300X",
+            "H200",
+            "H200",
+        ],
+        "model": [
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+            "mistralai/Mistral-7B",
+            "mistralai/Mistral-7B",
+            "meta-llama/Llama-3.1-8B",
+            "meta-llama/Llama-3.1-8B",
+        ],
+        "version": [
+            "vLLM-0.10.0",
+            "vLLM-0.10.0",
+            "vLLM-0.10.1",
+            "vLLM-0.10.1",
+            "vLLM-0.10.0",
+            "vLLM-0.10.1",
+            "vLLM-0.10.0",
+            "vLLM-0.10.1",
+            "vLLM-0.10.0",
+            "vLLM-0.10.1",
+        ],
+        "TP": [1, 1, 1, 1, 2, 2, 1, 1, 2, 2],
+        "intended concurrency": [10, 25, 10, 25, 10, 10, 10, 10, 10, 10],
+        "measured_concurrency": [10, 25, 10, 25, 10, 10, 10, 10, 10, 10],
+        "output_tok/sec": [
+            150.0,
+            200.0,
+            165.0,
+            210.0,
+            180.0,
+            190.0,
+            140.0,
+            145.0,
+            170.0,
+            180.0,
+        ],
+        "ttft_p95": [50.0, 60.0, 48.0, 58.0, 55.0, 52.0, 60.0, 59.0, 53.0, 50.0],
+        "ttft_p95_s": [
+            0.05,
+            0.06,
+            0.048,
+            0.058,
+            0.055,
+            0.052,
+            0.06,
+            0.059,
+            0.053,
+            0.05,
+        ],
+        "itl_p95": [20.0, 25.0, 19.0, 24.0, 22.0, 21.0, 25.0, 24.5, 21.0, 20.0],
+        "prompt toks": [1000] * 10,
+        "output toks": [1000] * 10,
+        "successful_requests": [95] * 10,
+        "errored_requests": [5] * 10,
+    }
+    return pd.DataFrame(data)
+
+
+@pytest.fixture
 def sample_benchmark_json():
     """Provide sample benchmark JSON data for testing."""
     return {

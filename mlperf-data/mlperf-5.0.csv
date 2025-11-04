@@ -1,0 +1,281 @@
+,,,,,,,,,,,,,,,,Benchmark  /  Model MLC  /  Scenario  /  Units,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,Inference,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,3d-unet-99,3d-unet-99.9,dlrm-v2-99,,dlrm-v2-99.9,,gptj-99,,gptj-99.9,,llama2-70b-99,,llama2-70b-99.9,,llama2-70b-interactive-99,,llama2-70b-interactive-99.9,,llama3.1-405b,,mixtral-8x7b,,resnet,,retinanet,,rgat,stable-diffusion-xl,
+,,,,,,,,,,,,,,,,Offline,Offline,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Server,Offline,Offline,Server
+Public ID,Organization,Availability,System Name (click + for details),# of Nodes,Processor (click + for details),# of  Processors ,Accelerator (click + for details),# of Accelerators,Availability,Accelerator (click + for details),Host Processor Core Count,Processor (click + for details),Sum of # of  Processors ,Division/Power,,Samples/s,Samples/s,Samples/s,Queries/s,Samples/s,Queries/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Tokens/s,Samples/s,Queries/s,Tokens/s,Tokens/s,Samples/s,Queries/s,Samples/s,Queries/s,Samples/s,Samples/s,Queries/s
+5.0-0001,AMD,available,QuantaGrid D74A-7U,1,AMD EPYC 9575F,2,AMD Instinct MI325X 256GB HBM3E,8,available,AMD Instinct MI325X 256GB HBM3E,64,AMD EPYC 9575F,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"33,928.10","30,724.51","33,928.10","30,724.51",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0002,AMD,available,Quanta S7PA,1,2xAMD EPYC 9655,2,AMD Instinct MI325X 256GB HBM3E,8,available,AMD Instinct MI325X 256GB HBM3E,0,2xAMD EPYC 9655,2,Closed ,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,,,8,8
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,,,17.10,16.18
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,,,2,2
+5.0-0003,ASUSTeK,available,ASUSTeK ESC8000A-E13P (8x H200-NVL-141GB NVLink TensorRT),1,AMD EPYC 9475F 48-Core Processo,2,NVIDIA H200-NVL-141GB,8,available,NVIDIA H200-NVL-141GB,48,AMD EPYC 9475F 48-Core Processo,2,Closed ,# of Accelerators,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"326,670.00","525,118.00","325,823.00","300,029.00","18,113.40","17,953.90","18,113.40","17,953.90","27,765.30","27,417.30","27,765.30","27,417.30",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0004,ASUSTeK,available,ASUSTeK ESC8000A-E13P (8x H200-NVL-141GB TensorRT),1,AMD EPYC 9475F 48-Core Processo,2,NVIDIA H200-NVL-141GB,8,available,NVIDIA H200-NVL-141GB,48,AMD EPYC 9475F 48-Core Processo,2,Closed ,# of Accelerators,8,8,,,,,,,,,,,,,,,,,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,,,,,,,,,,,,,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,49.54,49.54,,,,,,,,,,,,,,,,,,,,,"680,738.00","540,125.00","11,263.80","11,988.90",,16.03,14.81
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,,,,,,,,,,,,,,,,,2,2,2,2,,2,2
+5.0-0005,ASUSTeK,available,ASUSTeK ESC A8A-E12U (8x MI325x-256GB ),1,2x AMD EPYC 9475F,2,AMD Instinct MI325X 256GB HBM3E,8,available,AMD Instinct MI325X 256GB HBM3E,48,2x AMD EPYC 9475F,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"33,366.50","30,086.52","33,366.50","30,086.52",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0006,ASUSTeK,available,ASUSTeK ESC N8 (8x H200-SXM-141GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8558,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,48,INTEL(R) XEON(R) PLATINUM 8558,2,Closed ,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"21,171.30","21,533.90","21,171.30","21,533.90","34,807.10","33,037.22","34,807.10","33,037.22","34,809.30","19,418.50","34,809.30","19,418.50",557.10,291.18,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,,
+5.0-0007,Broadcom_Supermicro,available,SYS-821GE-TNRT (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8568Y+,2,Virtualized NVIDIA H100-SXM-80GB,8,available,Virtualized NVIDIA H100-SXM-80GB,48,Intel(R) Xeon(R) Platinum 8568Y+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,,,,,,,,,,,,,,,8,8,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,,,,,,,,,,,,,,,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,51.38,51.38,,,,,"19,936.50","19,318.90","19,936.50","19,318.90",,,,,,,,,,,,,,,"14,313.30","12,869.80",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,,,,,,,,,,,,,,,2,2,,,
+5.0-0008,Cisco,available,1-node-2S-GNR_86C,1,INTEL(R) XEON(R) 6787P,2,N/A,0,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of Accelerators,,0,,,,,,,0,0,,,,,,,,,,,,,0,0,0,0,,,
+,,,,,,,,,,,,,,,# of Nodes,,1,,,,,,,1,1,,,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,2.26,,,,,,,315.39,168.69,,,,,,,,,,,,,"31,559.20","27,988.00",476.59,350.92,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,2,,,,,,,2,2,,,,,,,,,,,,,2,2,2,2,,,
+5.0-0009,Cisco,available,Cisco UCS C245 M8 (2x H100NVL-PCIe-94GB),1,AMD EPYC 9224,2,NVIDIA H100-NVL-94GB,2,available,NVIDIA H100-NVL-94GB,24,AMD EPYC 9224,2,Closed ,# of Accelerators,2,,2,2,,,2,2,,,2,2,,,,,,,,,,,2,2,2,2,,,
+,,,,,,,,,,,,,,,# of Nodes,1,,1,1,,,1,1,,,1,1,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,10.83,,"103,047.00","96,987.80",,,"3,789.42","3,305.27",,,"3,741.32","3,337.55",,,,,,,,,,,"124,595.00","109,989.00","2,677.13","2,400.54",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,,2,2,,,2,2,,,2,2,,,,,,,,,,,2,2,2,2,,,
+5.0-0010,Cisco,available,Cisco UCS C885A M8 (8x H100-SXM-80GB TensorRT),1,AMD EPYC 9554 64-Core Processor,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,64,AMD EPYC 9554 64-Core Processor,2,Closed ,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,,,,,,,8,8,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"20,307.70","20,706.70","20,307.70","20,706.70","30,899.70","26,599.38","30,899.70","26,599.38",,,,,,,"52,724.40","53,299.30","715,761.00","652,002.00","14,476.30","13,908.70",,18.38,17.79
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,2,2,2,2,2,2,2,2,,,,,,,2,2,2,2,2,2,,2,2
+5.0-0011,Cisco,available,Cisco UCS C885A M8 (8x H200-SXM-141GB TensorRT),1,AMD EPYC 9575F,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,128,AMD EPYC 9575F,2,Closed ,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,8,8,,,8,8,,,8,8,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,1,1,,,1,1,,,1,1,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"21,557.80","21,813.40","21,557.80","21,813.40","34,081.10","30,420.23","34,081.10","30,420.23","35,102.50","19,437.40",,,573.57,294.28,,,"770,496.00","648,207.00",,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,2,2,2,2,2,2,2,2,2,2,,,2,2,,,2,2,,,,,
+5.0-0012,Cisco,available,UCS C245 M8 (2x L40S TensorRT),1,AMD EPYC 9684X 128-Core Processor,2,NVIDIA L40S,2,available,NVIDIA L40S,64,AMD EPYC 9684X 128-Core Processor,2,Closed ,# of Accelerators,2,,2,2,,,,,,,,,,,,,,,,,,,,,,,,2,2
+,,,,,,,,,,,,,,,# of Nodes,1,,1,1,,,,,,,,,,,,,,,,,,,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,7.76,,"57,832.50","49,591.60",,,,,,,,,,,,,,,,,,,,,,,,1.44,1.27
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,,2,2,,,,,,,,,,,,,,,,,,,,,,,,2,2
+5.0-0013,Cisco,available,UCS X215 M8 (2x L40S TensorRT),1,AMD EPYC 9224 24-Core Processor,2,NVIDIA L40S,2,available,NVIDIA L40S,64,AMD EPYC 9224 24-Core Processor,2,Closed ,# of Accelerators,2,,2,2,,,2,2,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,1,,1,1,,,1,1,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,7.69,,"57,918.10","49,591.60",,,"1,754.97","1,745.78",,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,,2,2,,,2,2,,,,,,,,,,,,,,,,,,,,,
+5.0-0014,Cisco,available,Cisco UCS X215c M8 with X440P PCIe node (2x H100NVL-PCIe-94GB),1,AMD EPYC 9554,2,NVIDIA H100-NVL-94GB,2,available,NVIDIA H100-NVL-94GB,56,AMD EPYC 9554,2,Closed ,# of Accelerators,2,,2,2,,,2,2,,,2,2,,,,,,,,,,,2,2,2,2,,,
+,,,,,,,,,,,,,,,# of Nodes,1,,1,1,,,1,1,,,1,1,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,10.79,,"101,768.00","98,585.80",,,"3,743.36","3,701.78",,,"3,879.95","3,337.80",,,,,,,,,,,"136,731.00","119,990.00","2,653.43","2,400.54",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,,2,2,,,2,2,,,2,2,,,,,,,,,,,2,2,2,2,,,
+5.0-0015,Dell,available,1-node-2S-GNR_86C,1,INTEL(R) XEON(R) 6787P,2,N/A,0,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of Accelerators,,0,,,0,0,,,0,0,,,,,,,,,,,,,0,0,0,0,,,
+,,,,,,,,,,,,,,,# of Nodes,,1,,,1,1,,,1,1,,,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,2.26,,,"12,397.80","11,788.90",,,316.05,168.69,,,,,,,,,,,,,"31,472.70","27,987.90",465.88,350.91,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,2,,,2,2,,,2,2,,,,,,,,,,,,,2,2,2,2,,,
+5.0-0016,Dell,available,Dell PowerEdge R7725 (2x H100-NVL-94GB TensorRT),1,AMD EPYC 9755,2,NVIDIA H100-NVL-94GB,2,available,NVIDIA H100-NVL-94GB,256,AMD EPYC 9755,2,Closed ,# of Accelerators,2,2,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,10.84,10.84,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,,,,,,,,,,,,,,,,,,,,,,,
+5.0-0017,Dell,available,Dell PowerEdge XE7745 (8x H200-NVL-141GB TensorRT),1,AMD EPYC 9965 192-Core Processor,2,NVIDIA H200-NVL-141GB,8,available,NVIDIA H200-NVL-141GB,192,AMD EPYC 9965 192-Core Processor,2,Closed ,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"16,900.10","17,975.80","16,900.10","17,975.80","31,149.90","28,848.40","31,149.90","28,848.40","31,334.80","16,134.40","31,334.80","16,134.40",,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,,,,
+5.0-0018,Dell,available,Dell PowerEdge XE7745 (8x L40S TensorRT),1,AMD EPYC 9965 192-Core Processor,2,NVIDIA L40S,8,available,NVIDIA L40S,384,AMD EPYC 9965 192-Core Processor,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,,,,,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,,,,,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,28.03,28.03,,,,,"6,946.68","6,213.34","6,946.68","6,213.34","3,481.53","3,201.13","3,481.53","3,201.13",,,,,,,,,"345,721.00","340,047.00","6,522.15","6,095.41",,6.22,5.95
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,,,,,,,,,2,2,2,2,,2,2
+5.0-0019,Dell,available,Dell PowerEdge XE9680L (8x H200-SXM-141GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8580,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,120,INTEL(R) XEON(R) PLATINUM 8580,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.67,54.67,,,,,"21,406.80","21,455.90","21,406.80","21,455.90","34,763.20","33,023.50","34,763.20","33,023.50","34,538.40","19,415.90","34,538.40","19,415.90",559.21,291.49,"62,042.20","58,972.60","765,417.00","632,200.00","14,794.40","13,588.80",,19.26,16.68
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,2,2
+5.0-0020,Dell,available,Dell PowerEdge XE9680 (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8468,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,48,Intel(R) Xeon(R) Platinum 8468,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,51.54,51.54,,,,,"20,663.70","21,134.40","20,663.70","21,134.40","31,216.80","30,903.64","31,216.80","30,903.64","30,989.50","12,979.40","30,989.50","12,979.40",397.31,277.13,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,,
+5.0-0021,Dell,available,Dell PowerEdge XE9680 (8xH200-SXM-141GBx8 TensorRT),1,INTEL(R) XEON(R) PLATINUM 8568Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,48,INTEL(R) XEON(R) PLATINUM 8568Y+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.68,54.68,,,,,"21,117.00","21,536.40","21,117.00","21,536.40","34,822.60","33,051.88","34,822.60","33,051.88","34,545.50","19,428.40","34,545.50","19,428.40",,,,,,,"14,893.40","13,588.80",,18.99,16.68
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,2,2,,2,2
+5.0-0022,Dell,available,Dell PowerEdge XE9680 (8x H100-SXM-80GBVMware ESXi 8.0.3),1,Intel Xeon Platinum 8468,2,Virtualized NVIDIA H100-SXM-80GB,8,available,Virtualized NVIDIA H100-SXM-80GB,48,Intel Xeon Platinum 8468,2,Closed ,# of Accelerators,,,,,,,,,,,,,,,,,,,,,8,8,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,1,1,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,"51,514.50","50,896.00",,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,,,,,,,,,,,2,2,,,,,,,
+5.0-0023,Fujitsu,available,PRIMERGY CDI (8x H100NVL TensorRT),1,INTEL(R) XEON(R) GOLD 6530,2,NVIDIA H100-NVL-94GB,8,available,NVIDIA H100-NVL-94GB,32,INTEL(R) XEON(R) GOLD 6530,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,8,8,,,8,8,8,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,1,1,,,1,1,1,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,44.58,44.58,,,,,"14,769.70","14,846.70","14,769.70","14,846.70","18,084.90","16,848.58","18,084.90","16,848.58","15,553.30","11,041.50","15,553.30","11,041.50",,,"37,713.60","37,934.50",,,"11,106.20","10,234.40","70,313.00",,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,2,2,,,2,2,2,,
+5.0-0032,GATEOverflow,available,GATE Overflow Intel Sapphire Rapids (2x RTX 4090),1,Intel(R) Xeon(R) w7-2495X,1,NVIDIA GeForce RTX 4090,2,available,NVIDIA GeForce RTX 4090,24,Intel(R) Xeon(R) w7-2495X,1,Closed ,# of Accelerators,2,2,,,,,,,,,,,,,,,,,,,,,2,2,,,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,,,,,,,,,,,,,,,,,1,1,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,8.29,8.31,,,,,,,,,,,,,,,,,,,,,"87,921.10","73,725.30",,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,1,1,,,,,,,,,,,,,,,,,,,,,1,1,,,,,
+5.0-0033,GigaComputing,available,G893-SD1,1,Intel(R) Xeon(R) Platinum 8480+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480+,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.75,54.75,"645,975.00","585,166.00","388,769.00","370,056.00","21,450.80","21,544.30","21,450.80","21,544.30","34,889.50","33,054.00","34,889.50","33,054.00","34,986.70","20,234.50","34,986.70","20,234.50",558.53,288.60,"62,386.20","60,205.00","765,403.00","676,219.00","14,992.50","14,004.60","418,270.00",19.18,16.76
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+5.0-0034,GigaComputing,available,G893-ZX1-AAX2,1,2xAMD EPY 9175F,2,AMD Instinct MI325X 256GB HBM3E,8,available,AMD Instinct MI325X 256GB HBM3E,16,2xAMD EPY 9175F,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"33,251.30","29,094.35","33,251.30","29,094.35",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0035,Google,available,a3-ultragpu-8g (8x H200-SXM-141GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8581C CPU,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,INTEL(R) XEON(R) PLATINUM 8581C CPU,2,Closed ,# of Accelerators,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8,,,8,8,,,
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1,,,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"634,294.00","555,883.00","383,039.00","362,655.00","21,040.90","20,501.80","21,040.90","20,501.80","34,144.70","31,390.23","34,144.70","31,390.23",,,,,552.59,276.43,"61,614.50","59,100.10",,,"14,765.70","12,909.50",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2,,,2,2,,,
+5.0-0036,Google,available,tpu-v6e-4,1,AMD EPYC 9B14,1,TPU Trillium,4,available,TPU Trillium,180,AMD EPYC 9B14,1,Closed ,# of Accelerators,,,,,,,,,,,,,,,,,,,,,,,,,,,,4,4
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,,,,,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,,,,,,,,,,6.08,5.48
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,,,,,,,,,,,,,,,,,,1,1
+5.0-0037,HPE,available,HPE ProLiant Compute DL384 Gen12 (1x GH200-144GB_aarch64 TensorRT),1,NVIDIA Grace CPU,1,NVIDIA GH200 Grace Hopper Superchip 144GB,1,available,NVIDIA GH200 Grace Hopper Superchip 144GB,72,NVIDIA Grace CPU,1,Closed ,# of Accelerators,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"85,998.90","80,994.30","51,970.00","50,070.50","2,845.43","2,526.03","2,845.43","2,526.03","4,609.05","4,327.68","4,609.05","4,327.68",,,,,,,"8,324.43","7,735.98",,,,,,2.46,2.14
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+5.0-0038,HPE,available,HPE ProLiant Compute DL384 Gen12 (2x GH200-144GB_aarch64 TensorRT),1,NVIDIA Grace CPU,2,NVIDIA GH200 Grace Hopper Superchip 144GB,2,available,NVIDIA GH200 Grace Hopper Superchip 144GB,144,NVIDIA Grace CPU,2,Closed ,# of Accelerators,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,2,2,,,,,,2,2
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"173,943.00","157,961.00","103,949.00","98,162.10","5,666.16","5,039.82","5,666.16","5,039.82","9,362.85","8,674.58","9,362.85","8,674.58",,,,,,,"16,703.40","15,570.80",,,,,,5.02,4.34
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,2,2,,,,,,2,2
+5.0-0039,HPE,available,HPE Cray XD670 with HPE GreenLake for File Storage (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480+,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,56,Intel(R) Xeon(R) Platinum 8480+,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,52.18,52.13,"599,191.00","555,631.00","377,305.00","358,055.00","20,993.90","19,363.20","20,796.00","19,363.30","31,238.00","30,457.70","31,252.10","30,500.78","23,389.30","14,008.50","23,385.00","13,987.60",,,,,"718,177.00","620,188.00","14,637.80","13,748.40",,18.10,16.04
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2,,2,2
+5.0-0040,HPE,available,HPE Cray XD670 with Cray ClusterStor (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480+,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,56,Intel(R) Xeon(R) Platinum 8480+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,52.11,52.20,,,,,"20,925.30","20,991.30","20,716.50","20,795.30","31,174.70","30,498.87","31,147.40","30,480.60","23,435.40","14,004.90","23,653.70","14,014.10",,,,,"717,848.00","620,188.00","14,633.10","13,748.40",,17.99,16.04
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2,,2,2
+5.0-0041,HPE,available,HPE Cray XD670 with Cray ClusterStor (8x H200-SXM-141GB),1,Intel(R) Xeon(R) Platinum 8562Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,32,Intel(R) Xeon(R) Platinum 8562Y+,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,55.10,55.12,"654,489.00","590,167.00","398,164.00","380,059.00","21,324.90","21,025.50","21,014.60","21,019.90","33,781.80","31,281.09","33,964.00","31,283.31","34,796.80","19,405.70","34,796.80","19,405.70",,,,,"769,420.00","667,216.00","14,909.60","14,388.80",,18.99,16.76
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2,,2,2
+5.0-0042,HPE,available,HPE Compute Scale-up Server 3200 (4x H100-NVL-94GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8468,4,NVIDIA H100-NVL-94GB,4,available,NVIDIA H100-NVL-94GB,192,INTEL(R) XEON(R) PLATINUM 8468,4,Closed ,# of Accelerators,4,4,,,,,4,4,,,,,,,,,,,,,,,,,4,4,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,,,,,,,,,,,,,,,,,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,21.91,21.91,,,,,"7,240.14","7,179.86",,,,,,,,,,,,,,,,,"5,326.87","5,097.82",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,4,4,,,,,4,4,,,,,,,,,,,,,,,,,4,4,,,
+5.0-0043,HPE,available,HPE ProLiant DL380a Compute Gen12 (8x H200-NVL-141GB TensorRT),1,Intel(R) Xeon(R) 6740E,2,NVIDIA H200-NVL-141GB,8,available,NVIDIA H200-NVL-141GB,192,Intel(R) Xeon(R) 6740E,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,8,8,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,49.47,49.47,"512,363.00","201,011.00","320,287.00","195,518.00","17,882.90","18,065.10","17,882.90","18,065.10","30,297.50","27,638.89","30,297.50","27,638.89",,,,,,,"52,205.90","50,123.90","686,884.00","620,188.00","13,549.50","11,988.40",,16.38,15.45
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,2,2,2,2,2,2,,2,2
+5.0-0045,HPE,available,HPE ProLiant Compute DL380a Gen12 (8x H100-NVL-94GB TensorRT),1,INTEL(R) XEON(R) 6740E,2,NVIDIA H100-NVL-94GB,8,available,NVIDIA H100-NVL-94GB,96,INTEL(R) XEON(R) 6740E,2,Closed ,# of Accelerators,8,8,,,8,8,,,,,,,,,,,,,,,,,8,8,8,8,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,1,1,,,,,,,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,43.24,43.24,,,"225,640.00","170,018.00",,,,,,,,,,,,,,,,,"483,928.00","480,097.00","10,893.60","9,991.13",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,2,2,,,,,,,,,,,,,,,,,2,2,2,2,,,
+5.0-0046,HPE,available,HPE ProLiant Compute DL380a Gen12 (8x L40S-PCIe-48GB TensorRT),1,Intel(R) Xeon(R) 6740E,2,NVIDIA L40S,8,available,NVIDIA L40S,96,Intel(R) Xeon(R) 6740E,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,,,,,,,,,,,,,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,,,,,,,,,,,,,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,27.11,27.11,"225,297.00","177,643.00","100,517.00","94,989.30","6,823.91","6,821.11","6,823.91","6,821.11",,,,,,,,,,,,,"330,082.00","344,052.00","6,305.13","6,095.48",,6.13,5.01
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,,,,,,,,,,,,,2,2,2,2,,2,2
+5.0-0047,HPE,available,HPE ProLiant Compute DL380a Gen12 (8x L40S-PCIe-48GB TensorRT),1,Intel(R) Xeon(R) 6740E,2,NVIDIA L40S,8,available,NVIDIA L40S,96,Intel(R) Xeon(R) 6740E,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"3,655.89","3,181.65","3,655.89","3,181.65",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0048,Intel,available,1-node-2S-GNR_128C,1,INTEL(R) XEON(R) 6980P,2,N/A,0,available,N/A,128,INTEL(R) XEON(R) 6980P,2,Closed ,# of Accelerators,0,0,0,0,0,0,0,0,0,0,,,,,,,,,,,,,0,0,0,0,0,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,,,,,,,,,,,,,1,1,1,1,1,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,3.65,3.65,"18,686.10","18,177.00","18,686.10","18,177.00",516.77,265.06,516.77,265.06,,,,,,,,,,,,,"45,530.40","40,184.80",713.77,580.88,"24,598.20",,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,,,,,,,,,,,,,2,2,2,2,2,,
+5.0-0049,Lambda,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,,,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"643,756.00","585,164.00","386,569.00","370,055.00","21,448.40","21,543.90","21,448.40","21,543.90","35,385.10","33,045.32","35,385.10","33,045.32","35,409.40","19,381.00","35,409.40","19,381.00",,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,,,,,
+5.0-0050,Lenovo,available,ThinkSystem SR650a V4 (4x H100-NVL-94GB TensorRT),1,Intel(R) Xeon(R) 6787P,2,NVIDIA H100-NVL-94GB,4,available,NVIDIA H100-NVL-94GB,86,Intel(R) Xeon(R) 6787P,2,Closed ,# of Accelerators,4,4,,,,,4,4,4,4,,,,,,,,,,,4,4,4,4,4,4,,4,4
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,,,,,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,22.43,22.43,,,,,"7,705.97","6,773.87","7,705.97","6,773.87",,,,,,,,,,,"19,500.90","19,334.90","278,849.00","265,225.00","5,486.96","5,277.74",,6.46,5.90
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,,,,,,,,,,,2,2,2,2,2,2,,2,2
+5.0-0051,Lenovo,available,ThinkSystem SR680a V3(8x H200-SXM-141GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8568Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,48,INTEL(R) XEON(R) PLATINUM 8568Y+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,8,8,8,8,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,1,1,1,1,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.66,54.66,,,,,"21,513.30","21,549.10","21,513.30","21,549.10","35,453.00","32,976.40","35,453.00","32,976.40","35,383.80","19,492.50","35,383.80","19,492.50",,,"63,446.70","61,317.20","773,300.00","673,220.00","14,785.20","13,588.80","450,144.00",19.43,16.68
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,2,2,2,2,2,2,2,2,2
+5.0-0052,Lenovo,available,ThinkSystem SR675 V3 (4x H200-SXM-141GB TensorRT),1,AMD EPYC 9655 96-Core Processor,2,NVIDIA H200-SXM-141GB,4,available,NVIDIA H200-SXM-141GB,96,AMD EPYC 9655 96-Core Processor,2,Closed ,# of Accelerators,4,4,,,,,4,4,4,4,4,4,4,4,,,,,,,4,4,4,4,4,4,,4,4
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,27.35,27.35,,,,,"10,825.50","10,503.70","10,825.50","10,503.70","17,654.10","14,652.78","17,654.10","14,652.78",,,,,,,"31,503.70","29,301.50","378,623.00","304,031.00","7,239.25","6,795.61",,9.56,8.27
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,,,,,,,2,2,2,2,2,2,,2,2
+5.0-0053,Lenovo,available,ThinkSystem SR780a V3(8x H200-SXM-141GB TensorRT),1,INTEL(R) XEON(R) PLATINUM 8568Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,48,INTEL(R) XEON(R) PLATINUM 8568Y+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,8,8,8,8,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,1,1,1,1,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.65,54.65,,,,,"21,626.00","21,553.40","21,626.00","21,553.40","35,400.20","32,934.70","35,400.20","32,934.70","35,498.50","19,448.10","35,498.50","19,448.10",,,"63,514.70","61,074.20","771,137.00","670,220.00","14,711.60","13,996.70","450,175.00",19.29,16.68
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,2,2,2,2,2,2,2,2,2
+5.0-0054,MangoBoost,available,MangoBoost-fp8-Mi300x-4-node,4,AMD EPYC 9534,2,AMD Instinct MI300X 192GB HBM3,8,available,AMD Instinct MI300X 192GB HBM3,128,AMD EPYC 9534,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,4,4,4,4,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"103,182.00","93,039.93","103,182.00","93,039.93",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0055,NVIDIA,available,NVIDIA DGX B200 (1x B200-SXM-180GB TensorRT),1,Intel(R) Xeon(R) Platinum 8570,2,NVIDIA B200-SXM-180GB,1,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of Accelerators,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"12,269.30","12,078.40","12,269.30","12,078.40",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0056,NVIDIA,available,NVIDIA DGX B200 (8x B200-SXM-180GB TensorRT),1,Intel(R) Xeon(R) Platinum 8570,2,NVIDIA B200-SXM-180GB,8,available,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,8,8
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"98,858.00","98,443.30","98,858.00","98,443.30","98,858.00","59,409.30","98,858.00","59,409.30","1,526.29",845.82,"128,148.00","126,845.00",,,,,,30.38,28.44
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,2,2
+5.0-0057,NVIDIA,available,NVIDIA DGX H100 (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"31,306.80","31,106.28","31,306.80","31,106.28",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0058,NVIDIA,available,(72x GB200-186GB_aarch64 TensorRT Triton),18,NVIDIA Grace CPU,2,NVIDIA GB200,4,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of Accelerators,,,,,,,,,,,,,,,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,18,18,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,"13,886.40","8,850.10",,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,,,,,,,,,2,2,,,,,,,,,
+5.0-0059,NVIDIA,available,HPE ProLiant Compute DL384 Gen12 (1x GH200-144GB_aarch64 TensorRT),1,NVIDIA Grace CPU,1,NVIDIA GH200 Grace Hopper Superchip 144GB,1,available,NVIDIA GH200 Grace Hopper Superchip 144GB,144,NVIDIA Grace CPU,1,Closed ,# of Accelerators,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"87,268.00","80,994.20","52,549.10","50,991.70","2,824.83","2,526.75","2,824.83","2,526.75","4,686.14","4,350.26","4,686.14","4,350.26",,,,,,,"8,345.73","8,042.27",,,,,,2.52,2.28
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,,,,,,1,1
+5.0-0060,NVIDIA,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.60,54.60,"641,629.00","585,164.00","385,327.00","370,054.00","21,182.50","21,544.60","21,182.50","21,544.60","34,988.20","33,071.46","34,988.20","33,071.46","34,989.20","19,424.20","34,989.20","19,424.20",560.65,291.37,"62,629.60","61,802.00","760,715.00","632,194.00","14,568.60","13,588.80","441,817.00",18.99,18.30
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+5.0-0061,NVIDIA,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT Triton),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"34,300.20","33,024.68","34,300.20","33,024.68",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0062,Oracle,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,,,,,,,8,8,8,8,8,8,8,8,,,,,,,8,8,8,8,8,8,8,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,1,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,"21,104.10","21,527.40","21,104.10","21,527.40","34,556.60","33,000.97","34,556.60","33,000.97",,,,,,,"60,708.60","59,149.80","755,069.00","632,198.00","14,693.20","13,588.80","410,017.00",,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,2,2,2,2,2,2,2,2,,,,,,,2,2,2,2,2,2,2,,
+5.0-0063,Quanta_Cloud_Technology,available,1-node-2S-GNR_86C,1,INTEL(R) XEON(R) 6787P,2,N/A,0,available,N/A,86,INTEL(R) XEON(R) 6787P,2,Closed ,# of Accelerators,,0,,,0,0,,,0,0,,,,,,,,,,,,,0,0,0,0,,,
+,,,,,,,,,,,,,,,# of Nodes,,1,,,1,1,,,1,1,,,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,2.24,,,"12,391.50","11,789.70",,,300.86,168.67,,,,,,,,,,,,,"31,091.40","27,987.90",456.67,350.91,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,2,,,2,2,,,2,2,,,,,,,,,,,,,2,2,2,2,,,
+5.0-0064,Quanta_Cloud_Technology,available,QuantaGrid D54U-3U (4x H100-PCIe-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8470,2,NVIDIA H100-PCIe-80GB,4,available,NVIDIA H100-PCIe-80GB,52,Intel(R) Xeon(R) Platinum 8470,2,Closed ,# of Accelerators,4,4,4,4,4,4,4,4,4,4,4,4,4,4,,,,,,,4,4,4,4,4,4,,4,4
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,18.54,18.54,"187,064.00","175,419.00","109,408.00","100,187.00","6,319.07","6,251.27","6,319.07","6,251.27","7,013.17","4,889.92","7,013.17","4,889.92",,,,,,,"15,843.30","13,864.50","226,268.00","188,014.00","4,709.61","4,439.99",,5.35,4.22
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,2,2,2,2,2,2,,2,2
+5.0-0065,Quanta_Cloud_Technology,available,QuantaGrid D74H-7U (8x H100-SXM-80GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480+,2,NVIDIA H100-SXM-80GB,8,available,NVIDIA H100-SXM-80GB,56,Intel(R) Xeon(R) Platinum 8480+,2,Closed ,# of Accelerators,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,,,8,8,8,8,8,8,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,,,1,1,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,51.35,51.35,"586,194.00","512,121.00","372,632.00","340,044.00","20,464.90","19,316.90","20,464.90","19,316.90","31,083.60","29,916.03","31,083.60","29,916.03",,,,,436.22,261.98,"51,048.70","50,924.70","712,859.00","584,161.00","14,356.40","12,869.80",,18.37,16.04
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,,,2,2,2,2,2,2,2,2,,2,2
+5.0-0066,Quanta_Cloud_Technology,available,QuantaGrid S74G-2U (1x GH200-96GB_aarch64 TensorRT),1,NVIDIA Grace CPU,1,NVIDIA GH200 Grace Hopper Superchip 96GB,1,available,NVIDIA GH200 Grace Hopper Superchip 96GB,72,NVIDIA Grace CPU,1,Closed ,# of Accelerators,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"83,504.20","82,792.80","50,606.50","45,990.40","2,808.21","2,824.55","2,808.21","2,824.55","3,144.18","3,203.87","3,144.18","3,203.87",,,,,,,"7,792.91","7,771.75","96,157.60","72,995.10","1,925.50","1,730.68",,2.42,1.94
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,1,1,1,1,1,1,,1,1
+5.0-0067,Supermicro,available,SYS-822GA-NGR3,1,INTEL(R) XEON(R) 6980P,2,N/A,0,available,N/A,128,INTEL(R) XEON(R) 6980P,2,Closed ,# of Accelerators,,0,,,0,0,,,0,0,,,,,,,,,,,,,0,0,0,0,,,
+,,,,,,,,,,,,,,,# of Nodes,,1,,,1,1,,,1,1,,,,,,,,,,,,,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,3.69,,,"19,577.80","18,987.00",,,493.91,251.31,,,,,,,,,,,,,"46,041.40","40,285.50",726.72,585.85,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,2,,,2,2,,,2,2,,,,,,,,,,,,,2,2,2,2,,,
+5.0-0068,Supermicro,available,AS-8126GS-TNMR,1,AMD EPYC 9575F,2,AMD Instinct MI325X 256GB HBM3E,8,available,AMD Instinct MI325X 256GB HBM3E,64,AMD EPYC 9575F,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"33,069.10","28,770.18","33,069.10","28,770.18",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0069,Supermicro,available,ARS-111GL-NHR (1x GH200-96GB_aarch64),1,NVIDIA Grace CPU,1,NVIDIA GH200 Grace Hopper Superchip 96GB,1,available,NVIDIA GH200 Grace Hopper Superchip 96GB,72,NVIDIA Grace CPU,1,Closed ,# of Accelerators,,,1,1,1,1,,,,,,,,,,,,,,,1,1,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,1,1,1,1,,,,,,,,,,,,,,,1,1,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,"85,986.90","80,992.90","51,030.90","50,468.90",,,,,,,,,,,,,,,"7,718.34","7,182.77",,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,1,1,1,1,,,,,,,,,,,,,,,1,1,,,,,,,
+5.0-0070,Supermicro,available,AS-4125GS-TNHR2-LCC (8x H200-SXM-141GB TensorRT),1,AMD EPYC 9654,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,96,AMD EPYC 9654,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,,,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,,,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.57,54.57,,,,,"21,477.40","21,757.30","21,477.40","21,757.30","35,026.80","33,045.72","35,026.80","33,045.72","35,192.50","19,413.20","35,192.50","19,413.20",551.22,290.09,"62,766.20","59,647.10",,,"15,200.30","14,589.30","440,893.00",19.45,18.30
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,,,2,2,2,2,2
+5.0-0071,Supermicro,available,SYS-522GA-NRT(8x H200-NVL-141GB),1,Intel(R) Xeon(R) 6979P,2,NVIDIA H200-NVL-141GB,8,available,NVIDIA H200-NVL-141GB,120,Intel(R) Xeon(R) 6979P,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,,,,,,,,,,,,,,,8,8,,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,,,,,,,,,,,,,,,1,1,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,49.40,49.40,,,,,"18,724.20","18,571.10","18,724.20","18,571.10",,,,,,,,,,,,,,,"13,802.90","11,829.10",,16.78,15.95
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,,,,,,,,,,,,,,,2,2,,2,2
+5.0-0072,Supermicro,available,SYS-421GE-NBRT-LCC (8x B200-SXM-180GB TensorRT),1,Intel(R) Xeon(R) Platinum 8562Y+,2,NVIDIA B200-SXM-180GB,8,available,NVIDIA B200-SXM-180GB,32,Intel(R) Xeon(R) Platinum 8562Y+,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"98,782.40","97,629.84","98,782.40","97,629.84","93,857.00","59,505.30","93,857.00","59,505.30","1,538.17","1,057.52","128,795.00","129,047.00",,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,,
+5.0-0073,Supermicro,available,SYS-821GE-TNHR (8x H200-SXM-141GB TensorRT),1,Intel(R) Xeon(R) Platinum 8568Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,48,Intel(R) Xeon(R) Platinum 8568Y+,2,Closed ,# of Accelerators,8,8,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,8,8,8,8,8,8,8,8,8
+,,,,,,,,,,,,,,,# of Nodes,1,1,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,1,1,1,1,1,1,1,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.57,54.57,,,,,"21,304.30","21,544.20","21,304.30","21,544.20","34,628.30","33,052.94","34,628.30","33,052.94","34,667.60","19,431.90","34,667.60","19,431.90",,,"61,964.10","59,627.30","759,826.00","640,203.00","14,955.30","14,488.70","430,566.00",19.15,18.30
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,2,2,2,2,2,2,2,2,2
+5.0-0074,Supermicro,available,SYS-A21GE-NBRT (8x B200-SXM-180GB TensorRT),1,Intel(R) Xeon(R) Platinum 8568Y+,2,NVIDIA B200-SXM-180GB,8,available,NVIDIA B200-SXM-180GB,48,Intel(R) Xeon(R) Platinum 8568Y+,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,8,8,8,8,8,8,8,8,,,,,,8,8
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,1,1,1,1,1,1,1,1,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"97,416.90","97,552.14","97,416.90","97,552.14","92,689.20","62,265.70","92,689.20","62,265.70","1,521.74","1,080.31","125,534.00","128,961.00",,,,,,30.34,28.92
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,2,2,2,2,2,2,2,2,,,,,,2,2
+5.0-0075,Sustainable_Metal_Cloud,available,Dell PowerEdge XE9680 (8xH200-SXM-141GBx8 TensorRT),1,Intel(R) Xeon(R) Platinum 8462Y+,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,32,Intel(R) Xeon(R) Platinum 8462Y+,2,Closed ,# of Accelerators,8,8,8,8,,,8,8,8,8,8,8,,,,,,,,,8,8,8,8,8,8,,,
+,,,,,,,,,,,,,,,# of Nodes,1,1,1,1,,,1,1,1,1,1,1,,,,,,,,,1,1,1,1,1,1,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,54.83,54.83,"631,064.00","570,145.00",,,"20,999.60","21,359.60","20,999.60","21,359.60","34,264.00","33,027.30",,,,,,,,,"60,923.30","57,054.40","749,810.00","632,197.00","14,391.30","13,588.80",,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,2,2,2,2,,,2,2,2,2,2,2,,,,,,,,,2,2,2,2,2,2,,,
+5.0-0076,coreweave,available,(4 x GB200-186GB_aarch64 TensorRT),1,NVIDIA Grace CPU,2,NVIDIA GB200,4,available,NVIDIA GB200,144,NVIDIA Grace CPU,2,Closed ,# of Accelerators,,,,,,,,,,,,,,,,,,,4,4,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,,,,,,,,,1,1,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,,,,,,,,,801.91,522.12,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,,,,,,,,,2,2,,,,,,,,,
+5.0-0077,coreweave,available,NVIDIA H200 (8x H200-SXM-141GB TensorRT),1,Intel(R) Xeon(R) Platinum 8480C,2,NVIDIA H200-SXM-141GB,8,available,NVIDIA H200-SXM-141GB,56,Intel(R) Xeon(R) Platinum 8480C,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"34,403.50","33,066.52","34,403.50","33,066.52",,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,,,,,,,,,,,
+5.0-0078,Google,Preview,NVIDIA DGX B200 (8x B200-SXM-180GB TensorRT),1,Intel(R) Xeon(R) Platinum 8570,2,NVIDIA B200-SXM-180GB,8,Preview,NVIDIA B200-SXM-180GB,56,Intel(R) Xeon(R) Platinum 8570,2,Closed ,# of Accelerators,,,,,,,,,,,8,8,8,8,,,,,8,8,,,,,,,,8,8
+,,,,,,,,,,,,,,,# of Nodes,,,,,,,,,,,1,1,1,1,,,,,1,1,,,,,,,,1,1
+,,,,,,,,,,,,,,,Avg. Result at System Name,,,,,,,,,,,"97,124.00","92,338.70","97,089.90","92,203.67",,,,,"1,498.56",847.48,,,,,,,,30.31,28.45
+,,,,,,,,,,,,,,,Sum of # of  Processors ,,,,,,,,,,,2,2,2,2,,,,,2,2,,,,,,,,2,2
