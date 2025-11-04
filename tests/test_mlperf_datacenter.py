@@ -227,9 +227,9 @@ class TestCreateBenchmarkComparisonChart:
 
         assert fig is None
 
-    def test_chart_limits_to_top_20(self):
-        """Test that chart limits results to top 20 entries."""
-        # Create a DataFrame with more than 20 entries
+    def test_chart_shows_all_systems(self):
+        """Test that chart shows all systems (no top-20 limit)."""
+        # Create a DataFrame with 25 entries
         data = {
             "System Name": [f"System {i}" for i in range(25)],
             "Organization": [f"Org {i}" for i in range(25)],
@@ -241,10 +241,11 @@ class TestCreateBenchmarkComparisonChart:
 
         fig = create_benchmark_comparison_chart(large_df, "test", "Offline", {})
 
-        # Should only show top 20
-        if fig is not None:
-            # The chart data should have at most 20 points
-            assert len(fig.data[0].y) <= 20
+        # Should show all 25 systems (chart is scrollable with dynamic height)
+        assert fig is not None
+        # Count total data points across all traces (one trace per organization)
+        total_points = sum(len(trace.y) for trace in fig.data)
+        assert total_points == 25
 
 
 class TestCreateNormalizedComparisonChart:
