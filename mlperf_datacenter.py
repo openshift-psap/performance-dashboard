@@ -248,6 +248,41 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
                 cpu_mask, "System Name"
             ].astype(str)
 
+    # Normalize units for LLM models
+    # MLPerf CSVs have inconsistent unit labels - some LLM models use "Samples/s" or "Queries/s"
+    # when they should use "Tokens/s" (since LLMs generate text tokens, not samples)
+    llm_models = [
+        "llama",
+        "deepseek",
+        "gpt",
+        "mistral",
+        "mixtral",
+        "falcon",
+        "qwen",
+        "yi",
+    ]
+
+    # Build column rename mapping for LLM columns with wrong units
+    column_renames = {}
+    for col in df.columns:
+        # Check if this is a metric column with wrong units
+        if "_Samples/s" in col or "_Queries/s" in col:
+            # Extract model name (first part before underscore)
+            model_name = col.split("_")[0].lower()
+            # Check if this is an LLM model
+            if any(llm in model_name for llm in llm_models):
+                # Replace wrong unit with Tokens/s
+                if "_Samples/s" in col:
+                    new_col = col.replace("_Samples/s", "_Tokens/s")
+                    column_renames[col] = new_col
+                elif "_Queries/s" in col:
+                    new_col = col.replace("_Queries/s", "_Tokens/s")
+                    column_renames[col] = new_col
+
+    # Apply column renames if any were found
+    if column_renames:
+        df = df.rename(columns=column_renames)
+
     return df
 
 

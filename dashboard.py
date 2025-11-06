@@ -3295,6 +3295,32 @@ def render_filtered_data_section(filtered_df):
         display_filtered_df.reset_index(drop=True, inplace=True)
         display_filtered_df.insert(0, "Row #", range(1, len(display_filtered_df) + 1))
 
+        # Add Grafana metrics link for rows with timestamp data
+        def create_grafana_link(row):
+            """Create Grafana dashboard link if timestamps are available."""
+            start_time = row.get("guidellm_start_time_ms")
+            end_time = row.get("guidellm_end_time_ms")
+            uuid = row.get("uuid")
+
+            # Only create link if all required fields are present and not NaN
+            if (
+                pd.notna(start_time)
+                and pd.notna(end_time)
+                and pd.notna(uuid)
+                and start_time != ""
+                and end_time != ""
+                and uuid != ""
+            ):
+                # Convert to integers (in case they're floats)
+                start_ms = int(start_time)
+                end_ms = int(end_time)
+                return f"https://grafana-psap-obs.apps.ocp4.intlab.redhat.com/d/6475e6106c33fe?orgId=1&from={start_ms}&to={end_ms}&var-deployment_uuid={uuid}"
+            return None
+
+        display_filtered_df["grafana_metrics_link"] = display_filtered_df.apply(
+            create_grafana_link, axis=1
+        )
+
         # Define column configurations with help text
         column_config = {
             "Row #": st.column_config.NumberColumn(
@@ -3504,6 +3530,11 @@ def render_filtered_data_section(filtered_df):
                 "efficiency_ratio",
                 help="Efficiency ratio - output tokens per second per TP unit (output_tok/sec ÷ TP), measures GPU utilization efficiency (higher is better)",
                 format="%.2f",
+            ),
+            "grafana_metrics_link": st.column_config.LinkColumn(
+                "Grafana Metrics",
+                help="Link to Grafana dashboard showing detailed metrics for this benchmark run (available only for runs with timestamp data)",
+                display_text="View Metrics 📊",
             ),
         }
 
@@ -4262,6 +4293,14 @@ def main():
         )
 
         selected_profiles = [selected_profile] if selected_profile is not None else []
+
+        # Update baseline_profile to remember user's current selection
+        # This ensures the selected profile is retained when other filters change
+        if selected_profile is not None:
+            st.session_state.baseline_profile = selected_profile
+            # Clear the "filters_were_cleared" flag so the new selection is preserved
+            if st.session_state.get("filters_were_cleared", False):
+                st.session_state.filters_were_cleared = False
 
     with filter_col5:
         # TP sizes filter - filtered by accelerators, versions, models, and profiles
