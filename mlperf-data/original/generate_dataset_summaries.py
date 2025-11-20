@@ -162,6 +162,126 @@ def process_llama2_70b():
         print(f"  ❌ Error: {e}")
 
 
+def process_llama31_405b():
+    """Process llama3.1-405b dataset (pickle format)."""
+    print("Processing llama3.1-405b...")
+    input_path = (
+        "mlperf-data/original/mlperf_llama3.1_405b_dataset_8313_processed_fp16_eval.pkl"
+    )
+    output_path = "mlperf-data/summaries/llama3-1-405b.csv"
+
+    if not os.path.exists(input_path):
+        print(f"  ⚠️  Input file not found: {input_path}")
+        return
+
+    try:
+        # This requires pandas - user should run in their Streamlit environment
+        import pandas as pd
+
+        with open(input_path, "rb") as f:
+            data = pickle.load(f)  # nosec B301 - Loading trusted MLCommons dataset
+
+        # Extract token length columns
+        if isinstance(data, pd.DataFrame):
+            # Try different possible column names
+            if "tok_input_len" in data.columns and "tok_ref_output_len" in data.columns:
+                summary = pd.DataFrame(
+                    {
+                        "input_length": data["tok_input_len"],
+                        "output_length": data["tok_ref_output_len"],
+                    }
+                )
+            elif "input_length" in data.columns and "output_length" in data.columns:
+                summary = data[["input_length", "output_length"]].copy()
+            elif (
+                "tok_input_length" in data.columns
+                and "tok_output_length" in data.columns
+            ):
+                summary = pd.DataFrame(
+                    {
+                        "input_length": data["tok_input_length"],
+                        "output_length": data["tok_output_length"],
+                    }
+                )
+            else:
+                print(
+                    f"  ⚠️  Expected columns not found. Available: {list(data.columns)}"
+                )
+                return
+        else:
+            print(f"  ⚠️  Unexpected data type: {type(data)}")
+            return
+
+        # Save to CSV
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        summary.to_csv(output_path, index=False)
+        print(f"  ✅ Generated: {output_path} ({len(summary):,} samples)")
+
+    except ImportError:
+        print("  ⚠️  Requires pandas. Please run with: python3 -m pip install pandas")
+    except Exception as e:
+        print(f"  ❌ Error: {e}")
+
+
+def process_mixtral_8x7b():
+    """Process mixtral-8x7b dataset (pickle format)."""
+    print("Processing mixtral-8x7b...")
+    input_path = "mlperf-data/original/09292024_mixtral_15k_mintoken2_v1.pkl"
+    output_path = "mlperf-data/summaries/mixtral-8x7b.csv"
+
+    if not os.path.exists(input_path):
+        print(f"  ⚠️  Input file not found: {input_path}")
+        return
+
+    try:
+        # This requires pandas - user should run in their Streamlit environment
+        import pandas as pd
+
+        with open(input_path, "rb") as f:
+            data = pickle.load(f)  # nosec B301 - Loading trusted MLCommons dataset
+
+        # Extract token length columns
+        if isinstance(data, pd.DataFrame):
+            # Try different possible column names
+            if "tok_input_len" in data.columns and "tok_ref_output_len" in data.columns:
+                summary = pd.DataFrame(
+                    {
+                        "input_length": data["tok_input_len"],
+                        "output_length": data["tok_ref_output_len"],
+                    }
+                )
+            elif "input_length" in data.columns and "output_length" in data.columns:
+                summary = data[["input_length", "output_length"]].copy()
+            elif (
+                "tok_input_length" in data.columns
+                and "tok_output_length" in data.columns
+            ):
+                summary = pd.DataFrame(
+                    {
+                        "input_length": data["tok_input_length"],
+                        "output_length": data["tok_output_length"],
+                    }
+                )
+            else:
+                print(
+                    f"  ⚠️  Expected columns not found. Available: {list(data.columns)}"
+                )
+                return
+        else:
+            print(f"  ⚠️  Unexpected data type: {type(data)}")
+            return
+
+        # Save to CSV
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        summary.to_csv(output_path, index=False)
+        print(f"  ✅ Generated: {output_path} ({len(summary):,} samples)")
+
+    except ImportError:
+        print("  ⚠️  Requires pandas. Please run with: python3 -m pip install pandas")
+    except Exception as e:
+        print(f"  ❌ Error: {e}")
+
+
 def main():
     """Process all datasets and generate CSV summaries."""
     print("=" * 60)
@@ -172,7 +292,9 @@ def main():
     # Process each dataset
     process_deepseek_r1()
     process_llama31_8b()
+    process_llama31_405b()
     process_llama2_70b()
+    process_mixtral_8x7b()
 
     print()
     print("=" * 60)

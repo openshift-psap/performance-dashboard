@@ -16,11 +16,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY dashboard.py .
 COPY dashboard_styles.py .
 COPY mlperf_datacenter.py .
+COPY llmd_dashboard.py .
 COPY consolidated_dashboard.csv .
+COPY llmd-dashboard.csv .
 
 # Copy all MLPerf data (version CSV files and dataset summaries)
 COPY mlperf-data/ ./mlperf-data/
 
+# Copy assets (logos, images, etc.)
+COPY assets/ ./assets/
 
 RUN mkdir -p /app/.streamlit && \
     chgrp -R 0 /app && \
