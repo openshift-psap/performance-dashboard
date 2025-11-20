@@ -1,6 +1,6 @@
-# RHAIIS Performance Dashboard
+# AI Inference Performance Dashboard
 
-A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference server) benchmarks. This dashboard provides interactive visualizations and analysis of AI model performance across different accelerators, versions, and configurations.
+A comprehensive performance analysis dashboard for AI inference benchmarks including RHAIIS (Red Hat AI Inference Server), LLM-D (disaggregated LLM inference), and MLPerf submissions. This dashboard provides interactive visualizations and analysis of AI model performance across different accelerators, versions, and configurations.
 
 ## Features
 
@@ -14,6 +14,16 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 - **Runtime Configuration Tracking**: View inference server arguments used
 - **Multi-Accelerator Support**: Compare H200, MI300X, and TPU performance
 
+### LLM-D Dashboard
+
+- **Disaggregated Architecture Analysis**: Analyze LLM-D benchmark results with separated prefill/decode pods
+- **Compare with RHAIIS**: Side-by-side performance comparison of LLM-D vs traditional RHAIIS architecture
+  - Throughput vs Concurrency comparison
+  - Latency analysis (TTFT, TPOT)
+  - Detailed metrics and summary statistics
+- **Performance Plots**: Interactive visualizations with multiple Y-axis metric options
+- **Runtime Configuration Tracking**: View server configurations and deployment parameters
+
 ### MLPerf Dashboard
 
 - **Multi-Version Support**: Compare MLPerf v5.0 and v5.1 submissions
@@ -25,12 +35,13 @@ A comprehensive performance analysis dashboard for RHAIIS (Red Hat AI Inference 
 
 ## Key Metrics Analyzed
 
-- **Throughput**: Output tokens per second
-- **Latency**: Time to First Token (TTFT) and Inter-Token Latency (ITL)
+- **Throughput**: Output tokens per second, total tokens per second
+- **Latency**: Time to First Token (TTFT), Time Per Output Token (TPOT), Inter-Token Latency (ITL)
 - **Efficiency**: Throughput per tensor parallelism unit
 - **Cost Efficiency**: Cost per million tokens across cloud providers
 - **Error Rates**: Request success/failure analysis
 - **Concurrency Performance**: Performance at different load levels
+- **Disaggregated Architecture** (LLM-D): Prefill/decode pod configurations, replica scaling
 
 ## Directory Structure
 
@@ -39,12 +50,14 @@ performance-dashboard/
 ├── dashboard.py                    # Main dashboard application
 ├── dashboard_styles.py             # CSS styling file
 ├── mlperf_datacenter.py            # MLPerf dashboard module
+├── llmd_dashboard.py               # LLM-D dashboard module
 ├── pyproject.toml                  # Project metadata and dependencies
 ├── requirements.txt                # Python dependencies
 ├── Dockerfile.openshift            # Container build configuration
 ├── .pre-commit-config.yaml         # Pre-commit hooks configuration
 ├── Makefile                        # Development commands
 ├── consolidated_dashboard.csv      # RHAIIS benchmark data. Get the latest csv data from the AWS S3 bucket.
+├── llmd-dashboard.csv              # LLM-D benchmark data. Get the latest csv data from the AWS S3 bucket.
 ├── mlperf-data/                    # MLPerf data files
 │   ├── mlperf-5.1.csv              # MLPerf v5.1 submission data
 │   ├── mlperf-5.0.csv              # MLPerf v5.0 submission data
@@ -94,6 +107,7 @@ performance-dashboard/
 
 3. **Add your data**:
    - **RHAIIS data**: Place your `consolidated_dashboard.csv` in the root directory
+   - **LLM-D data**: Place your `llmd-dashboard.csv` in the root directory
    - **MLPerf data**: MLPerf CSV files are included in `mlperf-data/` directory
    - Use the utilities in `manual_runs/scripts/` to process new benchmark data
 
@@ -104,7 +118,7 @@ performance-dashboard/
    ```
 
 5. **Access**: Open http://localhost:8501 in your browser
-   - Use the sidebar to switch between "RHAIIS Dashboard" and "MLPerf Dashboard" views
+   - Use the sidebar to switch between "RHAIIS Dashboard", "LLM-D Dashboard", and "MLPerf Dashboard" views
 
 ### Development Environment Setup
 
@@ -173,8 +187,10 @@ See [Code Quality Documentation](docs/CODE_QUALITY.md) for detailed information.
 2. **Prepare your data**:
 
    ```bash
-   # Ensure you have the latest consolidated_dashboard.csv in the root directory
+   # Ensure you have the latest consolidated_dashboard.csv (RHAIIS) in the root directory
    # You can download it from the AWS S3 bucket or generate it using the scripts
+
+   # Ensure you have llmd-dashboard.csv (LLM-D) in the root directory
 
    # MLPerf data files are included in mlperf-data/ directory
    # Dataset summaries are in mlperf-data/summaries/
@@ -275,6 +291,27 @@ Original dataset files are stored in `mlperf-data/original/` and are **NOT versi
 4. Update `mlperf_datacenter.py` to map the model name to the summary file
 
 See `mlperf-data/original/README.md` and `mlperf-data/summaries/README.md` for detailed instructions.
+
+## LLM-D Data Management
+
+### LLM-D CSV Format
+
+The `llmd-dashboard.csv` file contains benchmark results for disaggregated LLM inference with the following key columns:
+
+- **Configuration**: `accelerator`, `model`, `version`, `TP`, `replicas`, `prefill_pod_count`, `decode_pod_count`
+- **Workload**: `prompt toks` (ISL), `output toks` (OSL), `intended concurrency`
+- **Performance Metrics**: `output_tok/sec`, `total_tok/sec`, `ttft_median`, `ttft_p95`, `tpot_median`, `itl_median`, `request_latency_median`
+- **Success Metrics**: `successful_requests`, `errored_requests`
+- **Metadata**: `uuid`, `runtime_args`, `router_config`
+
+### Compare with RHAIIS
+
+The LLM-D dashboard includes a comparison feature that:
+
+- Loads RHAIIS data from `consolidated_dashboard.csv`
+- Filters to matching accelerators and models
+- Compares LLM-D (1 replica only) vs RHAIIS performance
+- Supports ISL/OSL profile matching for fair comparisons
 
 ### Testing
 
