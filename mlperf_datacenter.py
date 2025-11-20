@@ -352,7 +352,6 @@ def render_mlperf_filters(
         Tuple of (filtered_df, filter_selections)
     """
     st.markdown("### Filter your data")
-    st.caption("Each filter updates based on your previous selections")
 
     # Initialize session state for filter management
     if "mlperf_filters_initialized" not in st.session_state:
@@ -1286,8 +1285,10 @@ def load_dataset_for_model(model_name: str) -> Optional[pd.DataFrame]:
     dataset_map = {
         "deepseek-r1": "mlperf-data/summaries/deepseek-r1.csv",
         "llama3-1-8b-datacenter": "mlperf-data/summaries/llama3-1-8b-datacenter.csv",
+        "llama3-1-405b": "mlperf-data/summaries/llama3-1-405b.csv",
         "llama2-70b-99": "mlperf-data/summaries/llama2-70b-99.csv",
         "llama2-70b-99-9": "mlperf-data/summaries/llama2-70b-99.csv",  # Same dataset as llama2-70b-99
+        "mixtral-8x7b": "mlperf-data/summaries/mixtral-8x7b.csv",
     }
 
     # Normalize model name for matching (converts "llama3.1-8b-datacenter" → "llama3-1-8b-datacenter")

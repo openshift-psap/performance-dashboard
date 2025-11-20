@@ -4,8 +4,10 @@ A comprehensive dashboard for analyzing and comparing LLM inference performance
 across different models, versions, and hardware configurations.
 """
 
+import base64
 import contextlib
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -28,6 +30,29 @@ try:
 except ImportError:
     MLPERF_AVAILABLE = False
     print("Warning: mlperf_datacenter module not found. MLPerf view will be disabled.")
+
+# Import LLM-D dashboard
+try:
+    from llmd_dashboard import render_llmd_dashboard
+
+    LLMD_AVAILABLE = True
+except ImportError:
+    LLMD_AVAILABLE = False
+    print("Warning: llmd_dashboard module not found. LLM-D view will be disabled.")
+
+
+def get_logo_base64():
+    """Load and encode the Red Hat logo as base64.
+
+    Returns:
+        Base64 encoded string of the logo image, or None if file not found.
+    """
+    logo_path = Path(__file__).parent / "assets" / "RedHat-logo.png"
+    try:
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except FileNotFoundError:
+        return None
 
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes max
@@ -160,6 +185,7 @@ def render_performance_plots_section(filtered_df):
                 "Time to First Token P95 (Response start delay)": "ttft_p95_s",
                 "Request Latency Median (Total request processing time)": "request_latency_median",
                 "Request Latency Max (Maximum request processing time)": "request_latency_max",
+                "Time Per Output Token P95 (Token generation time)": "tpot_p95",
                 "Total Throughput (Total tokens/second processed)": "total_tok/sec",
                 "Request Count (Successful completions)": "successful_requests",
                 "Error Rate (% Failed requests)": "error_rate",
@@ -177,7 +203,7 @@ def render_performance_plots_section(filtered_df):
         y_axis_display_label = y_axis_label
         if y_axis == "ttft_p95_s":
             y_axis_display_label = f"{y_axis_label} (s)"
-        elif y_axis == "itl_p95":
+        elif y_axis == "itl_p95" or y_axis == "tpot_p95":
             y_axis_display_label = f"{y_axis_label} (ms)"
         elif y_axis == "request_latency_median" or y_axis == "request_latency_max":
             y_axis_display_label = f"{y_axis_label} (s)"
@@ -2646,11 +2672,13 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
 
         debug_info = []
 
-        # FIRST PASS: Identify which model/accelerator combinations have SLO-compliant configurations
+        # FIRST PASS: Identify which model/accelerator/TP combinations have SLO-compliant configurations
         slo_analysis_data = []
-        model_accelerator_groups = filtered_df.groupby(["model", "accelerator"])
+        model_accelerator_tp_groups = filtered_df.groupby(
+            ["model", "accelerator", "TP"]
+        )
 
-        for (model, accelerator), group in model_accelerator_groups:
+        for (model, accelerator, tp), group in model_accelerator_tp_groups:
             result_series = get_optimal_concurrency_performance(
                 group,
                 itl_threshold,
@@ -2662,6 +2690,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
             result_dict = result_series.to_dict()
             result_dict["model"] = model
             result_dict["accelerator"] = accelerator
+            result_dict["TP"] = tp
 
             slo_analysis_data.append(result_dict)
 
@@ -2785,6 +2814,11 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
                 cost_df = cost_df.dropna(subset=["cpmt_total"])
 
                 if not cost_df.empty:
+                    # Create a combined label showing model and TP for better visualization
+                    cost_df["model_tp_label"] = cost_df.apply(
+                        lambda row: f"{row['model']} (TP={int(row['tp'])})", axis=1
+                    )
+
                     cost_col1, cost_col2 = st.columns(2)
 
                     with cost_col1:
@@ -2792,14 +2826,14 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
                         fig_time = px.bar(
                             cost_df.sort_values("ttmt_minutes", ascending=True),
                             x="ttmt_minutes",
-                            y="model",
+                            y="model_tp_label",
                             color="accelerator",
                             color_discrete_map=accelerator_color_map,
                             orientation="h",
                             title="Time to Million Tokens (minutes) - Lower is Better",
                             labels={
                                 "ttmt_minutes": "Time to Million Tokens (minutes)",
-                                "model": "Model",
+                                "model_tp_label": "Model (TP Configuration)",
                             },
                             template="plotly_white",
                             hover_data={
@@ -2820,14 +2854,14 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
                         fig_cost = px.bar(
                             cost_df.sort_values("cpmt_total", ascending=True),
                             x="cpmt_total",
-                            y="model",
+                            y="model_tp_label",
                             color="accelerator",
                             color_discrete_map=accelerator_color_map,
                             orientation="h",
                             title="Cost per Million Tokens (USD) - Lower is Better",
                             labels={
                                 "cpmt_total": "Cost per Million Tokens (USD)",
-                                "model": "Model",
+                                "model_tp_label": "Model (TP Configuration)",
                             },
                             template="plotly_white",
                             hover_data={
@@ -3321,6 +3355,14 @@ def render_filtered_data_section(filtered_df):
             create_grafana_link, axis=1
         )
 
+        # Reorder columns to place grafana_metrics_link after TP
+        cols = display_filtered_df.columns.tolist()
+        if "grafana_metrics_link" in cols and "TP" in cols:
+            cols.remove("grafana_metrics_link")
+            tp_idx = cols.index("TP")
+            cols.insert(tp_idx + 1, "grafana_metrics_link")
+            display_filtered_df = display_filtered_df[cols]
+
         # Define column configurations with help text
         column_config = {
             "Row #": st.column_config.NumberColumn(
@@ -3552,10 +3594,11 @@ def render_header_with_theme_toggle():
 
     with col1:
         # View selector
+        view_options = ["RHAIIS Dashboard"]
         if MLPERF_AVAILABLE:
-            view_options = ["RHAIIS Dashboard", "MLPerf Dashboard"]
-        else:
-            view_options = ["RHAIIS Dashboard"]
+            view_options.append("MLPerf Dashboard")
+        if LLMD_AVAILABLE:
+            view_options.append("LLM-D Dashboard")
 
         # Determine default index based on current session state
         # This persists the view selection across refreshes
@@ -3580,10 +3623,17 @@ def render_header_with_theme_toggle():
         st.query_params["view"] = selected_view
 
     with col2:
+        # Load Red Hat logo
+        logo_base64 = get_logo_base64()
+        if logo_base64:
+            logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="height: 40px; vertical-align: middle; margin-right: 10px;">'
+        else:
+            logo_html = "📊"
+
         st.markdown(
-            """
+            f"""
             <h1 style='text-align: center; margin-bottom: 0.5rem;' class='main-title'>
-                📊 LLM Inference Performance Dashboard
+                {logo_html} LLM Inference Performance Dashboard
             </h1>
             """,
             unsafe_allow_html=True,
@@ -3658,7 +3708,7 @@ initialize_session_state()
 # This allows the view selection to persist across page refreshes
 if "view" in st.query_params:
     view_from_url = st.query_params["view"]
-    if view_from_url in ["RHAIIS Dashboard", "MLPerf Dashboard"]:
+    if view_from_url in ["RHAIIS Dashboard", "MLPerf Dashboard", "LLM-D Dashboard"]:
         st.session_state.selected_view = view_from_url
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
@@ -3692,6 +3742,11 @@ if MLPERF_AVAILABLE and selected_view == "MLPerf Dashboard":
     }
 
     render_mlperf_dashboard(mlperf_versions)
+    st.stop()  # Stop execution here, don't load RHAIIS data
+
+# If LLM-D view is selected, render LLM-D dashboard and exit
+if LLMD_AVAILABLE and selected_view == "LLM-D Dashboard":
+    render_llmd_dashboard("llmd-dashboard.csv")
     st.stop()  # Stop execution here, don't load RHAIIS data
 
 # Otherwise, continue with RHAIIS dashboard
@@ -3991,7 +4046,7 @@ def main():
             preserved_selections = acc_default
 
         selected_accelerators = st.multiselect(
-            "Select Accelerator(s)",
+            "1️⃣ Select Accelerator(s)",
             accelerators,
             default=preserved_selections,
             key=prev_accel_key,
@@ -3999,244 +4054,10 @@ def main():
         st.caption("💡 See dropdown for more available models, versions and TP sizes.")
 
     with filter_col2:
-        # Versions filter - filtered by selected accelerators AND currently selected profile
+        # ISL/OSL Profile filter - filtered by selected accelerators
         temp_df = df.copy()
         if selected_accelerators:
             temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-
-        # Determine what the current/default profile is by checking session state
-        current_profile = st.session_state.get(
-            f"profile_filter_{st.session_state.filter_change_key}", None
-        )
-
-        # If no profile selected yet, determine the default that will be selected
-        if not current_profile:
-            # Get available profiles to determine default
-            profile_temp_df = df.copy()
-            if selected_accelerators:
-                profile_temp_df = profile_temp_df[
-                    profile_temp_df["accelerator"].isin(selected_accelerators)
-                ]
-
-            available_profiles = (
-                sorted(profile_temp_df["profile"].unique().tolist())
-                if not profile_temp_df.empty
-                else []
-            )
-
-            # Default to Profile B (512/2k) when clearing or as fallback
-            default_profile = "Profile B: Variable Workload (512/2k)"
-
-            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-                "filters_were_cleared", False
-            ):
-                current_profile = (
-                    default_profile
-                    if default_profile in available_profiles
-                    else (available_profiles[0] if available_profiles else None)
-                )
-            elif st.session_state.get("reset_to_defaults", False):
-                baseline_profile = st.session_state.get(
-                    "baseline_profile", default_profile
-                )
-                current_profile = (
-                    baseline_profile
-                    if baseline_profile in available_profiles
-                    else (
-                        default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
-                    )
-                )
-            else:
-                baseline_profile = st.session_state.get(
-                    "baseline_profile", default_profile
-                )
-                current_profile = (
-                    baseline_profile
-                    if baseline_profile in available_profiles
-                    else (
-                        default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
-                    )
-                )
-
-        # Filter versions by the current/default profile
-        if current_profile:
-            temp_df = temp_df[temp_df["profile"] == current_profile]
-
-        versions = (
-            sorted(temp_df["version"].unique().tolist()) if not temp_df.empty else []
-        )
-
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            versions_default = []
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_versions = st.session_state.get("baseline_versions", versions)
-            versions_default = [v for v in baseline_versions if v in versions]
-        else:
-            baseline_versions = st.session_state.get("baseline_versions", versions)
-            versions_default = [v for v in baseline_versions if v in versions]
-
-        # Get previously selected versions from session state
-        prev_versions_key = f"versions_filter_{st.session_state.filter_change_key}"
-        prev_selected = st.session_state.get(prev_versions_key, None)
-
-        # Keep previously selected versions that are still available in current profile
-        # Use 'is not None' to allow empty list selection
-        if prev_selected is not None:
-            preserved_selections = [v for v in prev_selected if v in versions]
-        else:
-            preserved_selections = versions_default
-
-        selected_versions = st.multiselect(
-            "Select Version(s)",
-            versions,
-            default=preserved_selections,
-            key=prev_versions_key,
-        )
-        st.caption(
-            "💡 **See Filters Help button to see all valid filter combinations.**"
-        )
-
-    with filter_col3:
-        # Models filter - filtered by selected accelerators, versions, AND currently selected profile
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-        if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-
-        # Determine what the current/default profile is by checking session state
-        # If no profile in session state yet, determine what the default will be
-        current_profile = st.session_state.get(
-            f"profile_filter_{st.session_state.filter_change_key}", None
-        )
-
-        # If no profile selected yet, determine the default that will be selected
-        if not current_profile:
-            # Get available profiles for accelerators/versions to determine default
-            profile_temp_df = df.copy()
-            if selected_accelerators:
-                profile_temp_df = profile_temp_df[
-                    profile_temp_df["accelerator"].isin(selected_accelerators)
-                ]
-            if selected_versions:
-                profile_temp_df = profile_temp_df[
-                    profile_temp_df["version"].isin(selected_versions)
-                ]
-
-            available_profiles = (
-                sorted(profile_temp_df["profile"].unique().tolist())
-                if not profile_temp_df.empty
-                else []
-            )
-
-            # Use the same logic as the profile filter to determine default
-            # Default to Profile B (512/2k) when clearing or as fallback
-            default_profile = "Profile B: Variable Workload (512/2k)"
-
-            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-                "filters_were_cleared", False
-            ):
-                current_profile = (
-                    default_profile
-                    if default_profile in available_profiles
-                    else (available_profiles[0] if available_profiles else None)
-                )
-            elif st.session_state.get("reset_to_defaults", False):
-                baseline_profile = st.session_state.get(
-                    "baseline_profile", default_profile
-                )
-                current_profile = (
-                    baseline_profile
-                    if baseline_profile in available_profiles
-                    else (
-                        default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
-                    )
-                )
-            else:
-                baseline_profile = st.session_state.get(
-                    "baseline_profile", default_profile
-                )
-                current_profile = (
-                    baseline_profile
-                    if baseline_profile in available_profiles
-                    else (
-                        default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
-                    )
-                )
-
-        # Filter models by the current/default profile
-        if current_profile:
-            temp_df = temp_df[temp_df["profile"] == current_profile]
-
-        models = sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
-
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            models_default = []
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_models = st.session_state.get("baseline_models", models)
-            models_default = [m for m in baseline_models if m in models]
-        else:
-            baseline_models = st.session_state.get("baseline_models", models)
-            models_default = [m for m in baseline_models if m in models]
-
-        # Check if "Select All Models" is checked (from previous render)
-        select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
-        select_all_checked = st.session_state.get(select_all_key, False)
-
-        # If "Select All" is checked, set default to all models
-        models_to_select = models if select_all_checked else models_default
-
-        # Get previously selected models from session state
-        prev_models_key = f"models_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
-        prev_selected = st.session_state.get(prev_models_key, None)
-
-        # Keep previously selected models that are still available in current profile
-        # Use 'is not None' to allow empty list selection
-        if prev_selected is not None:
-            preserved_selections = [m for m in prev_selected if m in models]
-        else:
-            preserved_selections = models_to_select
-
-        selected_models = st.multiselect(
-            "Select Model(s)",
-            models,
-            default=preserved_selections,
-            key=prev_models_key,
-        )
-
-        # Add checkbox for selecting all models below the dropdown
-        st.checkbox(
-            "Select All Models",
-            value=select_all_checked,
-            key=select_all_key,
-        )
-
-    # Add negative margin spacer to reduce gap between filter rows
-    st.markdown('<div style="margin-top: -2rem;"></div>', unsafe_allow_html=True)
-
-    filter_col4, filter_col5, filter_col6 = st.columns(3)
-
-    with filter_col4:
-        # ISL/OSL Profile filter - filtered by selected accelerators, versions, and models
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-        if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-        if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
 
         profiles = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
@@ -4278,7 +4099,7 @@ def main():
 
         selected_profile = (
             st.selectbox(
-                "Select Input/Output Sequence Length (ISL/OSL)",
+                "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                 profiles,
                 index=(
                     profiles.index(profiles_default)
@@ -4302,6 +4123,114 @@ def main():
             if st.session_state.get("filters_were_cleared", False):
                 st.session_state.filters_were_cleared = False
 
+    with filter_col3:
+        # Versions filter - filtered by selected accelerators AND currently selected profile
+        temp_df = df.copy()
+        if selected_accelerators:
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+
+        # Filter versions by the currently selected profile
+        if selected_profiles:
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+
+        versions = (
+            sorted(temp_df["version"].unique().tolist()) if not temp_df.empty else []
+        )
+
+        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+            "filters_were_cleared", False
+        ):
+            versions_default = []
+        elif st.session_state.get("reset_to_defaults", False):
+            baseline_versions = st.session_state.get("baseline_versions", versions)
+            versions_default = [v for v in baseline_versions if v in versions]
+        else:
+            baseline_versions = st.session_state.get("baseline_versions", versions)
+            versions_default = [v for v in baseline_versions if v in versions]
+
+        # Get previously selected versions from session state
+        prev_versions_key = f"versions_filter_{st.session_state.filter_change_key}"
+        prev_selected = st.session_state.get(prev_versions_key, None)
+
+        # Keep previously selected versions that are still available in current profile
+        # Use 'is not None' to allow empty list selection
+        if prev_selected is not None:
+            preserved_selections = [v for v in prev_selected if v in versions]
+        else:
+            preserved_selections = versions_default
+
+        selected_versions = st.multiselect(
+            "3️⃣ Select Version(s)",
+            versions,
+            default=preserved_selections,
+            key=prev_versions_key,
+        )
+        st.caption(
+            "💡 **See Filters Help button to see all valid filter combinations.**"
+        )
+
+    # Add negative margin spacer to reduce gap between filter rows
+    st.markdown('<div style="margin-top: -2rem;"></div>', unsafe_allow_html=True)
+
+    filter_col4, filter_col5, filter_col6 = st.columns(3)
+
+    with filter_col4:
+        # Models filter - filtered by selected accelerators, versions, AND currently selected profile
+        temp_df = df.copy()
+        if selected_accelerators:
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+        if selected_versions:
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+
+        # Filter models by the currently selected profile
+        if selected_profiles:
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+
+        models = sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
+
+        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+            "filters_were_cleared", False
+        ):
+            models_default = []
+        elif st.session_state.get("reset_to_defaults", False):
+            baseline_models = st.session_state.get("baseline_models", models)
+            models_default = [m for m in baseline_models if m in models]
+        else:
+            baseline_models = st.session_state.get("baseline_models", models)
+            models_default = [m for m in baseline_models if m in models]
+
+        # Check if "Select All Models" is checked (from previous render)
+        select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
+        select_all_checked = st.session_state.get(select_all_key, False)
+
+        # If "Select All" is checked, set default to all models
+        models_to_select = models if select_all_checked else models_default
+
+        # Get previously selected models from session state
+        prev_models_key = f"models_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
+        prev_selected = st.session_state.get(prev_models_key, None)
+
+        # Keep previously selected models that are still available in current profile
+        # Use 'is not None' to allow empty list selection
+        if prev_selected is not None:
+            preserved_selections = [m for m in prev_selected if m in models]
+        else:
+            preserved_selections = models_to_select
+
+        selected_models = st.multiselect(
+            "4️⃣ Select Model(s)",
+            models,
+            default=preserved_selections,
+            key=prev_models_key,
+        )
+
+        # Add checkbox for selecting all models below the dropdown
+        st.checkbox(
+            "Select All Models",
+            value=select_all_checked,
+            key=select_all_key,
+        )
+
     with filter_col5:
         # TP sizes filter - filtered by accelerators, versions, models, and profiles
         temp_df = df.copy()
@@ -4324,13 +4253,36 @@ def main():
         select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
         select_all_checked = st.session_state.get(select_all_key, False)
 
+        # Track previous model selection for detecting changes
+        tracking_key = "previous_models_for_tp_tracking"
+        prev_selected_models = st.session_state.get(tracking_key, None)
+
+        # Get previous TP selection
+        prev_tp_key = (
+            f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
+        )
+        prev_selected_tp = st.session_state.get(prev_tp_key, None)
+
+        # Check if models selection changed
+        models_changed = (
+            (prev_selected_models != selected_models)
+            if prev_selected_models is not None
+            else (bool(selected_models))
+        )
+
         if st.session_state.get("clear_all_filters", False) or st.session_state.get(
             "filters_were_cleared", False
         ):
             tp_default = []
+        elif models_changed and selected_models:
+            # Models changed and some are selected - auto-select all TP sizes for selected models
+            tp_default = tp_sizes
         elif select_all_checked:
             # If "Select All Models" is checked, also select all TP sizes
             tp_default = tp_sizes
+        elif prev_selected_tp is not None:
+            # Models didn't change - preserve user's manual TP selections (filtered to available)
+            tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
         elif st.session_state.get("reset_to_defaults", False):
             baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
             tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
@@ -4339,11 +4291,14 @@ def main():
             tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
 
         selected_tp = st.multiselect(
-            "Select TP Size(s)",
+            "5️⃣ Select TP Size(s)",
             tp_sizes,
             default=tp_default,
-            key=f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}",
+            key=prev_tp_key,
         )
+
+        # Update the tracking variable with current selection
+        st.session_state[tracking_key] = selected_models
 
     with filter_col6:
         btn_col1, btn_col2, btn_col3 = st.columns(3)
@@ -4356,6 +4311,8 @@ def main():
                 st.session_state.filters_were_cleared = False
                 st.session_state.reset_to_defaults = True
                 st.session_state.filter_change_key += 1
+                # Reset model tracking for smart TP filtering
+                st.session_state.previous_models_for_tp_tracking = None
                 # Close all expanders when resetting filters
                 st.session_state.performance_plots_expanded = False
                 st.session_state.model_comparison_expanded = False
@@ -4371,6 +4328,8 @@ def main():
                 st.session_state.clear_all_filters = True
                 st.session_state.filters_were_cleared = True
                 st.session_state.filter_change_key += 1
+                # Reset model tracking for smart TP filtering
+                st.session_state.previous_models_for_tp_tracking = None
                 # Close all expanders when clearing filters
                 st.session_state.performance_plots_expanded = False
                 st.session_state.model_comparison_expanded = False
@@ -4552,6 +4511,8 @@ def main():
             "MI300X": "#ff7f0e",
             "TPU": "#2ca02c",
         }
+
+        st.markdown("---")
 
         render_performance_plots_section(filtered_df)
         render_pareto_plots_section()
