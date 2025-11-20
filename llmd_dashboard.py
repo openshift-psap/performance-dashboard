@@ -30,7 +30,6 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
-
 def assign_profile(row):
     """Assigns a human-readable profile name based on token counts."""
     prompt_toks = row["prompt toks"]
@@ -805,10 +804,10 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
     Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the RHAIIS CSV file (fallback)
+        file_path: Path to the RHAIIS CSV file (fallback).
 
     Returns:
-        DataFrame with RHAIIS data
+        DataFrame with RHAIIS data.
     """
     try:
         # Try S3 first if configured
