@@ -194,6 +194,7 @@ data/*.csv
 data/*.json
 !data/sample*
 !data/README.md
+dummy-no-git/
 
 # Log files
 *.log

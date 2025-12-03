@@ -4,11 +4,69 @@ This module provides functionality to load, process, and visualize
 LLM-D benchmark results with disaggregated prefill/decode architecture.
 """
 
+import io
+import logging
+import os
+import sys
 from typing import Optional
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
+
+# S3 Configuration from environment variables
+S3_BUCKET = os.environ.get("S3_BUCKET")
+S3_KEY = os.environ.get("S3_KEY", "consolidated_dashboard.csv")
+S3_KEY_LLMD = os.environ.get("S3_KEY_LLMD", "llmd-dashboard.csv")
+S3_REGION = os.environ.get("S3_REGION", "us-east-1")
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+
+
+def _read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.DataFrame:
+    """Read a CSV file from S3 bucket.
+
+    Args:
+        bucket: S3 bucket name.
+        key: S3 object key (path to file in bucket).
+        region: AWS region name.
+
+    Returns:
+        DataFrame with the CSV data.
+    """
+    import boto3
+    from botocore import UNSIGNED
+    from botocore.config import Config
+
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        s3_client = boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        )
+    else:
+        try:
+            s3_client = boto3.client("s3", region_name=region)
+            s3_client.head_object(Bucket=bucket, Key=key)
+        except Exception:
+            s3_client = boto3.client(
+                "s3",
+                region_name=region,
+                config=Config(signature_version=UNSIGNED),
+            )
+
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    csv_content = response["Body"].read().decode("utf-8")
+    return pd.read_csv(io.StringIO(csv_content))
 
 
 def assign_profile(row):
@@ -42,19 +100,37 @@ def clean_profile_name(profile_name):
 
 
 def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
-    """Load and preprocess LLM-D benchmark data from CSV file.
+    """Load and preprocess LLM-D benchmark data from CSV file or S3.
+
+    If S3_BUCKET environment variable is set, data is loaded from S3.
+    Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the CSV file to load.
+        file_path: Path to the CSV file to load (fallback).
 
     Returns:
         DataFrame with loaded and processed data, or None if error occurs.
     """
     try:
-        df = pd.read_csv(file_path)
+        # Try S3 first if configured
+        if S3_BUCKET:
+            try:
+                df = _read_csv_from_s3(S3_BUCKET, S3_KEY_LLMD, S3_REGION)
+                logger.info(
+                    f"Successfully loaded LLM-D data from S3: s3://{S3_BUCKET}/{S3_KEY_LLMD}"
+                )
+            except Exception as s3_error:
+                logger.warning(
+                    f"S3 load failed ({s3_error}), falling back to local file"
+                )
+                df = pd.read_csv(file_path)
+        else:
+            logger.info(f"Loading LLM-D data from local file: {file_path}")
+            df = pd.read_csv(file_path)
         # Strip whitespace from string columns
+        col: str
         for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].str.strip()
+            df[col] = df[col].str.strip()  # type: ignore[assignment]
 
         # Convert numeric columns
         numeric_cols = [
@@ -65,9 +141,9 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
             "prefill_pod_count",
             "decode_pod_count",
         ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col_name in numeric_cols:
+            if col_name in df.columns:
+                df[col_name] = pd.to_numeric(df[col_name], errors="coerce")
 
         # Assign profile based on prompt/output tokens
         if "prompt toks" in df.columns and "output toks" in df.columns:
@@ -86,9 +162,9 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
             "ttft_p999",
             "ttft_mean",
         ]
-        for col in ttft_cols:
-            if col in df.columns:
-                df[f"{col}_s"] = df[col] / 1000
+        for ttft_col in ttft_cols:
+            if ttft_col in df.columns:
+                df[f"{ttft_col}_s"] = df[ttft_col] / 1000
 
         # Calculate error rate (percentage of failed requests)
         if "successful_requests" in df.columns and "errored_requests" in df.columns:
@@ -150,7 +226,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col2:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
 
         profiles = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
@@ -199,9 +275,9 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col3:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
 
         versions = (
             sorted(temp_df["version"].unique().tolist()) if not temp_df.empty else []
@@ -227,11 +303,11 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col4:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
         if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]  # type: ignore[assignment]
 
         models = sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
 
@@ -279,13 +355,13 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col5:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
         if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]  # type: ignore[assignment]
         if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
+            temp_df = temp_df[temp_df["model"].isin(selected_models)]  # type: ignore[assignment]
 
         tp_sizes = (
             sorted(temp_df["TP"].dropna().unique().tolist())
@@ -320,15 +396,15 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col6:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
         if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]  # type: ignore[assignment]
         if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
+            temp_df = temp_df[temp_df["model"].isin(selected_models)]  # type: ignore[assignment]
         if selected_tp:
-            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]
+            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]  # type: ignore[assignment]
 
         replicas = (
             sorted(temp_df["replicas"].dropna().unique().tolist())
@@ -366,17 +442,17 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col7:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
         if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]  # type: ignore[assignment]
         if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
+            temp_df = temp_df[temp_df["model"].isin(selected_models)]  # type: ignore[assignment]
         if selected_tp:
-            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]
+            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]  # type: ignore[assignment]
         if selected_replicas:
-            temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]
+            temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
 
         prefill_pods = (
             sorted(temp_df["prefill_pod_count"].dropna().unique().tolist())
@@ -413,19 +489,19 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col8:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
         if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
         if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            temp_df = temp_df[temp_df["version"].isin(selected_versions)]  # type: ignore[assignment]
         if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
+            temp_df = temp_df[temp_df["model"].isin(selected_models)]  # type: ignore[assignment]
         if selected_tp:
-            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]
+            temp_df = temp_df[temp_df["TP"].isin(selected_tp)]  # type: ignore[assignment]
         if selected_replicas:
-            temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]
+            temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
         if selected_prefill_pods:
-            temp_df = temp_df[temp_df["prefill_pod_count"].isin(selected_prefill_pods)]
+            temp_df = temp_df[temp_df["prefill_pod_count"].isin(selected_prefill_pods)]  # type: ignore[assignment]
 
         decode_pods = (
             sorted(temp_df["decode_pod_count"].dropna().unique().tolist())
@@ -666,25 +742,25 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     filtered_df = df.copy()
 
     if selected_accelerators:
-        filtered_df = filtered_df[
+        filtered_df = filtered_df[  # type: ignore[assignment]
             filtered_df["accelerator"].isin(selected_accelerators)
         ]
     if selected_profiles:
-        filtered_df = filtered_df[filtered_df["profile"].isin(selected_profiles)]
+        filtered_df = filtered_df[filtered_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
     if selected_versions:
-        filtered_df = filtered_df[filtered_df["version"].isin(selected_versions)]
+        filtered_df = filtered_df[filtered_df["version"].isin(selected_versions)]  # type: ignore[assignment]
     if selected_models:
-        filtered_df = filtered_df[filtered_df["model"].isin(selected_models)]
+        filtered_df = filtered_df[filtered_df["model"].isin(selected_models)]  # type: ignore[assignment]
     if selected_tp:
-        filtered_df = filtered_df[filtered_df["TP"].isin(selected_tp)]
+        filtered_df = filtered_df[filtered_df["TP"].isin(selected_tp)]  # type: ignore[assignment]
     if selected_replicas:
-        filtered_df = filtered_df[filtered_df["replicas"].isin(selected_replicas)]
+        filtered_df = filtered_df[filtered_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
     if selected_prefill_pods:
-        filtered_df = filtered_df[
+        filtered_df = filtered_df[  # type: ignore[assignment]
             filtered_df["prefill_pod_count"].isin(selected_prefill_pods)
         ]
     if selected_decode_pods:
-        filtered_df = filtered_df[
+        filtered_df = filtered_df[  # type: ignore[assignment]
             filtered_df["decode_pod_count"].isin(selected_decode_pods)
         ]
 
@@ -724,19 +800,37 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 
 def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFrame:
-    """Load RHAIIS data for comparison.
+    """Load RHAIIS data for comparison from S3 or local file.
+
+    If S3_BUCKET environment variable is set, data is loaded from S3.
+    Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the RHAIIS CSV file
+        file_path: Path to the RHAIIS CSV file (fallback)
 
     Returns:
         DataFrame with RHAIIS data
     """
     try:
-        df = pd.read_csv(file_path)
+        # Try S3 first if configured
+        if S3_BUCKET:
+            try:
+                df = _read_csv_from_s3(S3_BUCKET, S3_KEY, S3_REGION)
+                logger.info(
+                    f"Successfully loaded RHAIIS data from S3: s3://{S3_BUCKET}/{S3_KEY}"
+                )
+            except Exception as s3_error:
+                logger.warning(
+                    f"S3 load failed ({s3_error}), falling back to local file"
+                )
+                df = pd.read_csv(file_path)
+        else:
+            df = pd.read_csv(file_path)
+
         # Strip whitespace from string columns
+        col: str
         for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].str.strip()
+            df[col] = df[col].str.strip()  # type: ignore[assignment]
 
         # Assign profile based on prompt/output tokens (same as llmd_data)
         if "prompt toks" in df.columns and "output toks" in df.columns:
@@ -744,6 +838,7 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
 
         return df
     except Exception as e:
+        logger.error(f"Error loading RHAIIS data: {str(e)}")
         st.error(f"Error loading RHAIIS data: {str(e)}")
         return pd.DataFrame()
 
@@ -800,7 +895,7 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
 
         # Filter RHAIIS data to match the same accelerators
         if llmd_accelerators and "accelerator" in rhaiis_df.columns:
-            rhaiis_df = rhaiis_df[
+            rhaiis_df = rhaiis_df[  # type: ignore[assignment]
                 rhaiis_df["accelerator"].isin(llmd_accelerators)
             ].copy()
 
