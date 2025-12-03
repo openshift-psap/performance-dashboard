@@ -129,7 +129,7 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
             df = pd.read_csv(file_path)
         # Strip whitespace from string columns
         for col in df.select_dtypes(include=["object"]).columns:
-            df[col] = df[col].str.strip()
+            df[col] = df[col].str.strip()  # type: ignore[assignment]
 
         # Convert numeric columns
         numeric_cols = [
@@ -140,9 +140,9 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
             "prefill_pod_count",
             "decode_pod_count",
         ]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+        for col_name in numeric_cols:
+            if col_name in df.columns:
+                df[col_name] = pd.to_numeric(df[col_name], errors="coerce")
 
         # Assign profile based on prompt/output tokens
         if "prompt toks" in df.columns and "output toks" in df.columns:
@@ -161,9 +161,9 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
             "ttft_p999",
             "ttft_mean",
         ]
-        for col in ttft_cols:
-            if col in df.columns:
-                df[f"{col}_s"] = df[col] / 1000
+        for ttft_col in ttft_cols:
+            if ttft_col in df.columns:
+                df[f"{ttft_col}_s"] = df[ttft_col] / 1000
 
         # Calculate error rate (percentage of failed requests)
         if "successful_requests" in df.columns and "errored_requests" in df.columns:
@@ -225,7 +225,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with filter_col2:
         temp_df = df.copy()
         if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
 
         profiles = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []

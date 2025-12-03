@@ -181,7 +181,7 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
                     df.loc[sys_idx, col] = df.loc[res_idx, col]
 
         # NOW filter to only keep system rows
-        df = df[system_rows_mask].copy()
+        df = df[system_rows_mask].copy()  # type: ignore[assignment]
 
     # Convert numeric columns
     # First remove commas from number strings (e.g., "1,642.22" -> "1642.22")
@@ -601,7 +601,7 @@ def render_mlperf_filters(
     # Apply filters so far to get available accelerators
     filtered_so_far = df_available.copy()
     if selected_orgs:
-        filtered_so_far = filtered_so_far[
+        filtered_so_far = filtered_so_far[  # type: ignore[assignment]
             filtered_so_far["Organization"].isin(selected_orgs)
         ]
 
@@ -701,7 +701,7 @@ def render_mlperf_filters(
 
     # Apply accelerator filter
     if selected_accelerators:
-        filtered_so_far = filtered_so_far[
+        filtered_so_far = filtered_so_far[  # type: ignore[assignment]
             filtered_so_far["Accelerator"].isin(selected_accelerators)
         ]
 
@@ -852,10 +852,12 @@ def render_mlperf_filters(
     filtered_df = df_available.copy()
 
     if selected_orgs:
-        filtered_df = filtered_df[filtered_df["Organization"].isin(selected_orgs)]
+        filtered_df = filtered_df[  # type: ignore[assignment]
+            filtered_df["Organization"].isin(selected_orgs)
+        ]
 
     if selected_accelerators:
-        filtered_df = filtered_df[
+        filtered_df = filtered_df[  # type: ignore[assignment]
             filtered_df["Accelerator"].isin(selected_accelerators)
         ]
 
@@ -943,8 +945,8 @@ def create_benchmark_comparison_chart(
         plot_df["# of Nodes"] = None
 
     # Only drop rows where the actual metric is missing
-    plot_df = plot_df.dropna(subset=[metric_col])
-    plot_df = plot_df[plot_df[metric_col] > 0]
+    plot_df = plot_df.dropna(subset=[metric_col])  # type: ignore[call-overload]
+    plot_df = plot_df[plot_df[metric_col] > 0]  # type: ignore[assignment]
 
     # For CPU runs, fill in '# of Accelerators' with a display value
     cpu_mask = plot_df["Accelerator"].astype(str).str.startswith("cpu-", na=False)
@@ -1571,7 +1573,7 @@ def render_mlperf_results_table(df: pd.DataFrame, filter_selections: dict):
     display_df = df[display_cols].copy()
 
     # Remove rows with all NaN metrics
-    display_df = display_df.dropna(subset=metric_cols, how="all")
+    display_df = display_df.dropna(subset=metric_cols, how="all")  # type: ignore[call-overload]
 
     if display_df.empty:
         st.warning("No results match the selected filters.")
@@ -1707,9 +1709,9 @@ def create_version_comparison(
 
     # Only keep systems that appear in multiple versions (using internal _System_Key)
     system_counts = comparison_df.groupby("_System_Key")["Version"].nunique()
-    multi_version_systems = system_counts[system_counts > 1].index
+    multi_version_systems = system_counts[system_counts > 1].index  # type: ignore[attr-defined]
 
-    comparison_df = comparison_df[
+    comparison_df = comparison_df[  # type: ignore[assignment]
         comparison_df["_System_Key"].isin(multi_version_systems)
     ]
 
