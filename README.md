@@ -389,7 +389,7 @@ The dashboard can load CSV data directly from an AWS S3 bucket instead of local 
 export AWS_ACCESS_KEY_ID='your-key'
 export AWS_SECRET_ACCESS_KEY='your-secret'
 export S3_BUCKET='your-s3-bucket'
-export S3_KEY='location of the consolidated-dashboard.csv file in the bucket'
+export S3_KEY='location of the consolidated_dashboard.csv file in the bucket'
 export S3_KEY_LLMD='location of the llmd-dashboard.csv file in the bucket'
 export S3_REGION='us-east-1'
 
