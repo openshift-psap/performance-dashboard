@@ -105,6 +105,8 @@ performance-dashboard/
    pip install -r requirements.txt
    ```
 
+   > **Note**: `boto3` is included for optional S3 integration. See [S3 Configuration](#s3-configuration-optional) for details.
+
 3. **Add your data**:
    - **RHAIIS data**: Place your `consolidated_dashboard.csv` in the root directory
    - **LLM-D data**: Place your `llmd-dashboard.csv` in the root directory
@@ -227,9 +229,17 @@ See [Code Quality Documentation](docs/CODE_QUALITY.md) for detailed information.
 
 #### Updating the Dashboard
 
-When you have new data or code changes:
+**Option 1: Update Data via S3 (Recommended for data-only changes)**
 
-1. **Rebuild the image** with updated data:
+If S3 is configured, simply upload new CSV files to your S3 bucket.
+
+The dashboard will automatically pick up the new data within 5 minutes (cache TTL).
+
+**Option 2: Rebuild Container (Required for code changes)**
+
+When you have code changes:
+
+1. **Rebuild the image** with updated code:
 
    ```bash
    podman build -f Dockerfile.openshift -t quay.io/your-username/rhaiis-dashboard:latest .
@@ -347,9 +357,45 @@ See [tests/README.md](tests/README.md) for detailed test documentation.
 
 ### Environment Variables
 
+#### Streamlit Configuration
+
 - `STREAMLIT_SERVER_HEADLESS=true`: Headless mode for production
 - `STREAMLIT_SERVER_PORT=8501`: Server port
 - `STREAMLIT_SERVER_ADDRESS=0.0.0.0`: Listen address
+
+#### S3 Configuration (Optional)
+
+The dashboard can load CSV data directly from an AWS S3 bucket instead of local files. This is useful for production deployments where data is updated externally.
+
+| Variable                | Description                               | Default                      |
+| ----------------------- | ----------------------------------------- | ---------------------------- |
+| `S3_BUCKET`             | S3 bucket name (enables S3 mode when set) | _(none)_                     |
+| `S3_KEY`                | Path to RHAIIS CSV in bucket              | `consolidated_dashboard.csv` |
+| `S3_KEY_LLMD`           | Path to LLM-D CSV in bucket               | `llmd-dashboard.csv`         |
+| `S3_REGION`             | AWS region                                | `us-east-1`                  |
+| `AWS_ACCESS_KEY_ID`     | AWS access key (for private buckets)      | _(none)_                     |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key (for private buckets)      | _(none)_                     |
+
+**Behavior:**
+
+- If `S3_BUCKET` is set, data is loaded from S3 with a 5-minute cache
+- If S3 fails, falls back to local CSV files
+- If `S3_BUCKET` is not set, uses local files only
+
+#### Local Testing with S3
+
+```bash
+# Set environment variables
+export AWS_ACCESS_KEY_ID='your-key'
+export AWS_SECRET_ACCESS_KEY='your-secret'
+export S3_BUCKET='your-s3-bucket'
+export S3_KEY='location of the consolidated-dashboard.csv file in the bucket'
+export S3_KEY_LLMD='location of the llmd-dashboard.csv file in the bucket'
+export S3_REGION='us-east-1'
+
+# Run the dashboard
+streamlit run dashboard.py
+```
 
 ### Data Requirements
 

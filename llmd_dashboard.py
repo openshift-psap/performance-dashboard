@@ -4,11 +4,69 @@ This module provides functionality to load, process, and visualize
 LLM-D benchmark results with disaggregated prefill/decode architecture.
 """
 
+import io
+import logging
+import os
+import sys
 from typing import Optional
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
+
+# S3 Configuration from environment variables
+S3_BUCKET = os.environ.get("S3_BUCKET")
+S3_KEY = os.environ.get("S3_KEY", "consolidated_dashboard.csv")
+S3_KEY_LLMD = os.environ.get("S3_KEY_LLMD", "llmd-dashboard.csv")
+S3_REGION = os.environ.get("S3_REGION", "us-east-1")
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+
+
+def _read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.DataFrame:
+    """Read a CSV file from S3 bucket.
+
+    Args:
+        bucket: S3 bucket name.
+        key: S3 object key (path to file in bucket).
+        region: AWS region name.
+
+    Returns:
+        DataFrame with the CSV data.
+    """
+    import boto3
+    from botocore import UNSIGNED
+    from botocore.config import Config
+
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        s3_client = boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        )
+    else:
+        try:
+            s3_client = boto3.client("s3", region_name=region)
+            s3_client.head_object(Bucket=bucket, Key=key)
+        except Exception:
+            s3_client = boto3.client(
+                "s3",
+                region_name=region,
+                config=Config(signature_version=UNSIGNED),
+            )
+
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    csv_content = response["Body"].read().decode("utf-8")
+    return pd.read_csv(io.StringIO(csv_content))
 
 
 def assign_profile(row):
@@ -42,16 +100,33 @@ def clean_profile_name(profile_name):
 
 
 def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
-    """Load and preprocess LLM-D benchmark data from CSV file.
+    """Load and preprocess LLM-D benchmark data from CSV file or S3.
+
+    If S3_BUCKET environment variable is set, data is loaded from S3.
+    Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the CSV file to load.
+        file_path: Path to the CSV file to load (fallback).
 
     Returns:
         DataFrame with loaded and processed data, or None if error occurs.
     """
     try:
-        df = pd.read_csv(file_path)
+        # Try S3 first if configured
+        if S3_BUCKET:
+            try:
+                df = _read_csv_from_s3(S3_BUCKET, S3_KEY_LLMD, S3_REGION)
+                logger.info(
+                    f"Successfully loaded LLM-D data from S3: s3://{S3_BUCKET}/{S3_KEY_LLMD}"
+                )
+            except Exception as s3_error:
+                logger.warning(
+                    f"S3 load failed ({s3_error}), falling back to local file"
+                )
+                df = pd.read_csv(file_path)
+        else:
+            logger.info(f"Loading LLM-D data from local file: {file_path}")
+            df = pd.read_csv(file_path)
         # Strip whitespace from string columns
         for col in df.select_dtypes(include=["object"]).columns:
             df[col] = df[col].str.strip()
@@ -724,16 +799,33 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
 
 def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFrame:
-    """Load RHAIIS data for comparison.
+    """Load RHAIIS data for comparison from S3 or local file.
+
+    If S3_BUCKET environment variable is set, data is loaded from S3.
+    Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the RHAIIS CSV file
+        file_path: Path to the RHAIIS CSV file (fallback)
 
     Returns:
         DataFrame with RHAIIS data
     """
     try:
-        df = pd.read_csv(file_path)
+        # Try S3 first if configured
+        if S3_BUCKET:
+            try:
+                df = _read_csv_from_s3(S3_BUCKET, S3_KEY, S3_REGION)
+                logger.info(
+                    f"Successfully loaded RHAIIS data from S3: s3://{S3_BUCKET}/{S3_KEY}"
+                )
+            except Exception as s3_error:
+                logger.warning(
+                    f"S3 load failed ({s3_error}), falling back to local file"
+                )
+                df = pd.read_csv(file_path)
+        else:
+            df = pd.read_csv(file_path)
+
         # Strip whitespace from string columns
         for col in df.select_dtypes(include=["object"]).columns:
             df[col] = df[col].str.strip()
@@ -744,6 +836,7 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
 
         return df
     except Exception as e:
+        logger.error(f"Error loading RHAIIS data: {str(e)}")
         st.error(f"Error loading RHAIIS data: {str(e)}")
         return pd.DataFrame()
 

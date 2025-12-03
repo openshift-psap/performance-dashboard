@@ -29,7 +29,6 @@ spec:
 
       containers:
         - name: dashboard
-          # TODO: Replace <your quay username> with your actual Quay.io username or organization
           image: quay.io/<your quay username>/rhaiis-dashboard:latest
           imagePullPolicy: Always
 
@@ -46,6 +45,26 @@ spec:
               value: "8501"
             - name: STREAMLIT_SERVER_ADDRESS
               value: "0.0.0.0"
+            # S3 Configuration for CSV data
+            - name: S3_BUCKET
+              value: "your bucket name"
+            - name: S3_KEY
+              value: "the location of the consolidated_dashboard.csv file"
+            - name: S3_KEY_LLMD
+              value: "the location of the llmd-dashboard.csv file"
+            - name: S3_REGION
+              value: "the region of your bucket"
+            # AWS credentials from Kubernetes Secret
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
 
           # Resource limits
           resources:
