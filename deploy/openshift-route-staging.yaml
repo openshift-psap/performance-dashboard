@@ -1,0 +1,21 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: staging-aidash
+  namespace: perf-aidashboard
+  labels:
+    app: perf-aidashboard-staging
+    app.kubernetes.io/name: perf-aidashboard-staging
+    environment: staging
+spec:
+  host: <your host name>
+  to:
+    kind: Service
+    name: perf-aidashboard-staging-service
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
