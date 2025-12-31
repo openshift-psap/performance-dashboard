@@ -1,12 +1,13 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: rhaiis-dashboard
-  namespace: rhaiis-dashboard
+  name: perf-aidashboard-staging
+  namespace: perf-aidashboard
   labels:
-    app: rhaiis-dashboard
-    app.kubernetes.io/name: rhaiis-dashboard
+    app: perf-aidashboard-staging
+    app.kubernetes.io/name: perf-aidashboard-staging
     app.kubernetes.io/component: web
+    environment: staging
 spec:
   replicas: 2
   strategy:
@@ -16,21 +17,21 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      app: rhaiis-dashboard
+      app: perf-aidashboard-staging
   template:
     metadata:
       labels:
-        app: rhaiis-dashboard
-        app.kubernetes.io/name: rhaiis-dashboard
+        app: perf-aidashboard-staging
+        app.kubernetes.io/name: perf-aidashboard-staging
         app.kubernetes.io/component: web
+        environment: staging
     spec:
       securityContext:
         runAsNonRoot: true
 
       containers:
         - name: dashboard
-          # TODO: Replace <your quay username> with your actual Quay.io username or organization
-          image: quay.io/<your quay username>/rhaiis-dashboard:latest
+          image: quay.io/<quay user name>/rhaiis-dashboard-staging:latest
           imagePullPolicy: Always
 
           ports:
@@ -46,6 +47,26 @@ spec:
               value: "8501"
             - name: STREAMLIT_SERVER_ADDRESS
               value: "0.0.0.0"
+            # S3 Configuration for CSV data
+            - name: S3_BUCKET
+              value: "your bucket name"
+            - name: S3_KEY
+              value: "the location of the consolidated_dashboard.csv file"
+            - name: S3_KEY_LLMD
+              value: "the location of the llmd-dashboard.csv file"
+            - name: S3_REGION
+              value: "the region of your bucket"
+            # AWS credentials from Kubernetes Secret
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
 
           # Resource limits
           resources:
@@ -61,19 +82,23 @@ spec:
             httpGet:
               path: /_stcore/health
               port: 8501
+              scheme: HTTP
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 3
+            successThreshold: 1
 
           readinessProbe:
             httpGet:
               path: /_stcore/health
               port: 8501
+              scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+            successThreshold: 1
 
           # Container security context for OpenShift
           securityContext:
@@ -83,4 +108,12 @@ spec:
               drop:
                 - ALL
 
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+
       restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      schedulerName: default-scheduler
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
