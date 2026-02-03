@@ -1,4 +1,4 @@
-"""Unit tests for import_manual_run_jsons.py script."""
+"""Unit tests for import_manual_run_jsons_old.py script (guidellm 0.3.x/0.4.x)."""
 
 import json
 from unittest.mock import mock_open, patch
@@ -6,8 +6,8 @@ from unittest.mock import mock_open, patch
 import pandas as pd
 import pytest
 
-# Import the actual functions to test
-from manual_runs.scripts.import_manual_run_jsons import (
+# Import the actual functions to test (from the old script for guidellm 0.3.x/0.4.x)
+from manual_runs.scripts.import_manual_run_jsons_old import (
     parse_guidellm_json,
     process_benchmark_section,
 )
@@ -460,7 +460,7 @@ class TestActualFunctionIntegration:
 
         # Mock the file reading in the actual module
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons.open",
+            "manual_runs.scripts.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             result = parse_guidellm_json(
@@ -501,7 +501,7 @@ class TestActualFunctionIntegration:
         json_content = json.dumps({"benchmarks": []})
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons.open",
+            "manual_runs.scripts.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -517,7 +517,7 @@ class TestActualFunctionIntegration:
         json_content = json.dumps({"some_other_key": "value"})
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons.open",
+            "manual_runs.scripts.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -531,7 +531,7 @@ class TestActualFunctionIntegration:
     def test_parse_guidellm_json_file_not_found(self):
         """Test parse_guidellm_json with non-existent file."""
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons.open",
+            "manual_runs.scripts.import_manual_run_jsons_old.open",
             side_effect=FileNotFoundError(),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -547,7 +547,7 @@ class TestActualFunctionIntegration:
         invalid_json = "{ invalid json content"
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons.open",
+            "manual_runs.scripts.import_manual_run_jsons_old.open",
             mock_open(read_data=invalid_json),
         ):
             with patch("builtins.print"):  # Suppress print statements
