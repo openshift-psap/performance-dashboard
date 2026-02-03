@@ -198,12 +198,8 @@ def assign_profile(row):
         return "Profile B: Variable Workload (512/2k)"
     elif prompt_toks == 2048 and output_toks == 128:
         return "Profile C: Large Prompt (2k/128)"
-    elif prompt_toks == 32000 and output_toks == 256:
-        return "Profile D: Prefill Heavy (32k/256)"
     elif prompt_toks == 8000 and output_toks == 1000:
-        return "Profile E: Prefill Heavy (8k/1k)"
-    elif prompt_toks == 1000 and output_toks == 100:
-        return "Profile F: Prefill Heavy (1k/100)"
+        return "Profile D: Prefill Heavy (8k/1k)"
     else:
         return "Custom"
 
@@ -385,6 +381,9 @@ def load_pareto_data(csv_file_path):
             total_throughput = row.get("total_tok/sec", 0)
             tput_per_gpu = total_throughput / tp if tp > 0 else 0
 
+            output_throughput = row.get("output_tok/sec", 0)
+            output_tput_per_gpu = output_throughput / tp if tp > 0 else 0
+
             # Calculate interactivity from tpot_median (tokens per output token)
             # tpot is in milliseconds, interactivity is tok/s/user
             tpot_median = row.get("tpot_median", None)
@@ -416,6 +415,7 @@ def load_pareto_data(csv_file_path):
                 "model": row.get("model", "Unknown"),
                 "version": version,
                 "tput_per_gpu": tput_per_gpu,
+                "output_tput_per_gpu": output_tput_per_gpu,
                 "median_e2el": row.get("request_latency_median", 0),
                 "median_intvty": median_intvty,
                 "output_tok_per_sec": row.get("output_tok/sec", 0),
@@ -463,7 +463,7 @@ def render_pareto_plots_section():
             efficiency, and find the best configuration for your workload requirements.
             """
         )
-        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+        filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
 
         with filter_col1:
             # Get unique models from results
@@ -499,32 +499,30 @@ def render_pareto_plots_section():
             # Get unique versions from filtered results
             unique_versions = sorted({r.get("version", "Unknown") for r in results})
 
-            # Set default version
-            default_version = "RHAIIS-3.2.3"
-            if default_version not in unique_versions and unique_versions:
-                default_version = unique_versions[0]
+            # Set default versions - prefer these if available
+            preferred_versions = ["RHAIIS-3.2.3", "RHAIIS-3.2.5"]
+            default_versions = [v for v in preferred_versions if v in unique_versions]
+            if not default_versions and unique_versions:
+                default_versions = [unique_versions[0]]
 
-            default_idx = (
-                unique_versions.index(default_version)
-                if default_version in unique_versions
-                else 0
-            )
-
-            selected_version = st.selectbox(
-                "Select Version",
+            selected_versions = st.multiselect(
+                "Select Version(s)",
                 options=unique_versions,
-                index=default_idx,
+                default=default_versions,
                 key="pareto_version_select",
                 on_change=keep_expander_open,
                 args=("pareto_expanded",),
             )
 
-        # Filter by selected version
+        # Filter by selected versions
+        if not selected_versions:
+            st.warning("Please select at least one version")
+            return
         results = [
-            r for r in results if r.get("version", "Unknown") == selected_version
+            r for r in results if r.get("version", "Unknown") in selected_versions
         ]
         if not results:
-            st.warning(f"No results found for version: '{selected_version}'")
+            st.warning("No results found for selected versions")
             return
 
         with filter_col3:
@@ -571,6 +569,22 @@ def render_pareto_plots_section():
                 args=("pareto_expanded",),
             )
 
+        with filter_col5:
+            # Throughput metric selector
+            throughput_options = {
+                "Total Tokens/sec/GPU": "tput_per_gpu",
+                "Output Tokens/sec/GPU": "output_tput_per_gpu",
+            }
+            selected_throughput_label = st.selectbox(
+                "Throughput Metric",
+                options=list(throughput_options.keys()),
+                key="pareto_throughput_metric",
+                on_change=keep_expander_open,
+                args=("pareto_expanded",),
+                help="Total = prompt + output tokens, Output = output tokens only",
+            )
+            selected_throughput_key = throughput_options[selected_throughput_label]
+
         # Filter by selected hardware
         if selected_hw != "All Accelerators":
             results = [r for r in results if r.get("hw", "").upper() == selected_hw]
@@ -578,9 +592,12 @@ def render_pareto_plots_section():
                 st.warning(f"No results found for accelerator: '{selected_hw}'")
                 return
 
-        # Get unique accelerators and TP sizes
+        # Get unique accelerators, TP sizes, and versions
         unique_hw = sorted({r.get("hw", "unknown") for r in results})
         unique_tps = sorted({r.get("tp", 1) for r in results})
+        unique_versions_in_results = sorted(
+            {r.get("version", "Unknown") for r in results}
+        )
 
         # Create a comprehensive color palette
         color_palette = [
@@ -616,18 +633,31 @@ def render_pareto_plots_section():
             "#32CD32",
         ]
 
-        # Create unique color mapping for each accelerator+TP combination
-        hw_tp_color_map = {}
+        # Create unique color mapping for each version+accelerator+TP combination
+        hw_tp_version_color_map = {}
         color_idx = 0
-        for hw in sorted(unique_hw):
-            for tp in sorted(unique_tps):
-                hw_tp_key = f"{hw.lower()}_{tp}"
-                hw_tp_color_map[hw_tp_key] = color_palette[
-                    color_idx % len(color_palette)
-                ]
-                color_idx += 1
+        for version in sorted(unique_versions_in_results):
+            for hw in sorted(unique_hw):
+                for tp in sorted(unique_tps):
+                    hw_tp_version_key = f"{version}_{hw.lower()}_{tp}"
+                    hw_tp_version_color_map[hw_tp_version_key] = color_palette[
+                        color_idx % len(color_palette)
+                    ]
+                    color_idx += 1
 
-        # Create tabs for different plot types
+        # Create tabs for different plot types with larger buttons
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stTabs"] button[data-baseweb="tab"] {
+                font-size: 1.2rem;
+                padding: 12px 24px;
+                font-weight: 600;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         tab1, tab2 = st.tabs(
             ["📊 Throughput vs. End-to-End Latency", "📈 Throughput vs. Interactivity"]
         )
@@ -651,79 +681,109 @@ def render_pareto_plots_section():
 
                 fig = go.Figure()
 
-                # Group by accelerator first, then by TP size
-                for hw in sorted(unique_hw):
-                    for tp_size in sorted(unique_tps):
-                        # Filter results for this accelerator and TP combination
-                        hw_tp_results = [
-                            r
-                            for r in filtered_results
-                            if r.get("hw", "unknown").lower() == hw.lower()
-                            and r.get("tp", 1) == tp_size
-                        ]
-
-                        if hw_tp_results:
-                            # Sort by concurrency for proper line drawing
-                            hw_tp_results_sorted = sorted(
-                                hw_tp_results, key=lambda x: x.get("conc", 0)
-                            )
-
-                            xs = [r.get("median_e2el", 0) for r in hw_tp_results_sorted]
-                            ys = [
-                                r.get("tput_per_gpu", 0) for r in hw_tp_results_sorted
-                            ]
-                            models = [
-                                r.get("model", "Unknown") for r in hw_tp_results_sorted
-                            ]
-                            concs = [r.get("conc", "N/A") for r in hw_tp_results_sorted]
-                            versions = [
-                                r.get("version", "N/A") for r in hw_tp_results_sorted
-                            ]
-                            isl_osls = [
-                                r.get("isl_osl", "N/A") for r in hw_tp_results_sorted
+                # Group by version, then by accelerator, then by TP size
+                for version in sorted(unique_versions_in_results):
+                    for hw in sorted(unique_hw):
+                        for tp_size in sorted(unique_tps):
+                            # Filter results for this version, accelerator and TP combination
+                            hw_tp_version_results = [
+                                r
+                                for r in filtered_results
+                                if r.get("version", "Unknown") == version
+                                and r.get("hw", "unknown").lower() == hw.lower()
+                                and r.get("tp", 1) == tp_size
                             ]
 
-                            # Get unique color for this accelerator+TP combination
-                            hw_tp_key = f"{hw.lower()}_{tp_size}"
-                            color = hw_tp_color_map.get(hw_tp_key, "#999999")
-
-                            hover_text = [
-                                f"Accelerator: {hw.upper()}<br>"
-                                f"TP Size: {tp_size}<br>"
-                                f"Concurrent Requests: {conc} Users<br>"
-                                f"Latency: {x:.2f}s<br>"
-                                f"Throughput: {y:.2f} tok/s/gpu"
-                                for conc, isl_osl, model, version, x, y in zip(
-                                    concs, isl_osls, models, versions, xs, ys
+                            if hw_tp_version_results:
+                                # Sort by concurrency for proper line drawing
+                                hw_tp_version_results_sorted = sorted(
+                                    hw_tp_version_results,
+                                    key=lambda x: x.get("conc", 0),
                                 )
-                            ]
 
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=xs,
-                                    y=ys,
-                                    mode="markers+lines",
-                                    name=f"{hw.upper()} (TP={tp_size})",
-                                    marker={
-                                        "size": 10,
-                                        "color": color,
-                                        "line": {"width": 1, "color": "white"},
-                                    },
-                                    line={"color": color, "width": 2},
-                                    hovertext=hover_text,
-                                    hoverinfo="text",
-                                    legendgroup=hw.upper(),  # Group by accelerator in legend
+                                xs = [
+                                    r.get("median_e2el", 0)
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                ys = [
+                                    r.get(selected_throughput_key, 0)
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                models = [
+                                    r.get("model", "Unknown")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                concs = [
+                                    r.get("conc", "N/A")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                isl_osls = [
+                                    r.get("isl_osl", "N/A")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+
+                                # Get unique color for this version+accelerator+TP combination
+                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                color = hw_tp_version_color_map.get(
+                                    hw_tp_version_key, "#999999"
                                 )
-                            )
+
+                                # Determine metric label for hover text
+                                metric_hover_label = (
+                                    "Total Throughput"
+                                    if selected_throughput_key == "tput_per_gpu"
+                                    else "Output Throughput"
+                                )
+
+                                hover_text = [
+                                    f"Version: {version}<br>"
+                                    f"Accelerator: {hw.upper()}<br>"
+                                    f"TP Size: {tp_size}<br>"
+                                    f"Concurrent Requests: {conc} Users<br>"
+                                    f"Latency: {x:.2f}s<br>"
+                                    f"{metric_hover_label}: {y:.2f} tok/s/gpu"
+                                    for conc, isl_osl, model, x, y in zip(
+                                        concs, isl_osls, models, xs, ys
+                                    )
+                                ]
+
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=xs,
+                                        y=ys,
+                                        mode="markers+lines",
+                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        marker={
+                                            "size": 10,
+                                            "color": color,
+                                            "line": {"width": 1, "color": "white"},
+                                        },
+                                        line={"color": color, "width": 2},
+                                        hovertext=hover_text,
+                                        hoverinfo="text",
+                                        legendgroup=version,  # Group by version in legend
+                                    )
+                                )
+
+                # Dynamic title and y-axis label based on selected metric
+                if selected_throughput_key == "tput_per_gpu":
+                    plot_title = "Note: Throughput is Total Tokens per second (prompt + output tokens combined)"
+                    y_axis_label = "Total Token Throughput per GPU (tok/s/gpu)"
+                else:
+                    plot_title = "Note: Throughput is Output Tokens per second only"
+                    y_axis_label = "Output Token Throughput per GPU (tok/s/gpu)"
 
                 fig.update_layout(
-                    title="Note: Throughput is Total Tokens per second(prompt + output tokens combined)",
+                    title=plot_title,
                     xaxis_title="End-to-end Latency (s)",
-                    yaxis_title="Token Throughput per GPU (tok/s/gpu)",
+                    yaxis_title=y_axis_label,
                     template="plotly_dark",
                     hovermode="closest",
                     showlegend=True,
-                    legend={"title": "Accelerator (TP Size)", "font": {"size": 12}},
+                    legend={
+                        "title": "Version | Accelerator (TP Size)",
+                        "font": {"size": 12},
+                    },
                     height=600,
                 )
 
@@ -748,81 +808,109 @@ def render_pareto_plots_section():
 
                 fig = go.Figure()
 
-                # Group by accelerator first, then by TP size
-                for hw in sorted(unique_hw):
-                    for tp_size in sorted(unique_tps):
-                        # Filter results for this accelerator and TP combination
-                        hw_tp_results = [
-                            r
-                            for r in filtered_results
-                            if r.get("hw", "unknown").lower() == hw.lower()
-                            and r.get("tp", 1) == tp_size
-                        ]
-
-                        if hw_tp_results:
-                            # Sort by concurrency for proper line drawing
-                            hw_tp_results_sorted = sorted(
-                                hw_tp_results, key=lambda x: x.get("conc", 0)
-                            )
-
-                            xs = [
-                                r.get("median_intvty", 0) for r in hw_tp_results_sorted
-                            ]
-                            ys = [
-                                r.get("tput_per_gpu", 0) for r in hw_tp_results_sorted
-                            ]
-                            models = [
-                                r.get("model", "Unknown") for r in hw_tp_results_sorted
-                            ]
-                            concs = [r.get("conc", "N/A") for r in hw_tp_results_sorted]
-                            versions = [
-                                r.get("version", "N/A") for r in hw_tp_results_sorted
-                            ]
-                            isl_osls = [
-                                r.get("isl_osl", "N/A") for r in hw_tp_results_sorted
+                # Group by version, then by accelerator, then by TP size
+                for version in sorted(unique_versions_in_results):
+                    for hw in sorted(unique_hw):
+                        for tp_size in sorted(unique_tps):
+                            # Filter results for this version, accelerator and TP combination
+                            hw_tp_version_results = [
+                                r
+                                for r in filtered_results
+                                if r.get("version", "Unknown") == version
+                                and r.get("hw", "unknown").lower() == hw.lower()
+                                and r.get("tp", 1) == tp_size
                             ]
 
-                            # Get unique color for this accelerator+TP combination
-                            hw_tp_key = f"{hw.lower()}_{tp_size}"
-                            color = hw_tp_color_map.get(hw_tp_key, "#999999")
-
-                            hover_text = [
-                                f"Accelerator: {hw.upper()}<br>"
-                                f"TP Size: {tp_size}<br>"
-                                f"Concurrent Requests: {conc} Users<br>"
-                                f"Interactivity: {x:.2f} tok/s/user<br>"
-                                f"Throughput: {y:.2f} tok/s/gpu"
-                                for conc, isl_osl, model, version, x, y in zip(
-                                    concs, isl_osls, models, versions, xs, ys
+                            if hw_tp_version_results:
+                                # Sort by concurrency for proper line drawing
+                                hw_tp_version_results_sorted = sorted(
+                                    hw_tp_version_results,
+                                    key=lambda x: x.get("conc", 0),
                                 )
-                            ]
 
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=xs,
-                                    y=ys,
-                                    mode="markers+lines",
-                                    name=f"{hw.upper()} (TP={tp_size})",
-                                    marker={
-                                        "size": 10,
-                                        "color": color,
-                                        "line": {"width": 1, "color": "white"},
-                                    },
-                                    line={"color": color, "width": 2},
-                                    hovertext=hover_text,
-                                    hoverinfo="text",
-                                    legendgroup=hw.upper(),  # Group by accelerator in legend
+                                xs = [
+                                    r.get("median_intvty", 0)
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                ys = [
+                                    r.get(selected_throughput_key, 0)
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                models = [
+                                    r.get("model", "Unknown")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                concs = [
+                                    r.get("conc", "N/A")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+                                isl_osls = [
+                                    r.get("isl_osl", "N/A")
+                                    for r in hw_tp_version_results_sorted
+                                ]
+
+                                # Get unique color for this version+accelerator+TP combination
+                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                color = hw_tp_version_color_map.get(
+                                    hw_tp_version_key, "#999999"
                                 )
-                            )
+
+                                # Determine metric label for hover text
+                                metric_hover_label = (
+                                    "Total Throughput"
+                                    if selected_throughput_key == "tput_per_gpu"
+                                    else "Output Throughput"
+                                )
+
+                                hover_text = [
+                                    f"Version: {version}<br>"
+                                    f"Accelerator: {hw.upper()}<br>"
+                                    f"TP Size: {tp_size}<br>"
+                                    f"Concurrent Requests: {conc} Users<br>"
+                                    f"Interactivity: {x:.2f} tok/s/user<br>"
+                                    f"{metric_hover_label}: {y:.2f} tok/s/gpu"
+                                    for conc, isl_osl, model, x, y in zip(
+                                        concs, isl_osls, models, xs, ys
+                                    )
+                                ]
+
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=xs,
+                                        y=ys,
+                                        mode="markers+lines",
+                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        marker={
+                                            "size": 10,
+                                            "color": color,
+                                            "line": {"width": 1, "color": "white"},
+                                        },
+                                        line={"color": color, "width": 2},
+                                        hovertext=hover_text,
+                                        hoverinfo="text",
+                                        legendgroup=version,  # Group by version in legend
+                                    )
+                                )
+
+                # Dynamic title and y-axis label based on selected metric
+                if selected_throughput_key == "tput_per_gpu":
+                    plot_title = "Note: Throughput is Total Tokens per second (prompt + output tokens combined)"
+                    y_axis_label = "Total Token Throughput per GPU (tok/s/gpu)"
+                else:
+                    plot_title = "Note: Throughput is Output Tokens per second only"
+                    y_axis_label = "Output Token Throughput per GPU (tok/s/gpu)"
 
                 fig.update_layout(
-                    title="Note: Throughput is Total Tokens per second(prompt + output tokens combined)",
+                    title=plot_title,
                     xaxis_title="Interactivity (tok/s/user)",
-                    yaxis_title="Token Throughput per GPU (tok/s/gpu)",
+                    yaxis_title=y_axis_label,
                     template="plotly_dark",
                     hovermode="closest",
                     showlegend=True,
-                    legend={"title": "Accelerator (TP Size)", "font": {"size": 12}},
+                    legend={
+                        "title": "Version | Accelerator (TP Size)",
+                        "font": {"size": 12},
+                    },
                     height=600,
                 )
 
@@ -843,6 +931,7 @@ def render_pareto_plots_section():
                     "tp",
                     "conc",
                     "tput_per_gpu",
+                    "output_tput_per_gpu",
                     "median_e2el",
                     "median_intvty",
                 ]
@@ -854,6 +943,10 @@ def render_pareto_plots_section():
                 df_display = df_results[available_cols].copy()
                 if "tput_per_gpu" in df_display.columns:
                     df_display["tput_per_gpu"] = df_display["tput_per_gpu"].round(2)
+                if "output_tput_per_gpu" in df_display.columns:
+                    df_display["output_tput_per_gpu"] = df_display[
+                        "output_tput_per_gpu"
+                    ].round(2)
                 if "median_e2el" in df_display.columns:
                     df_display["median_e2el"] = df_display["median_e2el"].round(3)
                 if "median_intvty" in df_display.columns:
@@ -870,10 +963,17 @@ def render_pareto_plots_section():
                     }
                 )
 
+                # Sort by the selected throughput metric
+                sort_col = (
+                    "tput_per_gpu"
+                    if selected_throughput_key == "tput_per_gpu"
+                    else "output_tput_per_gpu"
+                )
+
                 st.dataframe(
-                    df_display.sort_values(
-                        by="tput_per_gpu", ascending=False
-                    ).reset_index(drop=True),
+                    df_display.sort_values(by=sort_col, ascending=False).reset_index(
+                        drop=True
+                    ),
                     use_container_width=True,
                     column_config={
                         "Accelerator": st.column_config.TextColumn(
@@ -899,7 +999,11 @@ def render_pareto_plots_section():
                         ),
                         "tput_per_gpu": st.column_config.NumberColumn(
                             "tput_per_gpu",
-                            help="Throughput per GPU: Total tokens/second divided by TP size. Calculated as (total_tok/sec ÷ TP). Higher is better.",
+                            help="Total Throughput per GPU: Total tokens/second (prompt + output) divided by TP size. Higher is better.",
+                        ),
+                        "output_tput_per_gpu": st.column_config.NumberColumn(
+                            "output_tput_per_gpu",
+                            help="Output Throughput per GPU: Output tokens/second divided by TP size. Higher is better.",
                         ),
                         "median_e2el": st.column_config.NumberColumn(
                             "median_e2el",
@@ -920,7 +1024,11 @@ def render_regression_analysis_section(filtered_df, analyze_performance_changes)
             "Compare performance changes between versions for the same model, accelerator, and TP configuration."
         )
         st.info(
-            "ℹ️ **Note**: This analysis compares versions within the same inference server (RHAIIS to RHAIIS, vLLM to vLLM, sglang to sglang) across **all common concurrency levels**. The **Median Change** columns show median percentage change across all concurrency levels. The **(Old → New)** columns show **peak performance values from the same concurrency level** (e.g., best throughput or lowest latency). Eg: **(C=50)** means the comparison is at **concurrency level 50**. This ensures we're comparing apples-to-apples performance at the exact same concurrency level."
+            "ℹ️ **Note**: This analysis compares versions within the same inference server (RHAIIS to RHAIIS, vLLM to vLLM, sglang to sglang) across **all common concurrency levels**. "
+            "The **Median Change** columns show median percentage change across all concurrency levels. "
+            "The **Geom Mean Change** columns show geometric mean percentage change (better for ratios/multiplicative changes). "
+            "The **(Old → New)** columns show **peak performance values from the same concurrency level** (e.g., best throughput or lowest latency). "
+            "Eg: **(C=50)** means the comparison is at **concurrency level 50**. This ensures we're comparing apples-to-apples performance at the exact same concurrency level."
         )
 
         regression_df = analyze_performance_changes(filtered_df)
@@ -1080,6 +1188,26 @@ def render_regression_analysis_section(filtered_df, analyze_performance_changes)
                         )
                     )
 
+                    # Calculate Geom Mean throughput change display
+                    def calc_geom_mean_throughput_change_display(row):
+                        if pd.notna(row.get("throughput_geom_mean_change")):
+                            change = row["throughput_geom_mean_change"]
+                            abs_change = abs(change)
+                            if abs_change < significance_threshold:
+                                icon = "🟡"
+                            elif change > 0:
+                                icon = "🟢"
+                            else:
+                                icon = "🔴"
+                            return f"{icon} {change:.1f}%"
+                        return "No Data"
+
+                    regression_display_df["Geom Mean Throughput Change"] = (
+                        regression_display_df.apply(
+                            calc_geom_mean_throughput_change_display, axis=1
+                        )
+                    )
+
                     # Calculate peak throughput change percentage
                     def calc_peak_throughput_change(row):
                         if (
@@ -1123,6 +1251,7 @@ def render_regression_analysis_section(filtered_df, analyze_performance_changes)
                     display_columns.extend(
                         [
                             "Median Throughput Change",
+                            "Geom Mean Throughput Change",
                             "Peak Throughput Change",
                             "Throughput (Old → New)",
                         ]
@@ -1346,8 +1475,10 @@ def render_version_comparison_section(filtered_df):
         with col3:
             metric_options = {
                 "Throughput (Output Tokens/sec)": "output_tok/sec",
+                "Throughput (Total Tokens/sec)": "total_tok/sec",
                 "TTFT P95 (s)": "ttft_p95_s",
                 "ITL P95 (ms)": "itl_p95",
+                "Request Latency Median (s)": "request_latency_median",
             }
             metric_label = st.selectbox(
                 "Select Metric to Compare",
@@ -1358,11 +1489,25 @@ def render_version_comparison_section(filtered_df):
             )
             metric_column = metric_options[metric_label]
 
-        st.info(
-            "ℹ️ **Comparison Direction**: **Version 1** is the baseline/reference. "
-            "All results show how **Version 1** performs relative to **Version 2**. "
-            "Positive changes indicate Version 1 is better; negative changes indicate Version 2 was better."
-        )
+        # Show metric-specific interpretation guide
+        if metric_column in ["output_tok/sec", "total_tok/sec"]:
+            st.info(
+                "ℹ️ **How to Read Results** (Throughput - higher is better):\n\n"
+                "• **+X%** → Version 1 has **higher** throughput than Version 2 ✅ *(V1 is faster)*\n\n"
+                "• **-X%** → Version 1 has **lower** throughput than Version 2 ❌ *(V2 is faster)*"
+            )
+        else:
+            if "ttft" in metric_column:
+                metric_name = "TTFT"
+            elif "itl" in metric_column:
+                metric_name = "ITL"
+            else:
+                metric_name = "Request Latency"
+            st.info(
+                f"ℹ️ **How to Read Results** ({metric_name} - lower is better):\n\n"
+                f"• **+X%** → Version 1 has **higher** latency than Version 2 ❌ *(V1 is slower)*\n\n"
+                f"• **-X%** → Version 1 has **lower** latency than Version 2 ✅ *(V1 is faster)*"
+            )
 
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
@@ -1415,7 +1560,7 @@ def render_version_comparison_section(filtered_df):
             with st.popover("ℹ️ How are these calculated?"):
                 st.markdown("""
                 **Mean Change Calculation:**
-                - Calculated by taking the percentage change at each common concurrency level, then taking the mean (average) of all those changes
+                - Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average) of all those changes
                 - Shows the average performance difference across all concurrency levels
                 - Can be affected by outliers (extreme values)
                 - Formula: `mean([(v1 - v2) / v2 × 100 for each concurrency level])`
@@ -1426,6 +1571,32 @@ def render_version_comparison_section(filtered_df):
                 - More robust to outliers than mean - better represents typical performance
                 - Formula: `median([(v1 - v2) / v2 × 100 for each concurrency level])`
 
+                **Geometric Mean Change Calculation:**
+
+                *Step 1: Convert % changes to Growth Factors*
+                - A **growth factor** is a multiplier that represents the ratio between V1 and V2
+                - Formula: `growth_factor = 1 + (% change / 100)`
+                - Examples:
+                  - +10% → `1 + (10/100)` = **1.10** → means V1 is 110% of V2 (10% larger)
+                  - -20% → `1 + (-20/100)` = **0.80** → means V1 is 80% of V2 (20% smaller)
+                  - 0% → `1 + (0/100)` = **1.00** → means V1 equals V2 (no change)
+
+                *Step 2: Compute Geometric Mean of Growth Factors*
+                - Multiply all growth factors together, then take the nth root
+                - Formula: `geom_mean_factor = (∏ growth_factors)^(1/n)`
+                - Example: For [1.10, 0.90], geom_mean = (1.10 × 0.90)^0.5 = 0.99^0.5 ≈ 0.995
+
+                *Step 3: Convert back to % change*
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
+                - Example: 1.10 - 1 = 0.10 → 0.10 × 100 = +10%
+                - Example: 0.95 - 1 = -0.05 → -0.05 × 100 = -5%
+                - **Why subtract 1?** Because a growth factor of 1.00 means "no change" (0%). The "1" represents the original value, so we subtract it to isolate just the change portion.
+
+                *Why use Geometric Mean?*
+                - Arithmetic mean of +100% and -50% = +25% ❌ (misleading!)
+                - Geometric mean: (2.0 × 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
+                - Better for ratios/percentages because it respects multiplicative relationships
+
                 **Peak Change Calculation:**
                 - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) × 100`
                   - Compares maximum throughput values (best = highest performance)
@@ -1435,11 +1606,24 @@ def render_version_comparison_section(filtered_df):
                   - This shows latency characteristics at peak performance
                   - Lower is better
 
+                **How to Interpret the Percentage Values:**
+
+                The percentage shows how much higher or lower V1's values are compared to V2:
+                - **+X%** means V1's metric value is X% **higher** than V2's
+                - **-X%** means V1's metric value is X% **lower** than V2's
+
+                | Metric Type | +X% means | -X% means |
+                |-------------|-----------|-----------|
+                | **Throughput** | V1 is X% faster ✅ | V1 is X% slower ❌ |
+                | **Latency (TTFT/ITL)** | V1 is X% slower ❌ | V1 is X% faster ✅ |
+
+                *Example*: If TTFT shows +10%, it means V1's time-to-first-token is 10% higher (slower) than V2's.
+
                 **Status Classification:**
-                The status emoji is determined by consensus across all three metrics (Mean, Median, and Peak change):
-                - 🟢 **Better**: At least 2 out of 3 metrics show ≥5% improvement
+                The status emoji is determined by consensus across all four metrics (Mean, Median, Geometric Mean, and Peak change):
+                - 🟢 **Better**: At least 3 out of 4 metrics show ≥5% improvement
                 - 🟡 **Similar**: Mixed signals (some metrics up, some down) or all metrics show <5% difference
-                - 🔴 **Worse**: At least 2 out of 3 metrics show ≥5% decline
+                - 🔴 **Worse**: At least 3 out of 4 metrics show ≥5% decline
 
                 This consensus approach provides a more robust assessment by requiring multiple metrics to agree before declaring a clear winner or loser.
 
@@ -1447,7 +1631,7 @@ def render_version_comparison_section(filtered_df):
                 """)
 
         summary_rows = []
-        is_higher_better = metric_column == "output_tok/sec"
+        is_higher_better = metric_column in ["output_tok/sec", "total_tok/sec"]
 
         for model in sorted(common_models):
             model_short = model.split("/")[-1] if "/" in model else model
@@ -1505,9 +1689,25 @@ def render_version_comparison_section(filtered_df):
                                 change = ((v1_val - v2_val) / v2_val) * 100
                                 metric_changes.append(change)
 
-                    # Calculate median and mean change
+                    # Calculate median, mean, and geometric mean change
                     median_change = np.median(metric_changes) if metric_changes else 0
                     mean_change = np.mean(metric_changes) if metric_changes else 0
+
+                    # Calculate geometric mean of percentage changes
+                    # Convert to growth factors, compute geometric mean, convert back
+                    if metric_changes:
+                        # Filter out changes that would result in non-positive growth factors
+                        valid_changes = [c for c in metric_changes if c > -100]
+                        if valid_changes:
+                            growth_factors = [1 + (c / 100) for c in valid_changes]
+                            geom_mean_factor = np.prod(growth_factors) ** (
+                                1 / len(growth_factors)
+                            )
+                            geom_mean_change = (geom_mean_factor - 1) * 100
+                        else:
+                            geom_mean_change = 0
+                    else:
+                        geom_mean_change = 0
 
                     # Calculate percentage difference (v1 compared to v2) for peak values
                     if is_higher_better:
@@ -1536,12 +1736,15 @@ def render_version_comparison_section(filtered_df):
                         else:
                             pct_change = 0
 
-                    # Determine emoji and status based on all three metrics (mean, median, peak)
+                    # Determine emoji and status based on all four metrics (mean, median, geometric mean, peak)
                     # For throughput: positive is good, negative is bad
                     # For latency: negative is good (lower), positive is bad (higher)
                     mean_improvement = mean_change if is_higher_better else -mean_change
                     median_improvement = (
                         median_change if is_higher_better else -median_change
+                    )
+                    geom_mean_improvement = (
+                        geom_mean_change if is_higher_better else -geom_mean_change
                     )
                     peak_improvement = pct_change if is_higher_better else -pct_change
 
@@ -1550,6 +1753,7 @@ def render_version_comparison_section(filtered_df):
                         [
                             1 if mean_improvement >= 5 else 0,
                             1 if median_improvement >= 5 else 0,
+                            1 if geom_mean_improvement >= 5 else 0,
                             1 if peak_improvement >= 5 else 0,
                         ]
                     )
@@ -1558,45 +1762,36 @@ def render_version_comparison_section(filtered_df):
                         [
                             1 if mean_improvement <= -5 else 0,
                             1 if median_improvement <= -5 else 0,
+                            1 if geom_mean_improvement <= -5 else 0,
                             1 if peak_improvement <= -5 else 0,
                         ]
                     )
 
-                    # Determine status based on consensus across all three metrics
-                    if improvements >= 2:
-                        # At least 2 out of 3 show improvement
+                    # Determine status based on consensus across all four metrics
+                    if improvements >= 3:
+                        # At least 3 out of 4 show improvement
                         emoji = "🟢"
                         status = "Better"
-                    elif declines >= 2:
-                        # At least 2 out of 3 show decline
+                    elif declines >= 3:
+                        # At least 3 out of 4 show decline
                         emoji = "🔴"
                         status = "Worse"
                     else:
-                        # Mixed signals or all three show similar performance
+                        # Mixed signals or metrics show similar performance
                         emoji = "🟡"
                         status = "Similar"
 
                     # Format the change text
-                    if is_higher_better:
-                        change_text = (
-                            f"{'+' if pct_change > 0 else ''}{pct_change:.1f}%"
-                        )
-                        median_change_text = (
-                            f"{'+' if median_change > 0 else ''}{median_change:.1f}%"
-                        )
-                        mean_change_text = (
-                            f"{'+' if mean_change > 0 else ''}{mean_change:.1f}%"
-                        )
-                    else:
-                        change_text = (
-                            f"{'+' if pct_change > 0 else ''}{pct_change:.1f}%"
-                        )
-                        median_change_text = (
-                            f"{'+' if median_change > 0 else ''}{median_change:.1f}%"
-                        )
-                        mean_change_text = (
-                            f"{'+' if mean_change > 0 else ''}{mean_change:.1f}%"
-                        )
+                    change_text = f"{'+' if pct_change > 0 else ''}{pct_change:.1f}%"
+                    median_change_text = (
+                        f"{'+' if median_change > 0 else ''}{median_change:.1f}%"
+                    )
+                    mean_change_text = (
+                        f"{'+' if mean_change > 0 else ''}{mean_change:.1f}%"
+                    )
+                    geom_mean_change_text = (
+                        f"{'+' if geom_mean_change > 0 else ''}{geom_mean_change:.1f}%"
+                    )
 
                     summary_rows.append(
                         {
@@ -1605,9 +1800,10 @@ def render_version_comparison_section(filtered_df):
                             "Accelerator": accelerator,
                             "TP": tp,
                             "Status": status,
-                            "Mean change": mean_change_text,
-                            "Median change": median_change_text,
-                            "Peak change": change_text,
+                            "Mean": mean_change_text,
+                            "Median": median_change_text,
+                            "Geometric Mean": geom_mean_change_text,
+                            "Peak": change_text,
                         }
                     )
 
@@ -1615,11 +1811,11 @@ def render_version_comparison_section(filtered_df):
             summary_df = pd.DataFrame(summary_rows)
             st.dataframe(summary_df, use_container_width=True, hide_index=True)
             st.caption(
-                "**Status**: Based on consensus across all three metrics (Mean, Median, Peak) | "
-                "🟢 Better: ≥2 metrics show ≥5% improvement | "
+                "**Status**: Based on consensus across all four metrics (Mean, Median, Geometric Mean, Peak) | "
+                "🟢 Better: ≥3 metrics show ≥5% improvement | "
                 "🟡 Similar: Mixed signals or <5% difference | "
-                "🔴 Worse: ≥2 metrics show ≥5% decline | "
-                "**Mean**: average difference | **Median**: typical difference (robust to outliers) | **Peak**: best-case difference"
+                "🔴 Worse: ≥3 metrics show ≥5% decline | "
+                "**Mean**: arithmetic average | **Median**: typical (robust to outliers) | **Geometric Mean**: geometric mean (better for ratios) | **Peak**: best-case"
             )
 
         st.markdown("---")
@@ -1806,7 +2002,10 @@ def render_version_comparison_section(filtered_df):
 
                         # Determine which version is better and by how much (based on best values)
                         # For throughput, higher is better; for latency, lower is better
-                        is_higher_better = metric_column == "output_tok/sec"
+                        is_higher_better = metric_column in [
+                            "output_tok/sec",
+                            "total_tok/sec",
+                        ]
 
                         if is_higher_better:
                             # For throughput, compare max values (best = highest)
@@ -1899,7 +2098,7 @@ def render_version_comparison_section(filtered_df):
                     - The concurrency level (C=X) shows where this extreme value occurred
 
                     **Percentage Difference Calculation:**
-                    - **Mean Change**: Calculated by taking the percentage change at each common concurrency level, then taking the mean (average)
+                    - **Mean Change**: Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average)
                       - Shows the average performance difference across all concurrency levels
                       - Can be affected by outliers (extreme values)
                       - Formula: `mean([(v1 - v2) / v2 × 100 for each concurrency level])`
@@ -1907,6 +2106,11 @@ def render_version_comparison_section(filtered_df):
                       - Shows the typical performance difference across all concurrency levels
                       - More robust to outliers - better represents typical performance
                       - Formula: `median([(v1 - v2) / v2 × 100 for each concurrency level])`
+                    - **Geometric Mean Change**: Converts % changes to growth factors (multipliers), computes geometric mean, converts back
+                      - Growth factor = `1 + (% change / 100)` → e.g., +10% becomes 1.10, -20% becomes 0.80
+                      - We subtract 1 at the end because 1.0 = "no change" = 0%
+                      - Better for ratios: +100% then -50% = 0% net change (correct), not +25% (arithmetic mean)
+                      - Formula: `((∏ growth_factors)^(1/n) - 1) × 100`
                     - **Peak Change**:
                       - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) × 100`
                         - Compares maximum throughput values (best = highest performance)
@@ -1917,6 +2121,515 @@ def render_version_comparison_section(filtered_df):
                         - Lower is better
                     - **Note**: Each accelerator-TP combination is compared independently
                     """)
+
+
+def render_compare_versions_summary_section(df):
+    """📸 Compare Versions Summary Section - Generate a summary table comparing two versions across multiple metrics."""
+    if "compare_versions_summary_expanded" not in st.session_state:
+        st.session_state.compare_versions_summary_expanded = False
+
+    with st.expander(
+        "📸 Compare Versions Summary",
+        expanded=st.session_state.compare_versions_summary_expanded,
+    ):
+        st.markdown(
+            "💡 **Generate a comprehensive summary table comparing performance between two versions across all models and metrics.**"
+        )
+
+        # Get available versions, accelerators, and profiles from full data
+        available_versions = sorted(df["version"].unique().tolist())
+        available_accelerators = sorted(df["accelerator"].unique().tolist())
+        available_profiles = sorted(df["profile"].unique().tolist())
+
+        if len(available_versions) < 2:
+            st.warning(
+                "⚠️ Need at least 2 versions in the data to compare. Please check your data."
+            )
+            return
+
+        # Filters row
+        col1, col2, col3, col4 = st.columns(4)
+
+        # Set default versions
+        default_v1 = "vLLM-0.13.0"
+        default_v2 = "TRT-LLM-1.2.0rc2"
+
+        # Find index for default version 1
+        v1_default_index = 0
+        if default_v1 in available_versions:
+            v1_default_index = available_versions.index(default_v1)
+
+        with col1:
+            version_1 = st.selectbox(
+                "Select Version 1 (Baseline)",
+                options=available_versions,
+                index=v1_default_index,
+                key="compare_summary_v1",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
+
+        with col2:
+            version_2_options = [v for v in available_versions if v != version_1]
+            # Find index for default version 2
+            v2_default_index = 0
+            if default_v2 in version_2_options:
+                v2_default_index = version_2_options.index(default_v2)
+
+            version_2 = (
+                st.selectbox(
+                    "Select Version 2 (Comparison)",
+                    options=version_2_options,
+                    index=v2_default_index if version_2_options else None,
+                    key="compare_summary_v2",
+                    on_change=keep_expander_open,
+                    args=("compare_versions_summary_expanded",),
+                )
+                if version_2_options
+                else None
+            )
+
+        with col3:
+            selected_accelerator = st.selectbox(
+                "Select GPU",
+                options=available_accelerators,
+                index=0,
+                key="compare_summary_accelerator",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
+
+        with col4:
+            # Set default profile to "Profile A: Balanced (1k/1k)"
+            default_profile = "Profile A: Balanced (1k/1k)"
+            profile_default_index = 0
+            if default_profile in available_profiles:
+                profile_default_index = available_profiles.index(default_profile)
+
+            selected_profile = st.selectbox(
+                "Select ISL/OSL Profile",
+                options=available_profiles,
+                index=profile_default_index,
+                key="compare_summary_profile",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
+
+        if not version_2:
+            st.warning("⚠️ Please select a second version to compare.")
+            return
+
+        # Filter data for each version based on selected accelerator and profile
+        df_v1 = df[
+            (df["version"] == version_1)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
+
+        df_v2 = df[
+            (df["version"] == version_2)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
+
+        if df_v1.empty or df_v2.empty:
+            st.warning(
+                "⚠️ No data available for the selected combination. "
+                "Try different accelerator or profile settings."
+            )
+            return
+
+        # Find common model+TP combinations between both versions
+        # This ensures we compare the same model with the same TP value
+        v1_model_tp = set(zip(df_v1["model"].tolist(), df_v1["TP"].tolist()))
+        v2_model_tp = set(zip(df_v2["model"].tolist(), df_v2["TP"].tolist()))
+        common_model_tp = sorted(v1_model_tp.intersection(v2_model_tp))
+
+        if not common_model_tp:
+            st.warning(
+                f"⚠️ No common model+TP combinations found between {version_1} and {version_2} "
+                f"for {selected_accelerator} with profile {selected_profile}."
+            )
+            return
+
+        # Extract ISL/OSL from profile for display
+        profile_short = selected_profile
+        if "(" in selected_profile and ")" in selected_profile:
+            profile_short = selected_profile.split("(")[-1].replace(")", "")
+
+        # Display title with GPU and ISL/OSL info
+        st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
+        st.markdown(f"**Comparing:** {version_1} vs {version_2}")
+
+        # Define metrics to compare
+        metrics_config = {
+            "Peak Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "peak",
+                "higher_is_better": True,
+                "show_concurrency": True,
+            },
+            "Output Throughput (Geometric Mean)": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "Total Throughput (Geometric Mean)": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "End-to-End Latency (Geometric Mean)": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "TTFT P95 (Geometric Mean)": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "ITL P95 (Geometric Mean)": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+        }
+
+        def calculate_geom_mean(values):
+            """Calculate geometric mean of positive values."""
+            positive_values = [v for v in values if v > 0]
+            if not positive_values:
+                return None
+            return np.exp(np.mean(np.log(positive_values)))
+
+        def get_comparison_result(v1_data, v2_data, metric_config):
+            """Calculate comparison between two versions for a specific metric."""
+            column = metric_config["column"]
+            aggregation = metric_config["aggregation"]
+            higher_is_better = metric_config["higher_is_better"]
+
+            # Get common concurrencies
+            v1_concurrencies = set(v1_data["intended concurrency"].dropna().unique())
+            v2_concurrencies = set(v2_data["intended concurrency"].dropna().unique())
+            common_concurrencies = v1_concurrencies.intersection(v2_concurrencies)
+
+            if not common_concurrencies:
+                return None, None, None, None
+
+            v1_common = v1_data[
+                v1_data["intended concurrency"].isin(common_concurrencies)
+            ]
+            v2_common = v2_data[
+                v2_data["intended concurrency"].isin(common_concurrencies)
+            ]
+
+            v1_values = v1_common[column].dropna().tolist()
+            v2_values = v2_common[column].dropna().tolist()
+
+            if not v1_values or not v2_values:
+                return None, None, None, None
+
+            if aggregation == "peak":
+                if higher_is_better:
+                    v1_val = max(v1_values)
+                    v2_val = max(v2_values)
+                    # Find concurrency at peak for v1
+                    v1_peak_idx = v1_common[column].idxmax()
+                    peak_concurrency = int(
+                        v1_common.loc[v1_peak_idx, "intended concurrency"]
+                    )
+                else:
+                    v1_val = min(v1_values)
+                    v2_val = min(v2_values)
+                    v1_peak_idx = v1_common[column].idxmin()
+                    peak_concurrency = int(
+                        v1_common.loc[v1_peak_idx, "intended concurrency"]
+                    )
+            else:  # geom_mean
+                v1_val = calculate_geom_mean(v1_values)
+                v2_val = calculate_geom_mean(v2_values)
+                peak_concurrency = None
+
+            if v1_val is None or v2_val is None or v2_val == 0:
+                return None, None, None, None
+
+            # Calculate percentage difference (v1 compared to v2)
+            pct_diff = ((v1_val - v2_val) / v2_val) * 100
+
+            # Determine which version is better
+            v1_better = pct_diff > 0 if higher_is_better else pct_diff < 0
+
+            return pct_diff, v1_better, peak_concurrency, abs(pct_diff) < 5
+
+        # Build summary table data
+        summary_data = []
+
+        for model, tp in common_model_tp:
+            model_short = model.split("/")[-1] if "/" in model else model
+
+            # Get data for this specific model+TP combination
+            v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
+            v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+
+            # Format TP for display
+            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+
+            row_data = {"Model": f"{model_short} {tp_str}"}
+
+            for metric_name, metric_config in metrics_config.items():
+                pct_diff, v1_better, peak_conc, is_similar = get_comparison_result(
+                    v1_model_data, v2_model_data, metric_config
+                )
+
+                if pct_diff is None:
+                    row_data[metric_name] = "N/A"
+                else:
+                    # Format the cell content
+                    sign = "+" if pct_diff > 0 else ""
+                    if metric_config["show_concurrency"] and peak_conc:
+                        cell_text = (
+                            f"{version_1} ({sign}{pct_diff:.1f}%) at conc {peak_conc}"
+                        )
+                    else:
+                        cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
+
+                    # Determine color based on which version is better
+                    if is_similar:
+                        color = "🟡"  # Similar
+                    elif v1_better:
+                        color = "🟢"  # V1 better
+                    else:
+                        color = "🔴"  # V2 better
+
+                    row_data[metric_name] = f"{color} {cell_text}"
+
+            summary_data.append(row_data)
+
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+
+            # Add hover tip note above table, aligned right
+            st.markdown(
+                "<div style='text-align: right;'>"
+                "<span style='font-size: 0.85em; color: gray;'>"
+                "💡 <b>Tip:</b> Hover over column headers to see detailed descriptions."
+                "</span></div>",
+                unsafe_allow_html=True,
+            )
+
+            # Define column config with help tooltips
+            column_config = {
+                "Model": st.column_config.TextColumn(
+                    "Model",
+                    help="Model name with tensor parallelism (TP) configuration",
+                ),
+                "Peak Output Throughput": st.column_config.TextColumn(
+                    "Peak Output Throughput",
+                    help="Maximum output tokens/sec achieved, with the concurrency level where it occurred",
+                ),
+                "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Output Throughput (Geometric Mean)",
+                    help="Geometric mean of output tok/sec across all concurrency levels",
+                ),
+                "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Total Throughput (Geometric Mean)",
+                    help="Geometric mean of total (input + output) tok/sec across all concurrency levels",
+                ),
+                "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
+                    "End-to-End Latency (Geometric Mean)",
+                    help="Geometric mean of request latency median across all concurrency levels",
+                ),
+                "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "TTFT P95 (Geometric Mean)",
+                    help="Geometric mean of Time-to-First-Token (P95) across all concurrency levels",
+                ),
+                "ITL P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "ITL P95 (Geometric Mean)",
+                    help="Geometric mean of Inter-Token Latency (P95) across all concurrency levels",
+                ),
+            }
+
+            # Display the table with column tooltips
+            st.dataframe(
+                summary_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+            )
+
+            # Legend
+            st.markdown("---")
+            st.markdown(
+                f"**Legend:** "
+                f"🟢 {version_1} performs better than {version_2} | "
+                f"🔴 {version_1} performs worse than {version_2} | "
+                f"🟡 Similar Performance (< 5% difference)"
+            )
+
+            # Detailed model comparison sections
+            st.markdown("---")
+            st.markdown("### 📋 Detailed Model Comparisons")
+            st.markdown("*Click on a model to see detailed metrics comparison*")
+
+            for idx, (model, tp) in enumerate(common_model_tp, 1):
+                model_short = model.split("/")[-1] if "/" in model else model
+
+                # Get data for this specific model+TP combination
+                v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
+                v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+
+                # Get TP value for display
+                tp_val = int(tp) if pd.notna(tp) else "N/A"
+
+                # Get common concurrencies
+                v1_concurrencies = set(
+                    v1_model_data["intended concurrency"].dropna().unique()
+                )
+                v2_concurrencies = set(
+                    v2_model_data["intended concurrency"].dropna().unique()
+                )
+                common_conc = v1_concurrencies.intersection(v2_concurrencies)
+
+                if not common_conc:
+                    continue
+
+                v1_common = v1_model_data[
+                    v1_model_data["intended concurrency"].isin(common_conc)
+                ]
+                v2_common = v2_model_data[
+                    v2_model_data["intended concurrency"].isin(common_conc)
+                ]
+
+                # Find peak throughput info for each version
+                v1_peak_idx = v1_common["output_tok/sec"].idxmax()
+                v2_peak_idx = v2_common["output_tok/sec"].idxmax()
+
+                v1_peak_throughput = v1_common.loc[v1_peak_idx, "output_tok/sec"]
+                v2_peak_throughput = v2_common.loc[v2_peak_idx, "output_tok/sec"]
+                v1_peak_conc = int(v1_common.loc[v1_peak_idx, "intended concurrency"])
+                v2_peak_conc = int(v2_common.loc[v2_peak_idx, "intended concurrency"])
+
+                # Get total throughput at peak
+                v1_total_throughput = v1_common.loc[v1_peak_idx, "total_tok/sec"]
+                v2_total_throughput = v2_common.loc[v2_peak_idx, "total_tok/sec"]
+
+                # Get latency metrics at peak throughput
+                v1_e2e_latency = v1_common.loc[v1_peak_idx, "request_latency_median"]
+                v2_e2e_latency = v2_common.loc[v2_peak_idx, "request_latency_median"]
+
+                v1_ttft = v1_common.loc[v1_peak_idx, "ttft_p95"]
+                v2_ttft = v2_common.loc[v2_peak_idx, "ttft_p95"]
+
+                v1_itl = v1_common.loc[v1_peak_idx, "itl_p95"]
+                v2_itl = v2_common.loc[v2_peak_idx, "itl_p95"]
+
+                def format_value(val, unit="", decimals=0, round_up=False):
+                    """Format a numeric value with optional unit."""
+                    if pd.isna(val):
+                        return "N/A"
+                    if round_up:
+                        import math
+
+                        if decimals == 0:
+                            return f"~{int(math.ceil(val)):,}{unit}"
+                        else:
+                            factor = 10**decimals
+                            rounded_val = math.ceil(val * factor) / factor
+                            return f"~{rounded_val:,.{decimals}f}{unit}"
+                    if decimals == 0:
+                        return f"~{int(val):,}{unit}"
+                    return f"~{val:,.{decimals}f}{unit}"
+
+                def get_winner_text(v1_val, v2_val, higher_is_better, metric_name):
+                    """Generate winner text for a metric."""
+                    if pd.isna(v1_val) or pd.isna(v2_val) or v2_val == 0:
+                        return "N/A"
+
+                    pct_diff = ((v1_val - v2_val) / v2_val) * 100
+
+                    if higher_is_better:
+                        if pct_diff > 5:
+                            return f"{version_1} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                        elif pct_diff < -5:
+                            return f"{version_2} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                        else:
+                            return f"Similar (~{abs(pct_diff):.1f}% difference)"
+                    else:
+                        if pct_diff < -5:
+                            return f"{version_1} has {abs(pct_diff):.1f}% lower {metric_name}"
+                        elif pct_diff > 5:
+                            return f"{version_2} has {abs(pct_diff):.1f}% lower {metric_name}"
+                        else:
+                            return f"Similar (~{abs(pct_diff):.1f}% difference)"
+
+                with st.expander(f"{idx}. {model_short} (TP={tp_val})"):
+                    detail_rows = [
+                        {
+                            "Metric": "Peak Output Throughput (output tok/s)",
+                            version_1: f"{format_value(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2: f"{format_value(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            "Difference/Winner": get_winner_text(
+                                v1_peak_throughput,
+                                v2_peak_throughput,
+                                True,
+                                "peak output throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Total Throughput (input + output tok/s)",
+                            version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            "Difference/Winner": get_winner_text(
+                                v1_total_throughput,
+                                v2_total_throughput,
+                                True,
+                                "total throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Median E2E Latency at Peak Throughput",
+                            version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
+                            version_2: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
+                            "Difference/Winner": get_winner_text(
+                                v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
+                            ),
+                        },
+                        {
+                            "Metric": "TTFT P95 at Peak Throughput",
+                            version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
+                            if pd.notna(v1_ttft)
+                            else "N/A",
+                            version_2: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
+                            if pd.notna(v2_ttft)
+                            else "N/A",
+                            "Difference/Winner": get_winner_text(
+                                v1_ttft, v2_ttft, False, "P95 TTFT"
+                            ),
+                        },
+                        {
+                            "Metric": "ITL P95 at Peak Throughput",
+                            version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
+                            version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
+                            "Difference/Winner": get_winner_text(
+                                v1_itl, v2_itl, False, "P95 ITL"
+                            ),
+                        },
+                    ]
+
+                    detail_df = pd.DataFrame(detail_rows)
+                    st.dataframe(
+                        detail_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        else:
+            st.info("No comparison data available for the selected filters.")
 
 
 def render_model_performance_comparison_section(filtered_df, accelerator_color_map):
@@ -3314,6 +4027,720 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map):
             st.warning("⚠️ No performance data available for cost calculations.")
 
 
+def render_energy_carbon_methodology_section(full_df):
+    """🌱 Energy / Carbon Computation  Section for GPU Services.
+
+    Args:
+        full_df: Full DataFrame with all benchmark data (filters are applied independently in this section)
+    """
+    # GPU power mapping (kW) - average inference power (fallback values)
+    # Note: Actual measured values are in GPU_POWER_DATA below for RHAIIS 3.2.5
+    GPU_POWER_MAP = {
+        "H200": 0.475,
+        "MI300X": 0.525,
+    }
+
+    # Default power for unknown accelerators
+    DEFAULT_GPU_POWER = 0.400
+
+    # Detailed GPU power consumption data from Thanos/Grafana Prometheus queries
+    # Structure: accelerator -> version -> profile -> model -> power_watts (or dict with TP-specific values)
+    # Power values are in Watts (W), convert to kW when using
+    GPU_POWER_DATA = {
+        "H200": {
+            "RHAIIS-3.2.5": {
+                # Profile A: Balanced (1k/1k) and Profile B: Variable Workload (512/2k)
+                "Profile A: Balanced (1k/1k)": {
+                    "deepseek-ai/DeepSeek-R1-0528": 652.18,
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 531.01,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 547.76,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 394.5,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 410.34,
+                    "meta-llama/Llama-3.3-70B-Instruct": 603.45,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 450.49,
+                    "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},  # TP-specific values
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "deepseek-ai/DeepSeek-R1-0528": 652.18,
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 531.01,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 547.76,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 394.5,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 410.34,
+                    "meta-llama/Llama-3.3-70B-Instruct": 603.45,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 450.49,
+                    "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},  # TP-specific values
+                },
+                # Profile E: Prefill Heavy (8k/1k)
+                "Profile E: Prefill Heavy (8k/1k)": {
+                    "deepseek-ai/DeepSeek-R1-0528": 652.18,
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 555.96,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 629.71,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 450.49,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 410.34,
+                    "meta-llama/Llama-3.3-70B-Instruct": 603.45,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 450.49,
+                    "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},  # TP-specific values
+                },
+            },
+        },
+        "MI300X": {
+            "RHAIIS-3.2.5": {
+                # Profile A: Balanced (1k/1k) and Profile B: Variable Workload (512/2k)
+                "Profile A: Balanced (1k/1k)": {
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 339.41,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 431.71,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 339.11,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 375.16,
+                    "deepseek-ai/DeepSeek-R1-0528": 393.71,
+                    "meta-llama/Llama-3.3-70B-Instruct": 162.9,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 355.97,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 339.41,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 431.71,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 339.11,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 375.16,
+                    "deepseek-ai/DeepSeek-R1-0528": 393.71,
+                    "meta-llama/Llama-3.3-70B-Instruct": 162.9,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 355.97,
+                },
+                # Profile E: Prefill Heavy (8k/1k)
+                "Profile E: Prefill Heavy (8k/1k)": {
+                    "Qwen/Qwen3-235B-A22B-Instruct-2507": 404.65,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 437.76,
+                    "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 375.08,
+                    "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 390.74,
+                    "deepseek-ai/DeepSeek-R1-0528": 399.13,
+                    "meta-llama/Llama-3.3-70B-Instruct": 435.14,
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 390.4,
+                },
+            },
+        },
+    }
+
+    def get_gpu_power(accelerator, model, version, profile, tp):
+        """Look up GPU power consumption from measured data.
+
+        Returns power in kW. Falls back to GPU_POWER_MAP if no specific data available.
+
+        Args:
+            accelerator: GPU type (H200, MI300X, etc.)
+            model: Full model name (e.g., "meta-llama/Llama-3.3-70B-Instruct")
+            version: RHAIIS version (e.g., "RHAIIS-3.2.5", "RHAIIS-3.2.5-sanity", etc.)
+            profile: Profile name (e.g., "Profile A: Balanced (1k/1k)")
+            tp: Tensor parallelism value
+
+        Returns:
+            Power consumption in kW
+        """
+        # Normalize version string - map variants like "RHAIIS-3.2.5-sanity" to "RHAIIS-3.2.5"
+        normalized_version = version
+        if "RHAIIS-3.2.5" in str(version):
+            normalized_version = "RHAIIS-3.2.5"
+
+        # Try to find specific power data
+        if accelerator in GPU_POWER_DATA:
+            acc_data = GPU_POWER_DATA[accelerator]
+            if normalized_version in acc_data:
+                version_data = acc_data[normalized_version]
+                if profile in version_data:
+                    profile_data = version_data[profile]
+                    if model in profile_data:
+                        power_value = profile_data[model]
+                        # Handle TP-specific values (dict) vs single values
+                        if isinstance(power_value, dict):
+                            # Look up by TP value, default to TP=4 if not found
+                            power_watts = power_value.get(
+                                tp, power_value.get(4, list(power_value.values())[0])
+                            )
+                        else:
+                            power_watts = power_value
+                        # Convert Watts to kW
+                        return power_watts / 1000.0
+
+        # Fallback to generic GPU_POWER_MAP
+        return GPU_POWER_MAP.get(accelerator, DEFAULT_GPU_POWER)
+
+    # Initialize session state for expander
+    if "energy_expanded" not in st.session_state:
+        st.session_state.energy_expanded = False
+
+    def keep_energy_expander_open():
+        """Keep the energy expander open when filters change."""
+        st.session_state.energy_expanded = True
+
+    with st.expander(
+        "🌱 Energy / Carbon Computation", expanded=st.session_state.energy_expanded
+    ):
+        st.markdown(
+            """
+            <p style="font-size: 1.3rem;">
+            This section computes energy consumption and carbon footprint for GPU-based inference
+            performance benchmarking runs on <strong>RHAIIS 3.2.5</strong> using measured GPU power from Grafana metrics.
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # All reference buttons on one line
+        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns([1, 1, 1, 1])
+
+        with btn_col1:
+            with st.popover("📐 Formulas & Variables"):
+                st.markdown(
+                    """
+                    **Variables:**
+                    | Variable | Description |
+                    |----------|-------------|
+                    | `n` | Number of GPUs to run model (TP) |
+                    | `NR` | Number of replicas |
+                    | `PI` | Avg Power per GPU (kW) |
+                    | `TH` | Runtime (hours) |
+
+                    ---
+
+                    **Formulas:**
+
+                    Avg Power to run model:
+                    ```
+                    P_model = PI × n
+                    ```
+
+                    GPU Energy (kWh):
+                    ```
+                    P_GPU = (PI × n × NR) × TH
+                    ```
+
+                    Total Energy:
+                    ```
+                    P_TOTAL = P_GPU + P_CPU + P_STORAGE
+                    ```
+                    """
+                )
+
+        with btn_col2:
+            with st.popover("📋 Example"):
+                st.markdown(
+                    """
+                    **Scenario:** granite-13b-instruct-v2 on L40S
+
+                    | Parameter | Symbol | Value |
+                    |-----------|--------|-------|
+                    | Power per GPU | PI | 0.275 kW |
+                    | GPU Count | n | 2 |
+                    | Replicas | NR | 2 |
+                    | Runtime | TH | 3 hours |
+
+                    ---
+
+                    **Step 1:** Average Power
+                    ```
+                    P_model = PI × n
+                          = 0.275 × 2
+                          = 0.550 kW
+                    ```
+
+                    **Step 2:** GPU Energy
+                    ```
+                    P_GPU = P_model × NR × TH
+                          = 0.550 × 2 × 3
+                          = 3.3 kWh
+                    ```
+                    """
+                )
+
+        with btn_col3:
+            with st.popover("⚡ GPU Power Reference"):
+                st.markdown(
+                    """
+                    **How Power Values Are Calculated:**
+
+                    For **RHAIIS 3.2.5** on H200 and MI300X, power values
+                    are **measured** from Grafana metrics:
+                    - **H200**: DCGM exporter (`DCGM_FI_DEV_POWER_USAGE`)
+                    - **MI300X**: ROCm-SMI (`gpu_power_usage`)
+
+                    Values are averaged per GPU across benchmark runs
+                    for each model and ISL/OSL profile combination.
+
+                    ---
+
+                    **Reference TDP Values:**
+
+                    | Accelerator | TDP (kW) |
+                    |-------------|----------|
+                    | H200 | 0.700 |
+                    | MI300X | 0.750 |
+
+                    *Actual inference power varies by model and workload,
+                    typically 55-85% of TDP.*
+                    """
+                )
+
+        # Calculate energy for filtered data
+        st.markdown("---")
+        st.markdown("#### ⚡ Energy Calculation")
+
+        st.info(
+            "💡 **Note:** Energy computation uses measured GPU power from Grafana metrics "
+            "(DCGM/ROCm-SMI) for **RHAIIS 3.2.5** on H200 and MI300X accelerators."
+        )
+
+        # Flag to track if we should show energy calculations
+        show_energy_calculations = True
+        energy_filtered_df = None
+
+        if full_df is not None and not full_df.empty:
+            # Filter to only RHAIIS-3.2.5 data and supported accelerators (H200, MI300X)
+            if "version" in full_df.columns and "accelerator" in full_df.columns:
+                rhaiis_325_df = full_df[
+                    (full_df["version"] == "RHAIIS-3.2.5")
+                    & (full_df["accelerator"].isin(["H200", "MI300X"]))
+                ]
+
+                if rhaiis_325_df.empty:
+                    st.warning(
+                        "⚠️ No RHAIIS 3.2.5 data available for H200 or MI300X accelerators in the dataset."
+                    )
+                    show_energy_calculations = False
+                else:
+                    # Create independent filters for this section
+                    st.markdown("##### Select Filters for Energy Calculation")
+
+                    energy_filter_col1, energy_filter_col2, energy_filter_col3 = (
+                        st.columns(3)
+                    )
+
+                    # Filter 1: Accelerator
+                    with energy_filter_col1:
+                        available_accelerators = sorted(
+                            rhaiis_325_df["accelerator"].unique().tolist()
+                        )
+                        selected_energy_accelerators = st.multiselect(
+                            "Accelerator(s)",
+                            available_accelerators,
+                            default=available_accelerators,
+                            key="energy_accelerator_filter",
+                            help="Select accelerators for energy calculation",
+                            on_change=keep_energy_expander_open,
+                        )
+
+                    # Filter accelerator first for dependent filters
+                    if selected_energy_accelerators:
+                        acc_filtered_df = rhaiis_325_df[
+                            rhaiis_325_df["accelerator"].isin(
+                                selected_energy_accelerators
+                            )
+                        ]
+                    else:
+                        acc_filtered_df = rhaiis_325_df
+
+                    # Filter 2: Profile (ISL/OSL) - single select
+                    with energy_filter_col2:
+                        if "profile" in acc_filtered_df.columns:
+                            available_profiles = sorted(
+                                acc_filtered_df["profile"].unique().tolist()
+                            )
+                            # Default to profiles that have measured power data
+                            measured_profiles = [
+                                "Profile A: Balanced (1k/1k)",
+                                "Profile B: Variable Workload (512/2k)",
+                                "Profile E: Prefill Heavy (8k/1k)",
+                            ]
+                            # Find first measured profile available, else use first available
+                            default_profile_idx = 0
+                            for i, p in enumerate(available_profiles):
+                                if p in measured_profiles:
+                                    default_profile_idx = i
+                                    break
+
+                            selected_energy_profile = st.selectbox(
+                                "ISL/OSL Profile",
+                                available_profiles,
+                                index=default_profile_idx,
+                                key="energy_profile_filter",
+                                help="Select ISL/OSL profile for energy calculation",
+                                on_change=keep_energy_expander_open,
+                            )
+                        else:
+                            selected_energy_profile = None
+
+                    # Filter by profile for model list
+                    if selected_energy_profile:
+                        profile_filtered_df = acc_filtered_df[
+                            acc_filtered_df["profile"] == selected_energy_profile
+                        ]
+                    else:
+                        profile_filtered_df = acc_filtered_df
+
+                    # Filter 3: Model
+                    with energy_filter_col3:
+                        available_models = sorted(
+                            profile_filtered_df["model"].unique().tolist()
+                        )
+                        # Show short model names in selection
+                        model_display = {
+                            m: m.split("/")[-1] if "/" in m else m
+                            for m in available_models
+                        }
+
+                        selected_energy_models = st.multiselect(
+                            "Model(s)",
+                            available_models,
+                            default=available_models,
+                            format_func=lambda x: model_display.get(x, x),
+                            key="energy_model_filter",
+                            help="Select models for energy calculation",
+                            on_change=keep_energy_expander_open,
+                        )
+
+                    # Apply all filters
+                    energy_filtered_df = rhaiis_325_df.copy()
+
+                    if selected_energy_accelerators:
+                        energy_filtered_df = energy_filtered_df[
+                            energy_filtered_df["accelerator"].isin(
+                                selected_energy_accelerators
+                            )
+                        ]
+
+                    if selected_energy_profile:
+                        energy_filtered_df = energy_filtered_df[
+                            energy_filtered_df["profile"] == selected_energy_profile
+                        ]
+
+                    if selected_energy_models:
+                        energy_filtered_df = energy_filtered_df[
+                            energy_filtered_df["model"].isin(selected_energy_models)
+                        ]
+
+                    if energy_filtered_df.empty:
+                        st.warning("⚠️ No data matches the selected filters.")
+                        show_energy_calculations = False
+
+                    st.markdown("---")
+            else:
+                st.warning(
+                    "⚠️ Required columns (version, accelerator) not available in the data."
+                )
+                show_energy_calculations = False
+        else:
+            st.warning("⚠️ No data available.")
+            show_energy_calculations = False
+
+        if (
+            show_energy_calculations
+            and energy_filtered_df is not None
+            and not energy_filtered_df.empty
+        ):
+            # Group by model, accelerator, TP to calculate energy
+            energy_data = []
+
+            # Get unique combinations
+            if "intended concurrency" in energy_filtered_df.columns:
+                concurrency_col = "intended concurrency"
+            elif "measured concurrency" in energy_filtered_df.columns:
+                concurrency_col = "measured concurrency"
+            else:
+                concurrency_col = None
+
+            for (model, accelerator, tp), group in energy_filtered_df.groupby(
+                ["model", "accelerator", "TP"]
+            ):
+                # Count unique concurrency levels
+                if concurrency_col:
+                    num_concurrencies = group[concurrency_col].nunique()
+                else:
+                    num_concurrencies = len(group)
+
+                # Calculate runtime: concurrencies × 10 minutes each
+                runtime_minutes = num_concurrencies * 10
+                runtime_hours = runtime_minutes / 60
+                runtime_seconds = runtime_minutes * 60
+
+                # GPU count = TP value
+                gpu_count = int(tp)
+
+                # Number of replicas = 1 for RHAIIS
+                replicas = 1
+
+                # Get version and profile from the group for power lookup
+                version = group["version"].iloc[0] if "version" in group.columns else ""
+                profile = group["profile"].iloc[0] if "profile" in group.columns else ""
+
+                # Get GPU power (kW) - use measured data if available, else fallback
+                gpu_power = get_gpu_power(accelerator, model, version, profile, int(tp))
+
+                # Calculate energy
+                avg_power = gpu_power * gpu_count
+                gpu_energy = avg_power * replicas * runtime_hours
+
+                # Calculate average output throughput and total tokens for energy per token
+                avg_output_throughput = 0
+                total_tokens = 0
+                energy_per_1m_tokens = None
+
+                if "output_tok/sec" in group.columns:
+                    # Get average throughput across all concurrency levels
+                    avg_output_throughput = group["output_tok/sec"].mean()
+                    if pd.notna(avg_output_throughput) and avg_output_throughput > 0:
+                        # Total tokens = throughput × runtime
+                        total_tokens = avg_output_throughput * runtime_seconds
+                        # Energy per 1M tokens (in Wh) = (GPU Energy in kWh × 1000) / (total_tokens / 1,000,000)
+                        # Simplified: Energy per 1M tokens (Wh) = (GPU Energy × 1e9) / total_tokens
+                        if total_tokens > 0:
+                            energy_per_1m_tokens = (
+                                gpu_energy * 1e9
+                            ) / total_tokens  # Wh per 1M tokens
+
+                # Get short model name
+                model_short = model.split("/")[-1] if "/" in model else model
+
+                # Check if using measured data (for display purposes)
+                # Normalize version for lookup (e.g., "RHAIIS-3.2.5-sanity" -> "RHAIIS-3.2.5")
+                normalized_version = (
+                    "RHAIIS-3.2.5" if "RHAIIS-3.2.5" in str(version) else version
+                )
+                using_measured = (
+                    accelerator in GPU_POWER_DATA
+                    and normalized_version in GPU_POWER_DATA.get(accelerator, {})
+                    and profile
+                    in GPU_POWER_DATA.get(accelerator, {}).get(normalized_version, {})
+                    and model
+                    in GPU_POWER_DATA.get(accelerator, {})
+                    .get(normalized_version, {})
+                    .get(profile, {})
+                )
+
+                energy_data.append(
+                    {
+                        "Model": model_short,
+                        "Accelerator": accelerator,
+                        "TP (GPUs Used)": gpu_count,
+                        "No of Nodes": replicas,
+                        "Concurrencies": num_concurrencies,
+                        "Benchmark Duration (min)": runtime_minutes,
+                        "Benchmark Duration (hrs)": round(runtime_hours, 2),
+                        "Avg Throughput (tok/s)": round(avg_output_throughput, 1)
+                        if avg_output_throughput > 0
+                        else "N/A",
+                        "Total Tokens Generated": f"{int(total_tokens):,}"
+                        if total_tokens > 0
+                        else "N/A",
+                        "Power per GPU (kW)": gpu_power,
+                        "Total Power Draw (kW)": round(avg_power, 3),
+                        "Total Energy Used (kWh)": round(gpu_energy, 3),
+                        "Energy/1M Tokens (Wh)": round(energy_per_1m_tokens, 2)
+                        if energy_per_1m_tokens
+                        else "N/A",
+                        "Data Source": "📊 Measured"
+                        if using_measured
+                        else "📈 Estimated",
+                    }
+                )
+
+            if energy_data:
+                energy_df = pd.DataFrame(energy_data)
+
+                # Sort by energy consumption descending
+                energy_df = energy_df.sort_values(
+                    "Total Energy Used (kWh)", ascending=False
+                )
+
+                # Get highest and lowest energy configs
+                max_energy = energy_df["Total Energy Used (kWh)"].max()
+                min_energy = energy_df["Total Energy Used (kWh)"].min()
+                max_config = energy_df.loc[
+                    energy_df["Total Energy Used (kWh)"].idxmax()
+                ]
+                min_config = energy_df.loc[
+                    energy_df["Total Energy Used (kWh)"].idxmin()
+                ]
+
+                # Get most efficient config (lowest energy per 1M tokens)
+                # Filter out N/A values for energy efficiency comparison
+                efficiency_df = energy_df[
+                    energy_df["Energy/1M Tokens (Wh)"] != "N/A"
+                ].copy()
+                best_efficiency_config = None
+                best_efficiency_value = None
+                if not efficiency_df.empty:
+                    efficiency_df["efficiency_numeric"] = pd.to_numeric(
+                        efficiency_df["Energy/1M Tokens (Wh)"], errors="coerce"
+                    )
+                    valid_efficiency = efficiency_df.dropna(
+                        subset=["efficiency_numeric"]
+                    )
+                    if not valid_efficiency.empty:
+                        best_efficiency_config = valid_efficiency.loc[
+                            valid_efficiency["efficiency_numeric"].idxmin()
+                        ]
+                        best_efficiency_value = best_efficiency_config[
+                            "efficiency_numeric"
+                        ]
+
+                # Display meaningful metrics
+                metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                with metric_col1:
+                    st.metric(
+                        "⬆️ Highest Energy",
+                        f"{max_energy:.3f} kWh",
+                        help=f"{max_config['Model']} on {max_config['Accelerator']} (TP={max_config['TP (GPUs Used)']})",
+                    )
+                    st.caption(
+                        f"{max_config['Model'][:20]}... | {max_config['Accelerator']}"
+                        if len(max_config["Model"]) > 20
+                        else f"{max_config['Model']} | {max_config['Accelerator']}"
+                    )
+                with metric_col2:
+                    st.metric(
+                        "⬇️ Lowest Energy",
+                        f"{min_energy:.3f} kWh",
+                        help=f"{min_config['Model']} on {min_config['Accelerator']} (TP={min_config['TP (GPUs Used)']})",
+                    )
+                    st.caption(
+                        f"{min_config['Model'][:20]}... | {min_config['Accelerator']}"
+                        if len(min_config["Model"]) > 20
+                        else f"{min_config['Model']} | {min_config['Accelerator']}"
+                    )
+                with metric_col3:
+                    energy_range = max_energy - min_energy
+                    st.metric(
+                        "📊 Energy Range",
+                        f"{energy_range:.3f} kWh",
+                        help="Difference between highest and lowest energy configurations",
+                    )
+                    st.caption(f"{len(energy_df)} configurations")
+
+                with metric_col4:
+                    if (
+                        best_efficiency_config is not None
+                        and best_efficiency_value is not None
+                    ):
+                        st.metric(
+                            "⚡ Best Efficiency",
+                            f"{best_efficiency_value:.1f} Wh/1M tok",
+                            help=f"Most energy-efficient: {best_efficiency_config['Model']} on {best_efficiency_config['Accelerator']} (TP={best_efficiency_config['TP (GPUs Used)']})",
+                        )
+                        st.caption(
+                            f"{best_efficiency_config['Model'][:15]}... | {best_efficiency_config['Accelerator']}"
+                            if len(best_efficiency_config["Model"]) > 15
+                            else f"{best_efficiency_config['Model']} | {best_efficiency_config['Accelerator']}"
+                        )
+                    else:
+                        st.metric(
+                            "⚡ Best Efficiency",
+                            "N/A",
+                            help="Throughput data not available to calculate efficiency",
+                        )
+
+                st.markdown("##### Detailed Breakdown")
+                st.caption(
+                    "💡 **Tip:** Hover over column headers to see detailed explanations of each metric."
+                )
+
+                # Configure column display
+                column_config = {
+                    "Model": st.column_config.TextColumn(
+                        "Model",
+                        width="medium",
+                        help="The LLM model being benchmarked (e.g., Llama-3.3-70B, DeepSeek-R1). Short name shown; full path includes organization prefix.",
+                    ),
+                    "Accelerator": st.column_config.TextColumn(
+                        "Accelerator",
+                        width="small",
+                        help="GPU hardware used for inference. H200 = NVIDIA H200 (700W TDP), MI300X = AMD MI300X (750W TDP).",
+                    ),
+                    "TP (GPUs Used)": st.column_config.NumberColumn(
+                        "TP (GPUs Used)",
+                        help="Tensor Parallelism - the number of GPUs the model is distributed across. Higher TP allows larger models but increases power consumption proportionally.",
+                        format="%d",
+                    ),
+                    "No of Nodes": st.column_config.NumberColumn(
+                        "No of Nodes",
+                        help="Number of server nodes running the model. For RHAIIS single-node deployments, this is always 1.",
+                    ),
+                    "Concurrencies": st.column_config.NumberColumn(
+                        "Concurrencies",
+                        help="Number of different concurrent user load levels tested (e.g., 1, 50, 100, 200, 300, 400, 500, 650 users). Each level runs for ~10 minutes.",
+                    ),
+                    "Benchmark Duration (min)": st.column_config.NumberColumn(
+                        "Benchmark Duration (min)",
+                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies × 10 minutes per level.",
+                        format="%d",
+                    ),
+                    "Benchmark Duration (hrs)": st.column_config.NumberColumn(
+                        "Benchmark Duration (hrs)",
+                        help="Total benchmark duration converted to hours. Used for energy calculations (kWh = kW × hours).",
+                        format="%.2f",
+                    ),
+                    "Avg Throughput (tok/s)": st.column_config.TextColumn(
+                        "Avg Throughput (tok/s)",
+                        help="Average output token generation rate across all concurrency levels. Measures how fast the model produces tokens during inference.",
+                    ),
+                    "Total Tokens Generated": st.column_config.TextColumn(
+                        "Total Tokens Generated",
+                        help="Estimated total output tokens generated during the benchmark. Formula: Avg Throughput (tok/s) × Runtime (seconds). Used for efficiency calculations.",
+                    ),
+                    "Power per GPU (kW)": st.column_config.NumberColumn(
+                        "Power per GPU (kW)",
+                        help="Average power consumption per GPU in kilowatts during inference. Measured from Grafana metrics (DCGM for H200, ROCm-SMI for MI300X) for RHAIIS 3.2.5.",
+                        format="%.3f",
+                    ),
+                    "Total Power Draw (kW)": st.column_config.NumberColumn(
+                        "Total Power Draw (kW)",
+                        help="Total average power for all GPUs running the model. Formula: Power per GPU × TP (number of GPUs).",
+                        format="%.3f",
+                    ),
+                    "Total Energy Used (kWh)": st.column_config.NumberColumn(
+                        "Total Energy Used (kWh)",
+                        help="Total GPU energy consumed during the benchmark in kilowatt-hours. Formula: Total Power Draw (kW) × No of Nodes × Benchmark Duration (hrs). Does not include CPU or storage energy.",
+                        format="%.3f",
+                    ),
+                    "Energy/1M Tokens (Wh)": st.column_config.TextColumn(
+                        "Energy/1M Tokens (Wh)",
+                        help="Energy efficiency metric in Watt-hours per 1 million tokens. Formula: (Total Energy Used in kWh × 1e9) ÷ Total Tokens. LOWER values = MORE efficient. Best metric for comparing energy efficiency across different models and hardware at production scale.",
+                    ),
+                    "Data Source": st.column_config.TextColumn(
+                        "Data Source",
+                        help="📊 Measured = Power values from actual Grafana/Prometheus metrics during RHAIIS 3.2.5 benchmarks. 📈 Estimated = Using typical inference power values (fallback when measured data unavailable).",
+                        width="small",
+                    ),
+                }
+
+                st.dataframe(
+                    energy_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=column_config,
+                )
+
+                st.caption(
+                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies × 10 minutes each. "
+                    "Power per GPU values are from Grafana metrics (DCGM/ROCm-SMI) for RHAIIS 3.2.5. "
+                    "**Energy/1M Tokens** is a normalized efficiency metric for comparing across hardware at production scale."
+                )
+
+                # Additional Energy Components below the table
+                with st.popover("📝 Additional Energy Components"):
+                    st.markdown(
+                        """
+                        **CPU Energy:**
+                        Both deployment types should account for
+                        CPU utilization of the server running the GPU.
+                        Computed separately and added to total.
+
+                        **Storage Energy:**
+                        For dedicated deployments, include model
+                        storage energy (e.g., IBM COS).
+                        """
+                    )
+            else:
+                st.info(
+                    "No RHAIIS 3.2.5 data available for energy calculation with current filter selections."
+                )
+
+
 def render_runtime_configs_section(filtered_df):
     """⚙️ Runtime Server Configs Section - Complete functionality from original."""
     if "runtime_configs_expanded" not in st.session_state:
@@ -3447,12 +4874,53 @@ def render_filtered_data_section(filtered_df):
         display_filtered_df.reset_index(drop=True, inplace=True)
         display_filtered_df.insert(0, "Row #", range(1, len(display_filtered_df) + 1))
 
+        # Add Run Date column from guidellm_start_time_ms (epoch milliseconds)
+        def convert_epoch_to_date(row):
+            """Convert epoch milliseconds to date string."""
+            start_time = row.get("guidellm_start_time_ms")
+            if pd.notna(start_time) and start_time != "":
+                try:
+                    # Convert milliseconds to seconds and create datetime
+                    from datetime import datetime
+
+                    timestamp_sec = int(start_time) / 1000
+                    dt = datetime.fromtimestamp(timestamp_sec)
+                    return dt.strftime("%Y-%m-%d")
+                except (ValueError, TypeError, OSError):
+                    return None
+            return None
+
+        display_filtered_df["Run Date"] = display_filtered_df.apply(
+            convert_epoch_to_date, axis=1
+        )
+
         # Add Grafana metrics link for rows with timestamp data
+        # Dashboard IDs for different accelerators
+        # H200 has two dashboards: old (before Jan 1, 2026) and new (Jan 1, 2026 onwards)
+        GRAFANA_DASHBOARDS = {
+            "H200_OLD": {
+                "dashboard_id": "6475e6106c33fe",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-8xh200-2",
+            },
+            "H200_NEW": {
+                "dashboard_id": "7a3b910e7e827c",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-rhaiis-h200",
+            },
+            "MI300X": {
+                "dashboard_id": "amd-ods-az-amd-01",
+                "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
+            },
+        }
+
+        # Jan 1, 2026 00:00:00 UTC in milliseconds
+        H200_DASHBOARD_CUTOFF_MS = 1767225600000
+
         def create_grafana_link(row):
             """Create Grafana dashboard link if timestamps are available."""
             start_time = row.get("guidellm_start_time_ms")
             end_time = row.get("guidellm_end_time_ms")
             uuid = row.get("uuid")
+            accelerator = row.get("accelerator", "")
 
             # Only create link if all required fields are present and not NaN
             if (
@@ -3466,19 +4934,46 @@ def render_filtered_data_section(filtered_df):
                 # Convert to integers (in case they're floats)
                 start_ms = int(start_time)
                 end_ms = int(end_time)
-                return f"https://grafana-psap-obs.apps.ocp4.intlab.redhat.com/d/6475e6106c33fe?orgId=1&from={start_ms}&to={end_ms}&var-deployment_uuid={uuid}"
+
+                # Determine which dashboard to use based on accelerator and date
+                if accelerator == "H200":
+                    # Use new dashboard for runs on or after Jan 1, 2026
+                    if start_ms >= H200_DASHBOARD_CUTOFF_MS:
+                        dashboard_key = "H200_NEW"
+                    else:
+                        dashboard_key = "H200_OLD"
+                elif accelerator in GRAFANA_DASHBOARDS:
+                    dashboard_key = accelerator
+                else:
+                    return None
+
+                dashboard_config = GRAFANA_DASHBOARDS[dashboard_key]
+                dashboard_id = dashboard_config["dashboard_id"]
+                dashboard_name = dashboard_config["dashboard_name"]
+
+                # Build URL with accelerator-specific dashboard
+                base_url = "https://grafana-psap-obs.apps.ocp4.intlab.redhat.com"
+                return (
+                    f"{base_url}/d/{dashboard_id}/{dashboard_name}"
+                    f"?orgId=1&from={start_ms}&to={end_ms}"
+                    f"&timezone=browser&var-deployment_uuid={uuid}"
+                    f"&var-deployment_pod_name=$__all&var-rate_interval=1m"
+                )
             return None
 
         display_filtered_df["grafana_metrics_link"] = display_filtered_df.apply(
             create_grafana_link, axis=1
         )
 
-        # Reorder columns to place grafana_metrics_link after TP
+        # Reorder columns to place grafana_metrics_link after TP and Run Date at the end
         cols = display_filtered_df.columns.tolist()
         if "grafana_metrics_link" in cols and "TP" in cols:
             cols.remove("grafana_metrics_link")
             tp_idx = cols.index("TP")
             cols.insert(tp_idx + 1, "grafana_metrics_link")
+        if "Run Date" in cols:
+            cols.remove("Run Date")
+            cols.append("Run Date")  # Move to end
             display_filtered_df = display_filtered_df[cols]
 
         # Define column configurations with help text
@@ -3696,6 +5191,10 @@ def render_filtered_data_section(filtered_df):
                 help="Link to Grafana dashboard showing detailed metrics for this benchmark run (available only for runs with timestamp data)",
                 display_text="View Metrics 📊",
             ),
+            "Run Date": st.column_config.TextColumn(
+                "Run Date",
+                help="Date when the benchmark run was executed (from guidellm_start_time)",
+            ),
         }
 
         st.dataframe(
@@ -3845,8 +5344,10 @@ if previous_view != selected_view and previous_view is not None:
     st.session_state.performance_plots_expanded = False
     st.session_state.pareto_expanded = False
     st.session_state.version_comparison_expanded = False
+    st.session_state.compare_versions_summary_expanded = False
     st.session_state.model_comparison_expanded = False
     st.session_state.runtime_configs_expanded = False
+    st.session_state.energy_expanded = False
 
 # Update previous view
 st.session_state.previous_view = selected_view
@@ -3980,10 +5481,10 @@ def main():
 
         if any([url_accelerators, url_models, url_versions, url_profile, url_tp_sizes]):
             preferred_versions = [
-                "RHAIIS-3.2.2",
                 "RHAIIS-3.2.3",
-                "vLLM-0.10.1.1",
+                "RHAIIS-3.2.5",
                 "vLLM-0.11.0",
+                "vLLM-0.11.2",
             ]
             available_versions = sorted(df["version"].unique().tolist())
             default_versions = [
@@ -4030,10 +5531,10 @@ def main():
             st.session_state.use_url_filters = True
         else:
             preferred_versions = [
-                "RHAIIS-3.2.2",
                 "RHAIIS-3.2.3",
-                "vLLM-0.10.1.1",
+                "RHAIIS-3.2.5",
                 "vLLM-0.11.0",
+                "vLLM-0.11.2",
             ]
             available_versions = sorted(df["version"].unique().tolist())
             default_versions = [
@@ -4436,6 +5937,7 @@ def main():
                 st.session_state.model_comparison_expanded = False
                 st.session_state.version_comparison_expanded = False
                 st.session_state.runtime_configs_expanded = False
+                st.session_state.energy_expanded = False
                 # Reset filter state tracking
                 if "previous_filter_state" in st.session_state:
                     del st.session_state.previous_filter_state
@@ -4453,6 +5955,7 @@ def main():
                 st.session_state.model_comparison_expanded = False
                 st.session_state.version_comparison_expanded = False
                 st.session_state.runtime_configs_expanded = False
+                st.session_state.energy_expanded = False
                 # Reset filter state tracking
                 if "previous_filter_state" in st.session_state:
                     del st.session_state.previous_filter_state
@@ -4619,6 +6122,7 @@ def main():
         st.session_state.model_comparison_expanded = False
         st.session_state.version_comparison_expanded = False
         st.session_state.runtime_configs_expanded = False
+        st.session_state.energy_expanded = False
 
     # Store current filter state for next comparison
     st.session_state.previous_filter_state = current_filter_state
@@ -4957,9 +6461,28 @@ def main():
                         common_concurrencies
                     )
 
+                    # Helper function to calculate geometric mean of percentage changes
+                    def calc_geom_mean_change(changes):
+                        """Calculate geometric mean of percentage changes using growth factors."""
+                        if not changes:
+                            return None
+                        # Filter out changes that would result in non-positive growth factors
+                        valid_changes = [c for c in changes if c > -100]
+                        if not valid_changes:
+                            return 0
+                        # Convert to growth factors, compute geometric mean, convert back
+                        growth_factors = [1 + (c / 100) for c in valid_changes]
+                        geom_mean_factor = np.prod(growth_factors) ** (
+                            1 / len(growth_factors)
+                        )
+                        return (geom_mean_factor - 1) * 100
+
                     if metric_changes["throughput"]:
                         metrics_comparison["throughput_change"] = np.median(
                             metric_changes["throughput"]
+                        )
+                        metrics_comparison["throughput_geom_mean_change"] = (
+                            calc_geom_mean_change(metric_changes["throughput"])
                         )
                         metrics_comparison["throughput_older"] = np.median(
                             metric_values["throughput_older"]
@@ -4972,6 +6495,9 @@ def main():
                         metrics_comparison["ttft_change"] = np.median(
                             metric_changes["ttft"]
                         )
+                        metrics_comparison["ttft_geom_mean_change"] = (
+                            calc_geom_mean_change(metric_changes["ttft"])
+                        )
                         metrics_comparison["ttft_older"] = np.median(
                             metric_values["ttft_older"]
                         )
@@ -4983,6 +6509,9 @@ def main():
                         metrics_comparison["itl_change"] = np.median(
                             metric_changes["itl"]
                         )
+                        metrics_comparison["itl_geom_mean_change"] = (
+                            calc_geom_mean_change(metric_changes["itl"])
+                        )
                         metrics_comparison["itl_older"] = np.median(
                             metric_values["itl_older"]
                         )
@@ -4993,6 +6522,9 @@ def main():
                     if metric_changes["efficiency"]:
                         metrics_comparison["efficiency_change"] = np.median(
                             metric_changes["efficiency"]
+                        )
+                        metrics_comparison["efficiency_geom_mean_change"] = (
+                            calc_geom_mean_change(metric_changes["efficiency"])
                         )
                         metrics_comparison["efficiency_older"] = np.median(
                             metric_values["efficiency_older"]
@@ -5021,8 +6553,14 @@ def main():
 
         render_model_performance_comparison_section(filtered_df, accelerator_color_map)
         render_version_comparison_section(filtered_df)
+        render_compare_versions_summary_section(
+            df
+        )  # Uses full df for independent filtering
         render_regression_analysis_section(filtered_df, analyze_performance_changes)
         render_cost_analysis_section(filtered_df, accelerator_color_map)
+        render_energy_carbon_methodology_section(
+            df
+        )  # Pass full df - energy section has independent filters
         # render_performance_rankings_section(filtered_df)
         render_runtime_configs_section(filtered_df)
         render_filtered_data_section(filtered_df)
