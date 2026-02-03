@@ -123,6 +123,12 @@ warn_unused_configs = true
 disallow_untyped_defs = false  # Set to true for stricter typing
 ignore_missing_imports = true
 show_error_codes = true
+exclude = [
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+]
 
 [[tool.mypy.overrides]]
 module = [
@@ -131,6 +137,12 @@ module = [
     "pandas.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "mlperf_datacenter",
+]
+ignore_errors = true
 
 # pytest configuration
 [tool.pytest.ini_options]

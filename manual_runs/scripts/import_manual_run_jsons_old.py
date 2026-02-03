@@ -1,4 +1,7 @@
-"""Import Manual Run JSONs Script.
+"""Import Manual Run JSONs Script (DEPRECATED - for guidellm 0.3.x and 0.4.x).
+
+NOTE: This script is for guidellm versions 0.3.x and 0.4.x only.
+For guidellm 0.5.0 and above, use import_manual_runs_json_v2.py instead.
 
 Script to process and import benchmark results from guidellm JSON files
 into the performance dashboard data format.
