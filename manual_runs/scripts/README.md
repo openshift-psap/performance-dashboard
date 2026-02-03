@@ -1,140 +1,139 @@
-# Manual Runs Documentation
+# Import Manual Runs JSON v2
 
-This directory contains data processing scripts for the RHAIIS Performance Dashboard.
+Script to process and import benchmark results from **guidellm v0.5.0** and above JSON files into the performance dashboard CSV format.
 
-## import_manual_run_jsons.py
-
-A script to import guidellm JSON benchmark results into the consolidated CSV format used by the performance dashboard.
-
-### Purpose
-
-This script processes JSON output files from guidellm benchmarks and converts them into CSV format that can be consumed by the dashboard. It's designed for importing manual benchmark runs or results from external benchmark tools.
-
-### Prerequisites
-
-- Python 3.9+
-- Required packages: `pandas`, `numpy`, `json` (from requirements.txt)
-- Access to guidellm JSON output files
-
-### Usage
+## Prerequisites
 
 ```bash
-python import_manual_run_jsons.py <json_file> [options]
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install pandas
 ```
 
-### Parameters
-
-| Parameter        | Required                              | Description                                    |
-| ---------------- | ------------------------------------- | ---------------------------------------------- |
-| `json_file`      | Path to the guidellm JSON output file | `benchmark_results.json`                       |
-| `--model`        | Model name/identifier                 | `RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic`  |
-| `--version`      | Version/framework identifier          | `vLLM-0.10.1`, `RHAIIS-3.2` etc                |
-| `--tp`           | Tensor parallelism size               | `8`                                            |
-| `--accelerator`  | Accelerator type                      | `H200`, `MI300X`, or `TPU`                     |
-| `--runtime-args` | Runtime server arguments              | `tensor-parallel-size: 8; max-model-len: 8192` |
-| `--csv-file`     | Output CSV file path                  | `new_benchmarks.csv` (default)                 |
-
-### Examples
-
-#### Basic Usage
+## Usage
 
 ```bash
-python import_manual_run_jsons.py benchmark_results.json \
-  --model "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic" \
-  --version "vLLM-0.10.1" \
-  --tp 8 \
-  --accelerator "H200" \
-  --runtime-args "tensor-parallel-size: 8; max-model-len: 8192; trust-remote-code: True"
+python import_manual_runs_json_v2.py <json_file> \
+  --model <model_name> \
+  --version <framework_version> \
+  --tp <tensor_parallelism> \
+  --accelerator <gpu_type> \
+  --runtime-args <server_args> \
+  --image-tag <container_image> \
+  --guidellm-version <guidellm_version> \
+  --csv-file <output_csv>
 ```
 
-#### Multiple Benchmark Results
+## Arguments
+
+| Argument             | Required | Description                                     | Example                                 |
+| -------------------- | -------- | ----------------------------------------------- | --------------------------------------- |
+| `json_file`          | Yes      | Path to guidellm JSON output file               | `llama-70b-vllm.json`                   |
+| `--model`            | Yes      | Model name (HuggingFace format)                 | `meta-llama/Llama-3.3-70B-Instruct`     |
+| `--version`          | Yes      | Framework/version identifier                    | `vLLM-0.13.0`, `TRT-LLM-1.2.0rc2.post1` |
+| `--tp`               | Yes      | Tensor parallelism size                         | `4`, `8`                                |
+| `--accelerator`      | Yes      | GPU/accelerator type                            | `H200`, `MI300X`, `TPU`                 |
+| `--runtime-args`     | Yes      | Server runtime configuration                    | See examples below                      |
+| `--image-tag`        | Yes      | Container image tag                             | `vllm/vllm-openai:v0.13.0`              |
+| `--guidellm-version` | Yes      | guidellm version used                           | `v0.5.1`, `v0.3.0`                      |
+| `--csv-file`         | No       | Output CSV path (default: `new_benchmarks.csv`) | `llama-70b-vllm.csv`                    |
+
+## Examples
+
+### vLLM - Llama 3.3 70B
 
 ```bash
-# Process multiple JSON files and append to the same CSV
-python import_manual_run_jsons.py h200_results.json \
-  --model "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8" \
-  --version "vLLM-0.10.1" \
-  --tp 8 \
-  --accelerator "H200" \
-  --runtime-args "tensor-parallel-size: 8; max-model-len: 8192; gpu-memory-utilization: 0.92" \
-  --csv-file "consolidated_benchmarks.csv"
-
-python import_manual_run_jsons.py mi300x_results.json \
-  --model "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8" \
-  --version "vLLM-0.10.1" \
-  --tp 8 \
-  --accelerator "MI300X" \
-  --runtime-args "tensor-parallel-size: 8; max-model-len: 8192; gpu-memory-utilization: 0.92" \
-  --csv-file "consolidated_benchmarks.csv"
-```
-
-#### Different Configurations
-
-```bash
-# Different TP sizes
-python import_manual_run_jsons.py tp4_results.json \
-  --model "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic" \
-  --version "RHAIIS-3.2.1" \
+python import_manual_runs_json_v2.py \
+  llama-70b-vllm.json \
+  --model "meta-llama/Llama-3.3-70B-Instruct" \
+  --version "vLLM-0.13.0" \
   --tp 4 \
   --accelerator "H200" \
-  --runtime-args "tensor-parallel-size: 4; max-model-len: 8192"
-
-python import_manual_run_jsons.py tp2_results.json \
-  --model "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic" \
-  --version "RHAIIS-3.2.1" \
-  --tp 2 \
-  --accelerator "H200" \
-  --runtime-args "tensor-parallel-size: 2; max-model-len: 8192"
+  --runtime-args "tensor-parallel-size: 4; max-model-len: 2248; gpu-memory-utilization: 0.9; kv-cache-dtype: fp8; async-scheduling: true; no-enable-prefix-caching: true; max-num-batched-tokens: 8192; dtype: auto" \
+  --image-tag "vllm/vllm-openai:v0.13.0" \
+  --guidellm-version "v0.5.1" \
+  --csv-file "llama-70b-vllm.csv"
 ```
 
-### Input File Format
-
-The script expects guidellm JSON output files.
-
-### Output Format
-
-The script generates CSV files with the following columns:
-
-- `run`: Combined accelerator-model-TP identifier
-- `accelerator`: Hardware accelerator type
-- `model`: Model name
-- `version`: Version/framework identifier
-- `prompt toks`, `output toks`: Token counts from request configuration
-- `TP`: Tensor parallelism size
-- `measured concurrency`, `intended concurrency`: Concurrency metrics
-- `output_tok/sec`, `total_tok/sec`: Throughput metrics
-- Various latency percentiles (`ttft_p95`, `itl_p95`, etc.)
-- `successful_requests`, `errored_requests`: Request counts
-- `runtime_args`: Formatted runtime arguments string
-- Additional performance metrics...
-
-### Runtime Arguments Format
-
-The `--runtime-args` parameter should be a semicolon-separated string of key-value pairs:
+### TRT-LLM - Llama 3.3 70B
 
 ```bash
---runtime-args "tensor-parallel-size: 8; max-model-len: 8192; trust-remote-code: True; gpu-memory-utilization: 0.92; disable-log-requests: True"
+python import_manual_runs_json_v2.py \
+  llama-70b-trtllm.json \
+  --model "meta-llama/Llama-3.3-70B-Instruct" \
+  --version "TRT-LLM-1.2.0rc2.post1" \
+  --tp 8 \
+  --accelerator "H200" \
+  --runtime-args "tp_size: 8; max_batch_size: 1024; max_num_tokens: 16384; max_seq_len: 2248; kv_cache_config.dtype: fp8" \
+  --image-tag "nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc2.post1" \
+  --guidellm-version "v0.5.1" \
+  --csv-file "llama-70b-trtllm.csv"
 ```
 
-### Integration with Dashboard
+## Appending to Consolidated Dashboard
 
-After processing JSON files:
+After generating a CSV file, append it to the main dashboard (skip the header):
 
-1. **Merge with existing data:**
+```bash
+tail -n +2 my-benchmark.csv >> ../consolidated_dashboard.csv
+```
 
-   ```bash
-   # Append new results to consolidated dashboard CSV
-   cat new_benchmarks.csv >> consolidated_dashboard.csv
-   ```
+## Output CSV Columns
 
-2. **Update dashboard data:**
-   - Copy the consolidated CSV to your dashboard directory
-   - Rebuild the container image if using containerized deployment
-   - Restart the dashboard application
+The script outputs 44 columns compatible with the performance dashboard:
 
-3. **Verify in dashboard:**
-   - Check that new data appears in the filters
-   - Validate metrics and visualizations
-   - Test performance comparisons
+| #   | Column                    | Description                                          |
+| --- | ------------------------- | ---------------------------------------------------- |
+| 1   | `run`                     | Unique run identifier (`{accelerator}-{model}-{tp}`) |
+| 2   | `accelerator`             | GPU type (H200, MI300X, etc.)                        |
+| 3   | `model`                   | Model name                                           |
+| 4   | `version`                 | Framework version                                    |
+| 5   | `prompt toks`             | Configured prompt token count                        |
+| 6   | `output toks`             | Configured output token count                        |
+| 7   | `TP`                      | Tensor parallelism size                              |
+| 8   | `measured concurrency`    | Actual measured concurrency                          |
+| 9   | `intended concurrency`    | Requested concurrency (streams)                      |
+| 10  | `measured rps`            | Requests per second                                  |
+| 11  | `output_tok/sec`          | Output tokens per second                             |
+| 12  | `total_tok/sec`           | Total tokens per second                              |
+| 13  | `prompt_token_count_mean` | Mean prompt token count                              |
+| 14  | `prompt_token_count_p99`  | P99 prompt token count                               |
+| 15  | `output_token_count_mean` | Mean output token count                              |
+| 16  | `output_token_count_p99`  | P99 output token count                               |
+| 17  | `ttft_median`             | Time to first token - median (ms)                    |
+| 18  | `ttft_p95`                | Time to first token - P95 (ms)                       |
+| 19  | `ttft_p1`                 | Time to first token - P1 (ms)                        |
+| 20  | `ttft_p999`               | Time to first token - P99.9 (ms)                     |
+| 21  | `tpot_median`             | Time per output token - median (ms)                  |
+| 22  | `tpot_p95`                | Time per output token - P95 (ms)                     |
+| 23  | `tpot_p99`                | Time per output token - P99 (ms)                     |
+| 24  | `tpot_p999`               | Time per output token - P99.9 (ms)                   |
+| 25  | `tpot_p1`                 | Time per output token - P1 (ms)                      |
+| 26  | `itl_median`              | Inter-token latency - median (ms)                    |
+| 27  | `itl_p95`                 | Inter-token latency - P95 (ms)                       |
+| 28  | `itl_p999`                | Inter-token latency - P99.9 (ms)                     |
+| 29  | `itl_p1`                  | Inter-token latency - P1 (ms)                        |
+| 30  | `request_latency_median`  | End-to-end request latency - median (s)              |
+| 31  | `request_latency_min`     | End-to-end request latency - minimum (s)             |
+| 32  | `request_latency_max`     | End-to-end request latency - maximum (s)             |
+| 33  | `successful_requests`     | Number of successful requests                        |
+| 34  | `errored_requests`        | Number of errored requests                           |
+| 35  | `uuid`                    | Unique benchmark run ID                              |
+| 36  | `ttft_mean`               | Time to first token - mean (ms)                      |
+| 37  | `ttft_p99`                | Time to first token - P99 (ms)                       |
+| 38  | `itl_mean`                | Inter-token latency - mean (ms)                      |
+| 39  | `itl_p99`                 | Inter-token latency - P99 (ms)                       |
+| 40  | `runtime_args`            | Server configuration arguments                       |
+| 41  | `guidellm_start_time_ms`  | Benchmark start time (epoch ms)                      |
+| 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                        |
+| 43  | `image_tag`               | Container image used                                 |
+| 44  | `guidellm_version`        | guidellm version used                                |
 
-For more information about the overall dashboard and deployment, see the main [README.md](../README.md).
+## Notes
+
+- This script is designed for **guidellm v0.5.0** and above JSON format
+- For older guidellm v0.3.0 results, use `import_manual_runs_json.py`
+- If the output CSV already exists, new rows are appended to it

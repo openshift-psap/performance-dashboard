@@ -50,7 +50,7 @@ lint:
 # Type checking
 type-check:
 	@echo "Running type checks..."
-	mypy .
+	mypy dashboard.py dashboard_styles.py llmd_dashboard.py --exclude venv --exclude .venv
 	@echo "Type checking complete!"
 
 
