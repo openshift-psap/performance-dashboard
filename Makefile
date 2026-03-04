@@ -1,7 +1,7 @@
 # Makefile for Performance Dashboard
 # Provides convenient commands for development and CI/CD
 
-.PHONY: help install install-dev lint format type-check security test clean pre-commit setup-dev
+.PHONY: help install install-dev lint format format-unsafe type-check security test clean pre-commit setup-dev
 
 # Default target
 help:
@@ -11,6 +11,7 @@ help:
 	@echo "  install-dev   Install development dependencies"
 	@echo "  lint          Run all linting checks"
 	@echo "  format        Format code with ruff"
+	@echo "  format-unsafe Format code with ruff (including unsafe fixes)"
 	@echo "  format-check  Check code formatting without making changes"
 	@echo "  type-check    Run type checking with mypy"
 	@echo "  test          Run tests with pytest"
@@ -32,6 +33,12 @@ install-dev:
 format:
 	@echo "Formatting code..."
 	ruff check . --fix
+	ruff format .
+	isort .
+
+format-unsafe:
+	@echo "Formatting code (with unsafe fixes)..."
+	ruff check . --fix --unsafe-fixes
 	ruff format .
 	isort .
 

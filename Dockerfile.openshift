@@ -26,6 +26,9 @@ COPY mlperf-data/ ./mlperf-data/
 # Copy assets (logos, images, etc.)
 COPY assets/ ./assets/
 
+# Copy RHAIIS dataset summaries for Dataset Representation section
+COPY datasets/summaries/ ./datasets/summaries/
+
 RUN mkdir -p /app/.streamlit && \
     chgrp -R 0 /app && \
     chmod -R g=u /app
@@ -50,6 +53,4 @@ CMD ["streamlit", "run", "dashboard.py", \
      "--server.address=0.0.0.0", \
      "--server.headless=true", \
      "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=false", \
-     "--server.runOnSave=true", \
-     "--server.allowRunOnSave=true"]
+     "--server.enableXsrfProtection=false"]

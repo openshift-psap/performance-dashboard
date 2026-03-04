@@ -16,7 +16,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 # Import styling functions
 from dashboard_styles import (
@@ -233,13 +235,307 @@ def keep_expander_open(expander_key):
     st.session_state[expander_key] = True
 
 
+@st.cache_data(ttl=600)
+def load_rhaiis_dataset(dataset_name):
+    """Load a pre-generated CSV summary for a RHAIIS benchmark dataset.
+
+    Args:
+        dataset_name: Friendly name of the dataset (e.g., 'DeepSeek-R1')
+
+    Returns:
+        DataFrame with at least 'input_length' column (and optionally
+        'output_length'), or None if not available.
+    """
+    dataset_map = {
+        "DeepSeek-R1": "datasets/summaries/deepseek-r1.csv",
+        "GPT-OSS Perf Eval": "datasets/summaries/gpt-oss.csv",
+        "ShareGPT Vicuna": "datasets/summaries/sharegpt-vicuna.csv",
+    }
+
+    if dataset_name not in dataset_map:
+        return None
+
+    csv_path = dataset_map[dataset_name]
+
+    if not os.path.exists(csv_path):
+        return None
+
+    try:
+        data = pd.read_csv(csv_path)
+        if "input_length" not in data.columns:
+            st.error(
+                f"Dataset CSV must contain an 'input_length' column. Found: {list(data.columns)}"
+            )
+            return None
+        return data
+    except Exception as e:
+        st.error(f"Error loading dataset summary: {e}")
+        return None
+
+
+def create_rhaiis_dataset_histograms(data):
+    """Create histograms for input and output token lengths.
+
+    Args:
+        data: DataFrame containing at least 'input_length' column,
+              and optionally 'output_length'.
+
+    Returns:
+        Tuple of (input histogram figure, output histogram figure or None)
+    """
+    if data is None or data.empty:
+        return None, None
+
+    input_col = None
+    output_col = None
+
+    for col in data.columns:
+        col_lower = col.lower()
+        if "input" in col_lower and (
+            "length" in col_lower or "len" in col_lower or "token" in col_lower
+        ):
+            input_col = col
+        elif "output" in col_lower and (
+            "length" in col_lower or "len" in col_lower or "token" in col_lower
+        ):
+            output_col = col
+
+    if input_col is None:
+        st.warning(
+            f"Could not find input length column. Available columns: {list(data.columns)}"
+        )
+        return None, None
+
+    # --- Input token histogram ---
+    input_data = data[input_col].dropna()
+    input_mean = input_data.mean()
+    input_median = input_data.median()
+    input_min = input_data.min()
+    input_max = input_data.max()
+
+    fig_input = go.Figure()
+    fig_input.add_trace(
+        go.Histogram(
+            x=input_data,
+            nbinsx=50,
+            marker_color="#1f77b4",
+            marker_line={"color": "#0d3d5c", "width": 1},
+            name="Input Tokens",
+        )
+    )
+    fig_input.add_vline(
+        x=input_mean,
+        line_dash="dash",
+        line_color="black",
+        annotation_text=f"Mean: {input_mean:.2f}",
+        annotation_position="top left",
+    )
+    fig_input.add_vline(
+        x=input_median,
+        line_dash="dot",
+        line_color="red",
+        annotation_text=f"Median: {input_median:.2f}",
+        annotation_position="top",
+    )
+    fig_input.add_vline(
+        x=input_max,
+        line_dash="dashdot",
+        line_color="green",
+        annotation_text=f"Max: {int(input_max)}",
+        annotation_position="top right",
+    )
+    fig_input.update_layout(
+        title=(
+            f"Histogram of Input Token Length<br>"
+            f"<sub>Mean: {input_mean:.2f}, Median: {input_median:.2f}, "
+            f"Min: {int(input_min)}, Max: {int(input_max)}</sub>"
+        ),
+        xaxis_title="Input Token Length",
+        yaxis_title="Frequency",
+        showlegend=False,
+        height=400,
+    )
+
+    # --- Output token histogram (if available) ---
+    fig_output = None
+    if output_col is not None:
+        output_data = data[output_col].dropna()
+        if not output_data.empty:
+            output_mean = output_data.mean()
+            output_median = output_data.median()
+            output_min = output_data.min()
+            output_max = output_data.max()
+
+            fig_output = go.Figure()
+            fig_output.add_trace(
+                go.Histogram(
+                    x=output_data,
+                    nbinsx=50,
+                    marker_color="#8B4513",
+                    marker_line={"color": "#5c2a0a", "width": 1},
+                    name="Output Tokens",
+                )
+            )
+            fig_output.add_vline(
+                x=output_mean,
+                line_dash="dash",
+                line_color="black",
+                annotation_text=f"Mean: {output_mean:.2f}",
+                annotation_position="top left",
+            )
+            fig_output.add_vline(
+                x=output_median,
+                line_dash="dot",
+                line_color="red",
+                annotation_text=f"Median: {output_median:.2f}",
+                annotation_position="top",
+            )
+            fig_output.add_vline(
+                x=output_max,
+                line_dash="dashdot",
+                line_color="green",
+                annotation_text=f"Max: {int(output_max)}",
+                annotation_position="top right",
+            )
+            fig_output.update_layout(
+                title=(
+                    f"Histogram of Output Token Length<br>"
+                    f"<sub>Mean: {output_mean:.2f}, Median: {output_median:.2f}, "
+                    f"Min: {int(output_min)}, Max: {int(output_max)}</sub>"
+                ),
+                xaxis_title="Output Token Length",
+                yaxis_title="Frequency",
+                showlegend=False,
+                height=400,
+            )
+
+    return fig_input, fig_output
+
+
+def render_dataset_representation_section(selected_profile):
+    """Render the Dataset Representation section (visible only for Custom ISL/OSL).
+
+    Shows token length distribution histograms for real benchmark datasets
+    when the user has selected a 'Custom' ISL/OSL profile.
+
+    Args:
+        selected_profile: The currently selected ISL/OSL profile string.
+    """
+    if selected_profile != "Custom":
+        return
+
+    with st.expander("📈 Dataset Representation", expanded=False):
+        st.markdown(
+            "View token length distribution statistics for the evaluation dataset "
+            "used with custom ISL/OSL configurations. These histograms show the "
+            "distribution of input (prompt) and output (completion) token lengths "
+            "in the dataset."
+        )
+
+        available_datasets = ["DeepSeek-R1", "GPT-OSS Perf Eval", "ShareGPT Vicuna"]
+        selected_dataset = st.selectbox(
+            "Select Dataset",
+            available_datasets,
+            key="rhaiis_dataset_selector",
+        )
+
+        if selected_dataset:
+            with st.spinner(f"Loading dataset: {selected_dataset}..."):
+                dataset = load_rhaiis_dataset(selected_dataset)
+
+            if dataset is None:
+                st.info(
+                    f"Dataset not available for **{selected_dataset}**.\n\n"
+                    "Please ensure the summary CSV files have been generated. "
+                    "Run `python datasets/generate_summaries.py` from the project root."
+                )
+            else:
+                has_output = "output_length" in dataset.columns
+                sample_info = f"{len(dataset):,} samples"
+                if has_output:
+                    sample_info += " (input + output token lengths)"
+                else:
+                    sample_info += " (input token lengths only)"
+                st.success(f"Loaded {sample_info} from the {selected_dataset} dataset")
+
+                if selected_dataset == "ShareGPT Vicuna":
+                    st.info(
+                        "Note: Statistical outliers have been removed from this dataset "
+                        "using the IQR method (values beyond Q3 + 1.5 × IQR) to improve "
+                        "histogram readability."
+                    )
+
+                if not has_output:
+                    st.info(
+                        "Output token lengths are not available for this dataset. "
+                        "Only input token length distribution is shown."
+                    )
+
+                fig_input, fig_output = create_rhaiis_dataset_histograms(dataset)
+
+                if fig_input:
+                    if fig_output:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.plotly_chart(fig_input, use_container_width=True)
+                        with col2:
+                            st.plotly_chart(fig_output, use_container_width=True)
+                    else:
+                        st.plotly_chart(fig_input, use_container_width=True)
+
+                    # Detailed statistics expander
+                    with st.expander("Detailed Statistics", expanded=False):
+                        input_col = None
+                        output_col = None
+                        for col in dataset.columns:
+                            col_lower = col.lower()
+                            if "input" in col_lower and (
+                                "length" in col_lower
+                                or "len" in col_lower
+                                or "token" in col_lower
+                            ):
+                                input_col = col
+                            elif "output" in col_lower and (
+                                "length" in col_lower
+                                or "len" in col_lower
+                                or "token" in col_lower
+                            ):
+                                output_col = col
+
+                        if input_col and output_col:
+                            input_stats = dataset[input_col].describe()
+                            output_stats = dataset[output_col].describe()
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.markdown("**Input Token Statistics:**")
+                                st.dataframe(
+                                    input_stats.to_frame(name="Input Tokens"),
+                                    use_container_width=True,
+                                )
+                            with col2:
+                                st.markdown("**Output Token Statistics:**")
+                                st.dataframe(
+                                    output_stats.to_frame(name="Output Tokens"),
+                                    use_container_width=True,
+                                )
+                        elif input_col:
+                            input_stats = dataset[input_col].describe()
+                            st.markdown("**Input Token Statistics:**")
+                            st.dataframe(
+                                input_stats.to_frame(name="Input Tokens"),
+                                use_container_width=True,
+                            )
+                else:
+                    st.error("Could not generate histograms from the dataset.")
+
+
 def render_performance_plots_section(filtered_df):
-    """📈 Performance Plots Section - Complete functionality from original."""
+    """📊 Performance Plots Section - Complete functionality from original."""
     if "performance_plots_expanded" not in st.session_state:
         st.session_state.performance_plots_expanded = False
 
     with st.expander(
-        "📈 Performance Plots", expanded=st.session_state.performance_plots_expanded
+        "📊 Performance Plots", expanded=st.session_state.performance_plots_expanded
     ):
         st.markdown(
             "💡 **Tip:** Click on the full screen view (⛶) of any graph to get a detailed view."
@@ -262,7 +558,7 @@ def render_performance_plots_section(filtered_df):
             ["model_short", "accelerator", "version", "TP"]
         ).copy()
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             x_axis_options = {
                 "Concurrency": "intended concurrency",
@@ -298,6 +594,27 @@ def render_performance_plots_section(filtered_df):
                 args=("performance_plots_expanded",),
             )
             y_axis = y_axis_options[y_axis_label]
+
+        with col3:
+            if x_axis == "intended concurrency":
+                concurrency_values = sorted(
+                    filtered_df_sorted["intended concurrency"]
+                    .dropna()
+                    .unique()
+                    .tolist()
+                )
+                if concurrency_values:
+                    max_conc = st.selectbox(
+                        "Show concurrency up to",
+                        options=concurrency_values,
+                        index=len(concurrency_values) - 1,
+                        key="perf_plots_max_concurrency",
+                        on_change=keep_expander_open,
+                        args=("performance_plots_expanded",),
+                    )
+                    filtered_df_sorted = filtered_df_sorted[
+                        filtered_df_sorted["intended concurrency"] <= max_conc
+                    ]
 
         # Add units to y-axis label for certain metrics
         y_axis_display_label = y_axis_label
@@ -337,21 +654,23 @@ def render_performance_plots_section(filtered_df):
             st.caption("📜 **Tip**: Scroll within the legend box to see all runs")
 
 
-def load_pareto_data(csv_file_path):
+def load_pareto_data(csv_file_path, preloaded_df=None):
     """Load benchmark results from CSV file or S3 for Pareto analysis.
 
-    If S3_BUCKET environment variable is set, data is loaded from S3.
-    Otherwise, falls back to local file system.
+    If a preloaded DataFrame is provided, uses it directly (avoiding a
+    duplicate S3/disk read).  Otherwise, falls back to S3 or local file.
 
     Args:
         csv_file_path: Path to the CSV file to load (used as fallback).
+        preloaded_df: Optional pre-loaded DataFrame to reuse.
 
     Returns:
         List of result dictionaries for Pareto tradeoff analysis.
     """
     try:
-        # Try S3 first if configured
-        if S3_BUCKET:
+        if preloaded_df is not None:
+            df = preloaded_df.copy()
+        elif S3_BUCKET:
             try:
                 df = read_csv_from_s3(S3_BUCKET, S3_KEY, S3_REGION)
                 logger.info(f"Pareto data loaded from S3: s3://{S3_BUCKET}/{S3_KEY}")
@@ -437,16 +756,18 @@ def load_pareto_data(csv_file_path):
         return []
 
 
-def render_pareto_plots_section():
-    """📊 Pareto Tradeoff Analysis Section - Interactive plots showing performance vs latency tradeoffs."""
+def render_pareto_plots_section(preloaded_df=None):
+    """🔄 Pareto Tradeoff Analysis Section - Interactive plots showing performance vs latency tradeoffs."""
     if "pareto_expanded" not in st.session_state:
         st.session_state.pareto_expanded = False
 
     with st.expander(
-        "📊 Pareto Tradeoff Analysis", expanded=st.session_state.pareto_expanded
+        "🔄 Pareto Tradeoff Analysis", expanded=st.session_state.pareto_expanded
     ):
-        # Load data
-        results = load_pareto_data("consolidated_dashboard.csv")
+        # Load data (reuses preloaded_df when available to avoid duplicate S3 fetch)
+        results = load_pareto_data(
+            "consolidated_dashboard.csv", preloaded_df=preloaded_df
+        )
 
         if not results:
             st.warning(
@@ -917,7 +1238,7 @@ def render_pareto_plots_section():
                 st.plotly_chart(fig, use_container_width=True)
 
         # Summary statistics
-        with st.expander("📊 Summary Statistics"):
+        with st.expander("📋 Summary Statistics"):
             df_results = pd.DataFrame(results)
 
             if not df_results.empty:
@@ -1017,546 +1338,1185 @@ def render_pareto_plots_section():
                 )
 
 
-def render_regression_analysis_section(filtered_df, analyze_performance_changes):
-    """🔍 Performance Regression Analysis Section - Complete functionality from original."""
-    with st.expander("🔍 Performance Regression Analysis", expanded=False):
-        st.markdown(
-            "Compare performance changes between versions for the same model, accelerator, and TP configuration."
-        )
-        st.info(
-            "ℹ️ **Note**: This analysis compares versions within the same inference server (RHAIIS to RHAIIS, vLLM to vLLM, sglang to sglang) across **all common concurrency levels**. "
-            "The **Median Change** columns show median percentage change across all concurrency levels. "
-            "The **Geom Mean Change** columns show geometric mean percentage change (better for ratios/multiplicative changes). "
-            "The **(Old → New)** columns show **peak performance values from the same concurrency level** (e.g., best throughput or lowest latency). "
-            "Eg: **(C=50)** means the comparison is at **concurrency level 50**. This ensures we're comparing apples-to-apples performance at the exact same concurrency level."
-        )
+def render_custom_pareto_tradeoff_section(filtered_df):
+    """🔄 Pareto Tradeoff Graphs — multi-model view for Custom ISL/OSL profiles.
 
-        regression_df = analyze_performance_changes(filtered_df)
+    Plots all models present in *filtered_df* on Pareto-style throughput-vs-latency
+    and throughput-vs-interactivity charts for a user-selected version.
 
-        if not regression_df.empty:
-            reg_col1, reg_col2 = st.columns(2)
-
-            with reg_col1:
-                # Threshold for significant changes
-                significance_threshold = st.slider(
-                    "Significance Threshold (%)",
-                    min_value=1.0,
-                    max_value=20.0,
-                    value=5.0,
-                    step=0.5,
-                    help="Changes below this percentage are considered insignificant",
-                )
-
-            with reg_col2:
-                st.info("📊 **Analysis Metric**: Throughput")
-
-            # Function to categorize changes
-            def categorize_change(
-                value, is_higher_better=True, threshold=significance_threshold
-            ):
-                if pd.isna(value):
-                    return "No Data", "⚪"
-
-                abs_value = abs(value)
-                if abs_value < threshold:
-                    return "No Change", "🟡"
-
-                if is_higher_better:
-                    if value > 0:
-                        return "Improvement", "🟢"
-                    else:
-                        return "Regression", "🔴"
-                else:
-                    if value < 0:
-                        return "Improvement", "🟢"
-                    else:
-                        return "Regression", "🔴"
-
-            if "throughput_change" in regression_df.columns:
-                regression_df[["throughput_status", "throughput_icon"]] = regression_df[
-                    "throughput_change"
-                ].apply(
-                    lambda x: pd.Series(
-                        categorize_change(x, True, significance_threshold)
-                    )
-                )
-
-            if "ttft_change" in regression_df.columns:
-                regression_df[["ttft_status", "ttft_icon"]] = regression_df[
-                    "ttft_change"
-                ].apply(
-                    lambda x: pd.Series(
-                        categorize_change(x, False, significance_threshold)
-                    )
-                )
-
-            if "itl_change" in regression_df.columns:
-                regression_df[["itl_status", "itl_icon"]] = regression_df[
-                    "itl_change"
-                ].apply(
-                    lambda x: pd.Series(
-                        categorize_change(x, False, significance_threshold)
-                    )
-                )
-
-            if "efficiency_change" in regression_df.columns:
-                regression_df[["efficiency_status", "efficiency_icon"]] = regression_df[
-                    "efficiency_change"
-                ].apply(
-                    lambda x: pd.Series(
-                        categorize_change(x, True, significance_threshold)
-                    )
-                )
-
-            st.subheader("📊 Change Summary")
-            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-
-            with summary_col1:
-                total_comparisons = len(regression_df)
-                st.metric("Total Comparisons", total_comparisons)
-
-            with summary_col2:
-                if "throughput_status" in regression_df.columns:
-                    improvements = len(
-                        regression_df[
-                            regression_df["throughput_status"] == "Improvement"
-                        ]
-                    )
-                    st.metric(
-                        "Throughput Improvements",
-                        improvements,
-                        delta=f"{improvements}/{total_comparisons}",
-                    )
-
-            with summary_col3:
-                if "throughput_status" in regression_df.columns:
-                    regressions = len(
-                        regression_df[
-                            regression_df["throughput_status"] == "Regression"
-                        ]
-                    )
-                    st.metric(
-                        "Throughput Regressions",
-                        regressions,
-                        delta=f"-{regressions}/{total_comparisons}",
-                    )
-
-            with summary_col4:
-                if "throughput_status" in regression_df.columns:
-                    no_change = len(
-                        regression_df[regression_df["throughput_status"] == "No Change"]
-                    )
-                    st.metric("No Significant Change", no_change)
-
-            st.subheader("🔍 Detailed Version Comparisons")
-
-            show_all = st.checkbox(
-                "Show all changes", value=False, help="Include insignificant changes"
-            )
-
-            if not show_all:
-                significant_df = regression_df.copy()
-                if "throughput_status" in significant_df.columns:
-                    significant_df = significant_df[
-                        significant_df["throughput_status"] != "No Change"
-                    ]
-                regression_display_df = significant_df
-            else:
-                regression_display_df = regression_df
-
-            if not regression_display_df.empty:
-                display_columns = [
-                    "model",
-                    "accelerator",
-                    "tp",
-                    "profile",
-                    "version_type",
-                    "older_version",
-                    "newer_version",
-                    "common_concurrencies",
-                ]
-
-                if "throughput_change" in regression_display_df.columns:
-                    regression_display_df["Median Throughput Change"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['throughput_icon']} {row['throughput_change']:.1f}%"
-                                if pd.notna(row["throughput_change"])
-                                else "No Data"
-                            ),
-                            axis=1,
-                        )
-                    )
-
-                    # Calculate Geom Mean throughput change display
-                    def calc_geom_mean_throughput_change_display(row):
-                        if pd.notna(row.get("throughput_geom_mean_change")):
-                            change = row["throughput_geom_mean_change"]
-                            abs_change = abs(change)
-                            if abs_change < significance_threshold:
-                                icon = "🟡"
-                            elif change > 0:
-                                icon = "🟢"
-                            else:
-                                icon = "🔴"
-                            return f"{icon} {change:.1f}%"
-                        return "No Data"
-
-                    regression_display_df["Geom Mean Throughput Change"] = (
-                        regression_display_df.apply(
-                            calc_geom_mean_throughput_change_display, axis=1
-                        )
-                    )
-
-                    # Calculate peak throughput change percentage
-                    def calc_peak_throughput_change(row):
-                        if (
-                            pd.notna(row.get("throughput_peak_older"))
-                            and pd.notna(row.get("throughput_peak_newer"))
-                            and row.get("throughput_peak_older") > 0
-                        ):
-                            pct_change = (
-                                (
-                                    row["throughput_peak_newer"]
-                                    - row["throughput_peak_older"]
-                                )
-                                / row["throughput_peak_older"]
-                            ) * 100
-                            # Categorize the change
-                            abs_change = abs(pct_change)
-                            if abs_change < significance_threshold:
-                                icon = "🟡"
-                            elif pct_change > 0:
-                                icon = "🟢"
-                            else:
-                                icon = "🔴"
-                            return f"{icon} {pct_change:.1f}%"
-                        return "No Data"
-
-                    regression_display_df["Peak Throughput Change"] = (
-                        regression_display_df.apply(calc_peak_throughput_change, axis=1)
-                    )
-
-                    regression_display_df["Throughput (Old → New)"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['throughput_peak_older']:.1f} → {row['throughput_peak_newer']:.1f} (C={int(row['throughput_peak_concurrency'])})"
-                                if pd.notna(row.get("throughput_peak_older"))
-                                and pd.notna(row.get("throughput_peak_newer"))
-                                else "No Peak Match"
-                            ),
-                            axis=1,
-                        )
-                    )
-                    display_columns.extend(
-                        [
-                            "Median Throughput Change",
-                            "Geom Mean Throughput Change",
-                            "Peak Throughput Change",
-                            "Throughput (Old → New)",
-                        ]
-                    )
-
-                if "ttft_change" in regression_display_df.columns:
-                    regression_display_df["Median TTFT Change"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['ttft_icon']} {row['ttft_change']:.1f}%"
-                                if pd.notna(row["ttft_change"])
-                                else "No Data"
-                            ),
-                            axis=1,
-                        )
-                    )
-                    regression_display_df["TTFT (Old → New)"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['ttft_peak_older'] / 1000:.3f} → {row['ttft_peak_newer'] / 1000:.3f} s (C={int(row['ttft_peak_concurrency'])})"
-                                if pd.notna(row.get("ttft_peak_older"))
-                                and pd.notna(row.get("ttft_peak_newer"))
-                                else "No Peak Match"
-                            ),
-                            axis=1,
-                        )
-                    )
-                    display_columns.extend(["Median TTFT Change", "TTFT (Old → New)"])
-
-                if "itl_change" in regression_display_df.columns:
-                    regression_display_df["Median ITL Change"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['itl_icon']} {row['itl_change']:.1f}%"
-                                if pd.notna(row["itl_change"])
-                                else "No Data"
-                            ),
-                            axis=1,
-                        )
-                    )
-                    regression_display_df["ITL (Old → New)"] = (
-                        regression_display_df.apply(
-                            lambda row: (
-                                f"{row['itl_peak_older']:.1f} → {row['itl_peak_newer']:.1f} ms (C={int(row['itl_peak_concurrency'])})"
-                                if pd.notna(row.get("itl_peak_older"))
-                                and pd.notna(row.get("itl_peak_newer"))
-                                else "No Peak Match"
-                            ),
-                            axis=1,
-                        )
-                    )
-                    display_columns.extend(["Median ITL Change", "ITL (Old → New)"])
-
-                # Format concurrency levels for display
-                regression_display_df["Concurrency Levels"] = regression_display_df[
-                    "common_concurrencies"
-                ].apply(
-                    lambda x: ", ".join(map(str, x)) if isinstance(x, list) else str(x)
-                )
-                display_columns = [
-                    col if col != "common_concurrencies" else "Concurrency Levels"
-                    for col in display_columns
-                ]
-
-                # Rename columns for display
-                display_df = regression_display_df[display_columns].copy()
-                display_df = display_df.rename(
-                    columns={
-                        "model": "Model",
-                        "accelerator": "Accelerator",
-                        "tp": "TP",
-                        "profile": "Profile",
-                        "version_type": "Inference Server",
-                        "older_version": "From Version",
-                        "newer_version": "To Version",
-                    }
-                )
-
-                # Sort by most significant changes
-                if "throughput_change" in regression_display_df.columns:
-                    display_df = display_df.reindex(
-                        regression_display_df["throughput_change"]
-                        .abs()
-                        .sort_values(ascending=False)
-                        .index
-                    )
-
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-            else:
-                st.info(
-                    "No significant performance changes detected with current threshold."
-                )
-
-            # Visualization of changes (Collapsible)
-            with st.expander("📈 Performance Change Visualization", expanded=False):
-                if (
-                    not regression_display_df.empty
-                    and "throughput_change" in regression_display_df.columns
-                ):
-                    # Create a scatter plot of performance changes
-                    regression_display_df["comparison"] = (
-                        regression_display_df["model"]
-                        + " | "
-                        + regression_display_df["accelerator"]
-                        + " | TP"
-                        + regression_display_df["tp"].astype(str)
-                        + " | "
-                        + regression_display_df["version_type"]
-                        + ": "
-                        + regression_display_df["older_version"]
-                        + "→"
-                        + regression_display_df["newer_version"]
-                    )
-
-                    fig_regression = px.scatter(
-                        regression_display_df,
-                        x="throughput_change",
-                        y="comparison",
-                        color="throughput_status",
-                        size=regression_display_df["throughput_change"].abs(),
-                        hover_data=[
-                            "model",
-                            "accelerator",
-                            "older_version",
-                            "newer_version",
-                        ],
-                        title="Median Throughput Performance Changes by Configuration",
-                        labels={
-                            "throughput_change": "Median Throughput Change (%)",
-                            "comparison": "Configuration",
-                        },
-                        color_discrete_map={
-                            "Improvement": "green",
-                            "Regression": "red",
-                            "No Change": "gray",
-                        },
-                        template="plotly_white",
-                    )
-
-                    fig_regression.add_vline(
-                        x=0, line_dash="dash", line_color="black", opacity=0.5
-                    )
-                    fig_regression.add_vline(
-                        x=significance_threshold,
-                        line_dash="dot",
-                        line_color="orange",
-                        opacity=0.7,
-                    )
-                    fig_regression.add_vline(
-                        x=-significance_threshold,
-                        line_dash="dot",
-                        line_color="orange",
-                        opacity=0.7,
-                    )
-
-                    fig_regression.update_layout(
-                        height=max(400, len(regression_display_df) * 30)
-                    )
-                    st.plotly_chart(fig_regression, use_container_width=True)
-                else:
-                    st.info("No performance change data available for visualization.")
-
-        else:
-            st.error(
-                "⚠️ **No version comparisons available!** Need at least 2 versions of the same inference server type (e.g., RHAIIS-3.1 and RHAIIS-3.2) for the same model, accelerator, and TP combination with common concurrency levels."
-            )
-
-
-def render_version_comparison_section(filtered_df):
-    """⚖️ Version Comparison Section - Compare performance between two versions."""
-    if "version_comparison_expanded" not in st.session_state:
-        st.session_state.version_comparison_expanded = False
+    Args:
+        filtered_df: DataFrame already filtered by the sidebar (accelerator, models,
+                     Custom ISL/OSL profile, TP).
+    """
+    if "custom_pareto_expanded" not in st.session_state:
+        st.session_state.custom_pareto_expanded = False
 
     with st.expander(
-        "⚖️ Compare Versions", expanded=st.session_state.version_comparison_expanded
+        "🔄 Pareto Tradeoff Graphs",
+        expanded=st.session_state.custom_pareto_expanded,
     ):
+        if filtered_df.empty:
+            st.warning("No data available for the current filter selection.")
+            return
+
         st.markdown(
-            "💡 **Compare performance metrics between two Inference Server versions for common models with same configurations.**"
-        )
-        st.info(
-            "💡 **Tip**: Check the **'Select All Models'** checkbox in the filters above to see all available comparisons."
+            "These Pareto curves compare **all selected models** on the same chart "
+            "for a chosen version, showing the **throughput vs. latency / interactivity "
+            "tradeoff** across hardware and TP configurations."
         )
 
-        # Get available versions from filtered data
-        available_versions = sorted(filtered_df["version"].unique().tolist())
+        filter_c1, filter_c2, filter_c3 = st.columns(3)
+
+        with filter_c1:
+            unique_versions = sorted(filtered_df["version"].dropna().unique())
+            if not unique_versions:
+                st.warning("No versions available.")
+                return
+            selected_version = st.selectbox(
+                "Select Version",
+                options=unique_versions,
+                key="custom_pareto_version",
+                on_change=keep_expander_open,
+                args=("custom_pareto_expanded",),
+            )
+
+        with filter_c2:
+            unique_accel = sorted(filtered_df["accelerator"].dropna().unique())
+            selected_accel = st.selectbox(
+                "Select Accelerator",
+                options=["All Accelerators"] + list(unique_accel),
+                key="custom_pareto_accel",
+                on_change=keep_expander_open,
+                args=("custom_pareto_expanded",),
+            )
+
+        with filter_c3:
+            throughput_options = {
+                "Total Tokens/sec/GPU": "total",
+                "Output Tokens/sec/GPU": "output",
+            }
+            selected_tput_label = st.selectbox(
+                "Throughput Metric",
+                options=list(throughput_options.keys()),
+                key="custom_pareto_tput",
+                on_change=keep_expander_open,
+                args=("custom_pareto_expanded",),
+                help="Total = prompt + output tokens, Output = output tokens only",
+            )
+            tput_mode = throughput_options[selected_tput_label]
+
+        vdf = filtered_df[filtered_df["version"] == selected_version].copy()
+        if selected_accel != "All Accelerators":
+            vdf = vdf[vdf["accelerator"] == selected_accel]
+
+        if vdf.empty:
+            st.warning("No data for the selected version / accelerator combination.")
+            return
+
+        vdf["tp_safe"] = vdf["TP"].fillna(1).replace(0, 1).astype(int)
+        if tput_mode == "total":
+            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["tp_safe"]
+            y_col, y_label = (
+                "tput_per_gpu",
+                "Total Token Throughput per GPU (tok/s/gpu)",
+            )
+            metric_hover = "Total Throughput"
+        else:
+            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["tp_safe"]
+            y_col, y_label = (
+                "tput_per_gpu",
+                "Output Token Throughput per GPU (tok/s/gpu)",
+            )
+            metric_hover = "Output Throughput"
+
+        vdf["median_intvty"] = vdf["tpot_median"].apply(
+            lambda t: 1000.0 / t if pd.notna(t) and t > 0 else 0
+        )
+
+        color_palette = [
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#bcbd22",
+            "#17becf",
+            "#aec7e8",
+            "#ffbb78",
+            "#98df8a",
+            "#ff9896",
+            "#c5b0d5",
+            "#c49c94",
+            "#f7b6d2",
+            "#c7c7c7",
+            "#dbdb8d",
+            "#9edae5",
+            "#90EE90",
+            "#008000",
+            "#000000",
+            "#FF0000",
+            "#800080",
+            "#FFA500",
+            "#4285F4",
+            "#00CED1",
+            "#FF1493",
+            "#32CD32",
+        ]
+
+        groups = (
+            vdf.groupby(["model", "accelerator", "tp_safe"], sort=True)
+            .size()
+            .reset_index()
+            .drop(columns=0)
+        )
+
+        color_map = {}
+        for idx, row in groups.iterrows():
+            key = (row["model"], row["accelerator"], row["tp_safe"])
+            color_map[key] = color_palette[idx % len(color_palette)]
+
+        st.markdown(
+            "<style>div[data-testid='stTabs'] button[data-baseweb='tab'] "
+            "{font-size:1.2rem;padding:12px 24px;font-weight:600;}</style>",
+            unsafe_allow_html=True,
+        )
+        tab1, tab2 = st.tabs(
+            ["📊 Throughput vs. End-to-End Latency", "📈 Throughput vs. Interactivity"]
+        )
+
+        def _build_traces(fig, x_col, x_hover_label, x_fmt):
+            for (model, accel, tp), color in color_map.items():
+                subset = vdf[
+                    (vdf["model"] == model)
+                    & (vdf["accelerator"] == accel)
+                    & (vdf["tp_safe"] == tp)
+                ].sort_values("intended concurrency")
+
+                if subset.empty:
+                    continue
+
+                model_short = model.split("/")[-1] if "/" in model else model
+                trace_name = f"{model_short} | {accel.upper()} (TP={tp})"
+
+                hover_text = [
+                    f"Model: {model_short}<br>"
+                    f"Accelerator: {accel.upper()}<br>"
+                    f"TP Size: {tp}<br>"
+                    f"Concurrent Requests: {int(r['intended concurrency'])} Users<br>"
+                    f"{x_hover_label}: {r[x_col]:{x_fmt}}<br>"
+                    f"{metric_hover}: {r[y_col]:.2f} tok/s/gpu"
+                    for _, r in subset.iterrows()
+                ]
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=subset[x_col].tolist(),
+                        y=subset[y_col].tolist(),
+                        mode="markers+lines",
+                        name=trace_name,
+                        marker={
+                            "size": 10,
+                            "color": color,
+                            "line": {"width": 1, "color": "white"},
+                        },
+                        line={"color": color, "width": 2},
+                        hovertext=hover_text,
+                        hoverinfo="text",
+                        legendgroup=model_short,
+                    )
+                )
+
+        import plotly.graph_objects as go
+
+        with tab1:
+            st.markdown("### Token Throughput per GPU vs. End-to-end Latency")
+            fig1 = go.Figure()
+            _build_traces(fig1, "request_latency_median", "Latency", ".2f")
+            fig1.update_layout(
+                title="Note: Throughput is "
+                + (
+                    "Total Tokens per second"
+                    if tput_mode == "total"
+                    else "Output Tokens per second only"
+                ),
+                xaxis_title="End-to-end Latency (s)",
+                yaxis_title=y_label,
+                template="plotly_dark",
+                hovermode="closest",
+                showlegend=True,
+                legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
+                height=600,
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+
+        with tab2:
+            st.markdown("### Token Throughput per GPU vs. Interactivity")
+            fig2 = go.Figure()
+            _build_traces(fig2, "median_intvty", "Interactivity", ".2f")
+            fig2.update_layout(
+                title="Note: Throughput is "
+                + (
+                    "Total Tokens per second"
+                    if tput_mode == "total"
+                    else "Output Tokens per second only"
+                ),
+                xaxis_title="Interactivity (tok/s/user)",
+                yaxis_title=y_label,
+                template="plotly_dark",
+                hovermode="closest",
+                showlegend=True,
+                legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
+                height=600,
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+        with st.expander("📋 Summary Statistics"):
+            display_df = vdf[
+                [
+                    "accelerator",
+                    "model",
+                    "version",
+                    "TP",
+                    "intended concurrency",
+                    "tput_per_gpu",
+                    "request_latency_median",
+                    "median_intvty",
+                ]
+            ].copy()
+            display_df = display_df.rename(
+                columns={
+                    "accelerator": "Accelerator",
+                    "model": "Model",
+                    "version": "Version",
+                    "intended concurrency": "Concurrency",
+                    "tput_per_gpu": "Throughput/GPU",
+                    "request_latency_median": "E2E Latency (s)",
+                    "median_intvty": "Interactivity",
+                }
+            )
+            display_df["Throughput/GPU"] = display_df["Throughput/GPU"].round(2)
+            display_df["E2E Latency (s)"] = display_df["E2E Latency (s)"].round(3)
+            display_df["Interactivity"] = display_df["Interactivity"].round(2)
+            st.dataframe(
+                display_df.sort_values("Throughput/GPU", ascending=False).reset_index(
+                    drop=True
+                ),
+                use_container_width=True,
+            )
+
+
+def render_performance_trends_section(df: pd.DataFrame) -> None:
+    """📈 Performance Trends Section - Show performance evolution across releases.
+
+    Uses geometric mean across all concurrency levels to provide a robust
+    aggregate metric for each version/configuration combination.
+    This section uses the full (unfiltered) DataFrame so it has its own
+    independent inference server and version filters.
+
+    Args:
+        df: The full (unfiltered) DataFrame containing all benchmark data.
+    """
+    import re
+
+    if "performance_trends_expanded" not in st.session_state:
+        st.session_state.performance_trends_expanded = False
+
+    with st.expander(
+        "📈 Performance Trends Across Releases",
+        expanded=st.session_state.performance_trends_expanded,
+    ):
+        st.markdown(
+            "**Track how performance metrics have evolved across different releases** for your selected models and configurations."
+        )
+        st.info(
+            "📊 **Note**: Values shown are **geometric means** across **common concurrency levels** shared by all selected versions, "
+            "ensuring fair apples-to-apples comparison even when different versions were benchmarked at different concurrency ranges. "
+            "This section has its own independent filters."
+        )
+
+        if df.empty:
+            st.warning("No data available.")
+            return
+
+        # Extract version prefix (e.g., RHAIIS, vLLM, sglang) for grouping
+        def get_version_prefix(version: str) -> str:
+            if version.startswith("RHAIIS"):
+                return "RHAIIS"
+            elif version.startswith("vLLM"):
+                return "vLLM"
+            elif version.startswith("sglang"):
+                return "sglang"
+            elif version.startswith("TRT-LLM"):
+                return "TRT-LLM"
+            elif version.startswith("NIM"):
+                return "NIM"
+            else:
+                return "Other"
+
+        full_df = df.copy()
+        full_df["version_prefix"] = full_df["version"].apply(get_version_prefix)
+
+        # Version sorting function for proper chronological ordering
+        def version_sort_key(version: str) -> tuple:
+            """Sort versions chronologically (e.g., RHAIIS-3.1 < RHAIIS-3.2 < RHAIIS-3.2.1)."""
+            # Extract numeric parts from version string
+            parts = re.findall(r"(\d+)", version)
+            # Pad with zeros for consistent sorting
+            return tuple(int(p) for p in parts) if parts else (0,)
+
+        def is_clean_version(version: str) -> bool:
+            """Check if version has no postfix suffix.
+
+            Clean versions: RHAIIS-3.2.3, vLLM-0.10.0, sglang-0.5.5, TRT-LLM-1.0.0rc5
+            Postfix versions: RHAIIS-3.2.3-async, vLLM-0.11.0-gm3, sglang-0.5.5-rerun
+            """
+            return bool(
+                re.match(
+                    r"^[A-Za-z]+(?:-[A-Za-z]+)*-(\d+(?:\.\d+)*(?:rc\d+)?)$", version
+                )
+            )
+
+        # Filter controls - Row 1: Inference Server, Accelerator, Model
+        # Accelerator comes before Model so that changing models does NOT
+        # reset the accelerator selection.
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+        with filter_col1:
+            # Select inference server family - default to RHAIIS
+            version_prefixes = sorted(full_df["version_prefix"].unique().tolist())
+            # Ensure RHAIIS is first if available
+            if "RHAIIS" in version_prefixes:
+                version_prefixes.remove("RHAIIS")
+                version_prefixes = ["RHAIIS"] + version_prefixes
+
+            prefix_key = "trends_version_prefix"
+            if prefix_key not in st.session_state and version_prefixes:
+                st.session_state[prefix_key] = version_prefixes[0]
+
+            selected_prefix = st.selectbox(
+                "Select Inference Server",
+                options=version_prefixes,
+                key=prefix_key,
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+        # Filter to selected inference server family
+        prefix_df = full_df[full_df["version_prefix"] == selected_prefix].copy()
+
+        with filter_col2:
+            # Select accelerator (scoped by inference server only, NOT by model)
+            accelerators = sorted(prefix_df["accelerator"].unique().tolist())
+            if not accelerators:
+                st.warning(f"No accelerators found for {selected_prefix}.")
+                return
+
+            # Default to H200 if available
+            accel_key = "trends_accelerator"
+            if (
+                accel_key not in st.session_state
+                or st.session_state.get(accel_key) not in accelerators
+            ):
+                st.session_state[accel_key] = (
+                    "H200" if "H200" in accelerators else accelerators[0]
+                )
+
+            selected_accelerator = st.selectbox(
+                "Select Accelerator",
+                options=accelerators,
+                key=accel_key,
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+        accel_df = prefix_df[prefix_df["accelerator"] == selected_accelerator].copy()
+
+        with filter_col3:
+            # Select model (scoped by inference server + accelerator)
+            models = sorted(accel_df["model"].unique().tolist())
+            if not models:
+                st.warning(
+                    f"No models found for {selected_prefix} on {selected_accelerator}."
+                )
+                return
+
+            # Default to Llama-3.3-70B-Instruct-FP8-dynamic if available,
+            # with fallback to the non-FP8 variant
+            preferred_models = [
+                "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+                "meta-llama/Llama-3.3-70B-Instruct",
+            ]
+            model_key = "trends_model"
+
+            def _best_default_model(model_list: list[str]) -> str:
+                for pm in preferred_models:
+                    if pm in model_list:
+                        return pm
+                return model_list[0]
+
+            if (
+                model_key not in st.session_state
+                or st.session_state.get(model_key) not in models
+            ):
+                st.session_state[model_key] = _best_default_model(models)
+
+            selected_model = st.selectbox(
+                "Select Model",
+                options=models,
+                format_func=lambda x: x.split("/")[-1] if "/" in x else x,
+                key=model_key,
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+        model_df = accel_df[accel_df["model"] == selected_model].copy()
+
+        # Filter controls - Row 2: Profile, Versions
+        filter_col4, filter_col5 = st.columns(2)
+
+        with filter_col4:
+            # Select ISL/OSL profile (scoped by model + accelerator)
+            profiles = sorted(model_df["profile"].unique().tolist())
+            if not profiles:
+                st.warning("No profiles found for this configuration.")
+                return
+
+            # Default to "Profile A: Balanced (1k/1k)" if available
+            default_profile = "Profile A: Balanced (1k/1k)"
+            profile_key = "trends_profile"
+            if (
+                profile_key not in st.session_state
+                or st.session_state.get(profile_key) not in profiles
+            ):
+                st.session_state[profile_key] = (
+                    default_profile if default_profile in profiles else profiles[0]
+                )
+
+            selected_profile = st.selectbox(
+                "Select ISL/OSL Profile",
+                options=profiles,
+                key=profile_key,
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+        profile_df = model_df[model_df["profile"] == selected_profile].copy()
+
+        with filter_col5:
+            # Show versions that exist for the selected model + accelerator + profile
+            all_versions_for_config = sorted(
+                profile_df["version"].unique().tolist(), key=version_sort_key
+            )
+            if not all_versions_for_config:
+                st.warning("No versions found for this configuration.")
+                return
+
+            # Default to only clean versions (no postfix like -async, -sanity, -gm3)
+            # Also exclude RHAIIS-3.1 by default (significantly slower baseline
+            # that skews the visual comparison; users can still select it manually)
+            default_versions = [
+                v
+                for v in all_versions_for_config
+                if is_clean_version(v) and v != "RHAIIS-3.1"
+            ]
+            # Fall back to all if no clean versions exist
+            if not default_versions:
+                default_versions = all_versions_for_config
+
+            selected_versions = st.multiselect(
+                "Select Version(s)",
+                options=all_versions_for_config,
+                default=default_versions,
+                key="trends_versions_multi",
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+            if not selected_versions:
+                st.warning("Please select at least one version.")
+                return
+
+        # Filter to selected versions
+        version_df = profile_df[profile_df["version"].isin(selected_versions)].copy()
+
+        # Filter controls - Row 3: TP sizes, Metric
+        filter_col6, filter_col7 = st.columns(2)
+
+        with filter_col6:
+            # Multi-select TP sizes - default to all
+            tp_sizes = sorted(version_df["TP"].unique().tolist())
+            if not tp_sizes:
+                st.warning("No TP configurations found.")
+                return
+
+            selected_tps = st.multiselect(
+                "Select TP Size(s)",
+                options=tp_sizes,
+                default=tp_sizes,  # Select all by default
+                key="trends_tp_multi",
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+
+            if not selected_tps:
+                st.warning("Please select at least one TP size.")
+                return
+
+        with filter_col7:
+            # Select metric to visualize
+            metric_options = {
+                "Throughput (Output tok/sec)": "output_tok/sec",
+                "TTFT P95 (ms)": "ttft_p95",
+                "ITL P95 (ms)": "itl_p95",
+                "Request Latency Median (s)": "request_latency_median",
+                "Total Throughput (tok/sec)": "total_tok/sec",
+            }
+            selected_metric_label = st.selectbox(
+                "Select Metric",
+                options=list(metric_options.keys()),
+                key="trends_metric",
+                on_change=keep_expander_open,
+                args=("performance_trends_expanded",),
+            )
+            selected_metric = metric_options[selected_metric_label]
+
+        # Filter to selected TP sizes
+        trends_df = version_df[version_df["TP"].isin(selected_tps)].copy()
+
+        if trends_df.empty:
+            st.warning("No data found for the selected configuration.")
+            return
+
+        # --- Find common concurrency levels across all versions for each TP ---
+        # This ensures fair apples-to-apples comparison (e.g., if v3.1 ran up to
+        # concurrency 500 but v3.2+ ran up to 650, we only compare on the shared set)
+        common_conc_per_tp = {}
+        excluded_conc_per_tp = {}
+        for tp in selected_tps:
+            tp_subset = trends_df[trends_df["TP"] == tp]
+            versions_in_tp = tp_subset["version"].unique()
+            if len(versions_in_tp) == 0:
+                continue
+            # Get concurrency levels for each version
+            conc_sets = []
+            for v in versions_in_tp:
+                conc_for_v = set(
+                    tp_subset[tp_subset["version"] == v][
+                        "intended concurrency"
+                    ].unique()
+                )
+                conc_sets.append(conc_for_v)
+            # Intersection = concurrency levels present in ALL versions
+            common = conc_sets[0]
+            all_conc = conc_sets[0].copy()
+            for s in conc_sets[1:]:
+                common = common & s
+                all_conc = all_conc | s
+            # Exclude concurrency=1 — single-request throughput is not
+            # representative of production workloads and disproportionately
+            # skews the geometric mean (especially for older releases).
+            common = {c for c in common if c > 1}
+            common_conc_per_tp[tp] = sorted(common)
+            excluded_conc_per_tp[tp] = sorted(all_conc - common)
+
+        # Filter trends_df to only common concurrency levels
+        filtered_rows = []
+        for tp in selected_tps:
+            if tp in common_conc_per_tp and common_conc_per_tp[tp]:
+                mask = (trends_df["TP"] == tp) & (
+                    trends_df["intended concurrency"].isin(common_conc_per_tp[tp])
+                )
+                filtered_rows.append(trends_df[mask])
+        if not filtered_rows:
+            st.warning("No common concurrency levels found across selected versions.")
+            return
+        trends_df_common = pd.concat(filtered_rows, ignore_index=True)
+
+        # Show info about common concurrency filtering
+        conc_info_parts = []
+        for tp in sorted(selected_tps):
+            if tp in common_conc_per_tp:
+                common_str = ", ".join(str(c) for c in common_conc_per_tp[tp])
+                conc_info_parts.append(
+                    f"**TP={tp}**: {len(common_conc_per_tp[tp])} common levels ({common_str})"
+                )
+                if excluded_conc_per_tp.get(tp):
+                    excluded_str = ", ".join(str(c) for c in excluded_conc_per_tp[tp])
+                    conc_info_parts[-1] += f" — excluded: {excluded_str}"
+        if conc_info_parts:
+            st.info(
+                "**Fair comparison mode**: Geometric means are computed only over concurrency levels "
+                "common to **all** selected versions (excluding concurrency=1, which is not representative "
+                "of production workloads), ensuring apples-to-apples comparison.\n\n"
+                + "\n\n".join(conc_info_parts)
+            )
+
+        # Calculate geometric mean for each version + TP combination across common concurrency levels
+        def calc_geometric_mean(series: pd.Series) -> float:
+            """Calculate geometric mean of positive values using numpy.
+
+            Uses the same approach as other sections in the dashboard:
+            np.exp(np.mean(np.log(positive_values)))
+            """
+            positive_values = series[series > 0].values
+            if len(positive_values) == 0:
+                return 0.0
+            return float(np.exp(np.mean(np.log(positive_values))))
+
+        # Group by version and TP, calculate geometric mean across COMMON concurrency levels
+        agg_df = (
+            trends_df_common.groupby(["version", "TP"], as_index=False)
+            .agg(
+                {
+                    "output_tok/sec": calc_geometric_mean,
+                    "ttft_p95": calc_geometric_mean,
+                    "itl_p95": calc_geometric_mean,
+                    "request_latency_median": calc_geometric_mean,
+                    "total_tok/sec": calc_geometric_mean,
+                    "successful_requests": "sum",
+                    "errored_requests": "sum",
+                    "intended concurrency": lambda x: sorted(
+                        x.unique()
+                    ),  # Track concurrency levels used
+                }
+            )
+            .rename(columns={"intended concurrency": "concurrency_levels"})
+        )
+
+        # Also compute peak throughput (max output_tok/sec across ALL concurrency levels, not just common)
+        peak_df = (
+            trends_df.groupby(["version", "TP"], as_index=False)
+            .agg({"output_tok/sec": "max"})
+            .rename(columns={"output_tok/sec": "peak_output_tok_sec"})
+        )
+        agg_df = agg_df.merge(peak_df, on=["version", "TP"], how="left")
+
+        # Get available versions and sort them chronologically
+        available_versions = agg_df["version"].unique().tolist()
+        available_versions = sorted(available_versions, key=version_sort_key)
+
+        if len(available_versions) < 2:
+            st.info(
+                f"Only {len(available_versions)} version(s) available for this configuration. "
+                "Need at least 2 versions to show trends."
+            )
+            if len(available_versions) == 1:
+                st.write(f"Available version: **{available_versions[0]}**")
+            return
+
+        # Create ordered categorical for proper x-axis ordering
+        agg_df["version"] = pd.Categorical(
+            agg_df["version"], categories=available_versions, ordered=True
+        )
+        agg_df = agg_df.sort_values(["version", "TP"])
+
+        # Create TP label for legend
+        agg_df["TP_label"] = "TP=" + agg_df["TP"].astype(str)
+
+        # Display configuration summary
+        model_short = (
+            selected_model.split("/")[-1] if "/" in selected_model else selected_model
+        )
+        tp_display = ", ".join([f"TP={tp}" for tp in sorted(selected_tps)])
+        # Get short profile name for display
+        profile_short = clean_profile_name(selected_profile)
+        st.markdown(f"### 📊 {selected_prefix} Performance Trends (Geometric Mean)")
+        st.markdown(
+            f"**Model:** {model_short} | **Accelerator:** {selected_accelerator} | "
+            f"**Profile:** {profile_short} | **{tp_display}**"
+        )
+
+        # Create the trend visualization with multiple TP lines
+        is_latency_metric = selected_metric in [
+            "ttft_p95",
+            "itl_p95",
+            "request_latency_median",
+        ]
+
+        # Generate colors for different TP sizes
+        tp_colors = dict(
+            zip(
+                sorted(selected_tps),
+                [
+                    "#2ecc71",
+                    "#3498db",
+                    "#9b59b6",
+                    "#e74c3c",
+                    "#f39c12",
+                    "#1abc9c",
+                    "#e67e22",
+                    "#34495e",
+                ],
+            )
+        )
+
+        fig = go.Figure()
+
+        for tp in sorted(selected_tps):
+            tp_data = agg_df[agg_df["TP"] == tp].copy()
+            if tp_data.empty:
+                continue
+
+            fig.add_trace(
+                go.Scatter(
+                    x=tp_data["version"].astype(str),
+                    y=tp_data[selected_metric],
+                    mode="lines+markers",
+                    name=f"TP={tp}",
+                    line={"color": tp_colors.get(tp, "#333"), "width": 3},
+                    marker={"size": 10, "line": {"width": 2, "color": "white"}},
+                    hovertemplate=(
+                        f"<b>TP={tp}</b><br>"
+                        + "Version: %{x}<br>"
+                        + f"{selected_metric_label}: %{{y:.2f}}<br>"
+                        + "<extra></extra>"
+                    ),
+                )
+            )
+
+        # Explicitly set x-axis category order to our chronologically sorted versions
+        sorted_version_strings = [str(v) for v in available_versions]
+
+        fig.update_layout(
+            title=f"{selected_metric_label} Across {selected_prefix} Releases (Geometric Mean — Common Concurrency Levels)",
+            xaxis_title="Release Version",
+            yaxis_title=f"{selected_metric_label} (Geometric Mean)",
+            template="plotly_white",
+            height=500,
+            hovermode="x unified",
+            xaxis={
+                "categoryorder": "array",
+                "categoryarray": sorted_version_strings,
+            },
+            legend={
+                "orientation": "h",
+                "yanchor": "bottom",
+                "y": 1.02,
+                "xanchor": "right",
+                "x": 1,
+            },
+        )
+
+        st.plotly_chart(fig, use_container_width=True, key="trends_main_chart")
+
+        # Show summary table for each TP
+        st.markdown("### 📋 Version-by-Version Comparison")
+
+        for tp in sorted(selected_tps):
+            tp_data = agg_df[agg_df["TP"] == tp].sort_values("version")
+            if tp_data.empty:
+                continue
+
+            st.markdown(f"#### TP = {tp}")
+
+            # Calculate changes between versions
+            summary_data = []
+
+            # Find the best value across all versions for this TP
+            if is_latency_metric:
+                best_value = tp_data[selected_metric].min()
+                best_version = tp_data.loc[tp_data[selected_metric].idxmin(), "version"]
+            else:
+                best_value = tp_data[selected_metric].max()
+                best_version = tp_data.loc[tp_data[selected_metric].idxmax(), "version"]
+
+            for idx, (_, row) in enumerate(tp_data.iterrows()):
+                version = row["version"]
+                value = row[selected_metric]
+                concurrency_count = (
+                    len(row["concurrency_levels"])
+                    if isinstance(row["concurrency_levels"], list)
+                    else 1
+                )
+
+                entry = {
+                    "Version": str(version),
+                    f"{selected_metric_label} (Geom Mean)": f"{value:.2f}",
+                    "Concurrency Levels": concurrency_count,
+                }
+
+                # Change vs previous version
+                if idx > 0:
+                    prev_value = tp_data[selected_metric].iloc[idx - 1]
+                    if prev_value > 0:
+                        change = ((value - prev_value) / prev_value) * 100
+                        if is_latency_metric:
+                            icon = "🟢" if change < 0 else "🔴" if change > 0 else "🟡"
+                        else:
+                            icon = "🟢" if change > 0 else "🔴" if change < 0 else "🟡"
+                        entry["Change vs Previous Version"] = f"{icon} {change:+.1f}%"
+                    else:
+                        entry["Change vs Previous Version"] = "N/A"
+                else:
+                    entry["Change vs Previous Version"] = "—"
+
+                # Change vs best version
+                if best_value > 0 and version != best_version:
+                    best_change = ((value - best_value) / best_value) * 100
+                    if is_latency_metric:
+                        icon = (
+                            "🟢"
+                            if best_change < 0
+                            else "🔴"
+                            if best_change > 0
+                            else "🟡"
+                        )
+                    else:
+                        icon = (
+                            "🟢"
+                            if best_change > 0
+                            else "🔴"
+                            if best_change < 0
+                            else "🟡"
+                        )
+                    entry[f"Change vs Best ({best_version})"] = (
+                        f"{icon} {best_change:+.1f}%"
+                    )
+                elif version == best_version:
+                    entry[f"Change vs Best ({best_version})"] = "⭐ Best"
+                else:
+                    entry[f"Change vs Best ({best_version})"] = "—"
+
+                summary_data.append(entry)
+
+            summary_df = pd.DataFrame(summary_data)
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+        # Additional multi-metric view
+        with st.expander("📊 Multi-Metric Comparison", expanded=False):
+            st.markdown(
+                f"Compare multiple metrics side by side across versions for "
+                f"**{model_short}** on **{selected_accelerator}** — Profile: **{profile_short}**"
+            )
+            st.caption(
+                "**[Geo Mean]** = Geometric mean across common concurrency levels (excluding C=1). "
+                "**[Max]** = Maximum value across all concurrency levels (not a geometric mean)."
+            )
+
+            for tp in sorted(selected_tps):
+                tp_data = agg_df[agg_df["TP"] == tp].sort_values("version")
+                if tp_data.empty or len(tp_data) < 2:
+                    continue
+
+                st.markdown(f"**TP = {tp}**")
+
+                # Define all metrics for the 2x3 grid: (column_name, display_title, color, higher_is_better)
+                all_multi_metrics = [
+                    (
+                        "output_tok/sec",
+                        "Output Throughput (tok/s) [Geo Mean]",
+                        "#27ae60",
+                        True,
+                    ),
+                    (
+                        "total_tok/sec",
+                        "Total Throughput (tok/s) [Geo Mean]",
+                        "#2ecc71",
+                        True,
+                    ),
+                    (
+                        "peak_output_tok_sec",
+                        "Peak Output Throughput (tok/s) [Max]",
+                        "#1abc9c",
+                        True,
+                    ),
+                    ("ttft_p95", "TTFT P95 (ms) [Geo Mean]", "#e74c3c", False),
+                    ("itl_p95", "ITL P95 (ms) [Geo Mean]", "#c0392b", False),
+                    (
+                        "request_latency_median",
+                        "Request Latency Median (s) [Geo Mean]",
+                        "#e67e22",
+                        False,
+                    ),
+                ]
+
+                available_multi = [
+                    (col, title, color, hib)
+                    for col, title, color, hib in all_multi_metrics
+                    if col in tp_data.columns and tp_data[col].notna().any()
+                ]
+
+                if available_multi:
+                    n_metrics = len(available_multi)
+                    n_cols = min(n_metrics, 3)
+                    n_rows = (n_metrics + n_cols - 1) // n_cols
+
+                    fig_multi = make_subplots(
+                        rows=n_rows,
+                        cols=n_cols,
+                        subplot_titles=[title for _, title, _, _ in available_multi],
+                        vertical_spacing=0.15,
+                        horizontal_spacing=0.08,
+                    )
+
+                    for idx, (col, title, color, _higher_is_better) in enumerate(
+                        available_multi
+                    ):
+                        row = idx // n_cols + 1
+                        col_num = idx % n_cols + 1
+
+                        fig_multi.add_trace(
+                            go.Scatter(
+                                x=tp_data["version"].astype(str),
+                                y=tp_data[col],
+                                mode="lines+markers",
+                                name=title,
+                                line={"color": color, "width": 2},
+                                marker={"size": 8},
+                            ),
+                            row=row,
+                            col=col_num,
+                        )
+
+                    fig_multi.update_layout(
+                        height=300 * n_rows,
+                        showlegend=False,
+                        template="plotly_white",
+                    )
+                    # Set x-axis category order for each subplot
+                    for i in range(n_metrics):
+                        axis_key = "xaxis" if i == 0 else f"xaxis{i + 1}"
+                        fig_multi.update_layout(
+                            **{
+                                axis_key: {
+                                    "categoryorder": "array",
+                                    "categoryarray": sorted_version_strings,
+                                }
+                            }
+                        )
+
+                    st.plotly_chart(
+                        fig_multi,
+                        use_container_width=True,
+                        key=f"trends_multi_metric_tp_{tp}",
+                    )
+
+        # Show raw data
+        with st.expander("📄 Raw Data (Geometric Mean Values)", expanded=False):
+            st.caption(
+                "Values below are **geometric means** across **common concurrency levels** "
+                "(shared by all selected versions, excluding concurrency=1) for each version and TP combination. "
+                "**Peak Output Throughput** is the maximum output_tok/sec across all concurrency levels (not a geometric mean)."
+            )
+            display_cols = [
+                "version",
+                "TP",
+                "output_tok/sec",
+                "total_tok/sec",
+                "peak_output_tok_sec",
+                "ttft_p95",
+                "itl_p95",
+                "request_latency_median",
+                "successful_requests",
+                "errored_requests",
+            ]
+            display_cols = [c for c in display_cols if c in agg_df.columns]
+            st.dataframe(
+                agg_df[display_cols].sort_values(["version", "TP"]).round(2),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+@st.fragment
+def render_compare_versions_summary_section(df):
+    """⚖️ Compare Versions Section - Generate a summary table comparing two versions across multiple metrics."""
+    if "compare_versions_summary_expanded" not in st.session_state:
+        st.session_state.compare_versions_summary_expanded = False
+
+    with st.expander(
+        "⚖️ Compare Versions",
+        expanded=st.session_state.compare_versions_summary_expanded,
+    ):
+        st.markdown(
+            "💡 **Generate a comprehensive summary table comparing performance between two versions across all models and metrics.**"
+        )
+
+        # Get available versions, accelerators, and profiles from full data
+        available_versions = sorted(df["version"].unique().tolist())
+        available_accelerators = sorted(df["accelerator"].unique().tolist())
+        available_profiles = sorted(df["profile"].unique().tolist())
 
         if len(available_versions) < 2:
             st.warning(
-                "⚠️ Need at least 2 versions in the filtered data to compare. Please adjust your filters."
+                "⚠️ Need at least 2 versions in the data to compare. Please check your data."
             )
             return
 
-        col1, col2, col3 = st.columns(3)
+        # Filters row
+        col1, col2, col3, col4 = st.columns(4)
+
+        # Set default versions
+        default_v1 = "vLLM-0.13.0-competitive"
+        default_v2 = "TRT-LLM-1.2.0rc2"
+
+        # Find index for default version 1
+        v1_default_index = 0
+        if default_v1 in available_versions:
+            v1_default_index = available_versions.index(default_v1)
 
         with col1:
             version_1 = st.selectbox(
-                "Select Version 1",
+                "Select Version 1 (Baseline)",
                 options=available_versions,
-                index=0,
-                key="version_comparison_v1",
+                index=v1_default_index,
+                key="compare_summary_v1",
                 on_change=keep_expander_open,
-                args=("version_comparison_expanded",),
+                args=("compare_versions_summary_expanded",),
             )
 
         with col2:
-            # Filter out version_1 from version_2 options
             version_2_options = [v for v in available_versions if v != version_1]
+            # Find index for default version 2
+            v2_default_index = 0
+            if default_v2 in version_2_options:
+                v2_default_index = version_2_options.index(default_v2)
+
             version_2 = (
                 st.selectbox(
-                    "Select Version 2",
+                    "Select Version 2 (Comparison)",
                     options=version_2_options,
-                    index=0 if version_2_options else None,
-                    key="version_comparison_v2",
+                    index=v2_default_index if version_2_options else None,
+                    key="compare_summary_v2",
                     on_change=keep_expander_open,
-                    args=("version_comparison_expanded",),
+                    args=("compare_versions_summary_expanded",),
                 )
                 if version_2_options
                 else None
             )
 
         with col3:
-            metric_options = {
-                "Throughput (Output Tokens/sec)": "output_tok/sec",
-                "Throughput (Total Tokens/sec)": "total_tok/sec",
-                "TTFT P95 (s)": "ttft_p95_s",
-                "ITL P95 (ms)": "itl_p95",
-                "Request Latency Median (s)": "request_latency_median",
-            }
-            metric_label = st.selectbox(
-                "Select Metric to Compare",
-                options=list(metric_options.keys()),
-                key="version_comparison_metric",
-                on_change=keep_expander_open,
-                args=("version_comparison_expanded",),
-            )
-            metric_column = metric_options[metric_label]
+            # Default to H200 if available
+            accel_default_index = 0
+            if "H200" in available_accelerators:
+                accel_default_index = available_accelerators.index("H200")
 
-        # Show metric-specific interpretation guide
-        if metric_column in ["output_tok/sec", "total_tok/sec"]:
-            st.info(
-                "ℹ️ **How to Read Results** (Throughput - higher is better):\n\n"
-                "• **+X%** → Version 1 has **higher** throughput than Version 2 ✅ *(V1 is faster)*\n\n"
-                "• **-X%** → Version 1 has **lower** throughput than Version 2 ❌ *(V2 is faster)*"
+            selected_accelerator = st.selectbox(
+                "Select GPU",
+                options=available_accelerators,
+                index=accel_default_index,
+                key="compare_summary_accelerator",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
             )
-        else:
-            if "ttft" in metric_column:
-                metric_name = "TTFT"
-            elif "itl" in metric_column:
-                metric_name = "ITL"
-            else:
-                metric_name = "Request Latency"
-            st.info(
-                f"ℹ️ **How to Read Results** ({metric_name} - lower is better):\n\n"
-                f"• **+X%** → Version 1 has **higher** latency than Version 2 ❌ *(V1 is slower)*\n\n"
-                f"• **-X%** → Version 1 has **lower** latency than Version 2 ✅ *(V1 is faster)*"
+
+        with col4:
+            # Set default profile to "Profile A: Balanced (1k/1k)"
+            default_profile = "Profile A: Balanced (1k/1k)"
+            profile_default_index = 0
+            if default_profile in available_profiles:
+                profile_default_index = available_profiles.index(default_profile)
+
+            selected_profile = st.selectbox(
+                "Select ISL/OSL Profile",
+                options=available_profiles,
+                index=profile_default_index,
+                key="compare_summary_profile",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
             )
 
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
 
-        # Filter data for each version
-        df_v1 = filtered_df[filtered_df["version"] == version_1].copy()
-        df_v2 = filtered_df[filtered_df["version"] == version_2].copy()
+        # Filter data for each version based on selected accelerator and profile
+        df_v1 = df[
+            (df["version"] == version_1)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
 
-        # Find common models with same configurations
-        # Group by model, accelerator, TP, and intended concurrency
-        v1_configs = (
-            df_v1.groupby(["model", "accelerator", "TP", "intended concurrency"])
-            .size()
-            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
-        )
-        v2_configs = (
-            df_v2.groupby(["model", "accelerator", "TP", "intended concurrency"])
-            .size()
-            .reset_index()[["model", "accelerator", "TP", "intended concurrency"]]
-        )
+        df_v2 = df[
+            (df["version"] == version_2)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
 
-        # Find common configurations
-        common_configs = pd.merge(
-            v1_configs,
-            v2_configs,
-            on=["model", "accelerator", "TP", "intended concurrency"],
-            how="inner",
-        )
-
-        if common_configs.empty:
+        if df_v1.empty or df_v2.empty:
             st.warning(
-                f"⚠️ No common model configurations found between {version_1} and {version_2}."
+                "⚠️ No data available for the selected combination. "
+                "Try different accelerator or profile settings."
             )
             return
 
-        # Get unique models from common configs
-        common_models = common_configs["model"].unique()
+        # Find common model+TP combinations between both versions
+        # This ensures we compare the same model with the same TP value
+        v1_model_tp = set(zip(df_v1["model"].tolist(), df_v1["TP"].tolist()))
+        v2_model_tp = set(zip(df_v2["model"].tolist(), df_v2["TP"].tolist()))
+        common_model_tp = sorted(v1_model_tp.intersection(v2_model_tp))
 
-        st.success(
-            f"✅ Found {len(common_models)} common model(s) between {version_1} and {version_2}"
+        if not common_model_tp:
+            st.warning(
+                f"⚠️ No common model+TP combinations found between {version_1} and {version_2} "
+                f"for {selected_accelerator} with profile {selected_profile}."
+            )
+            return
+
+        # Collect the union of all common concurrency levels across model+TP combos
+        all_common_concurrencies: set = set()
+        for model, tp in common_model_tp:
+            v1_conc = set(
+                df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            v2_conc = set(
+                df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            all_common_concurrencies.update(v1_conc.intersection(v2_conc))
+
+        all_common_concurrencies_sorted = sorted(
+            int(c) for c in all_common_concurrencies
         )
 
-        # Create summary table showing quick comparison results
-        summary_col1, summary_col2 = st.columns([4, 1])
-        with summary_col1:
-            st.markdown("### 📊 Quick Comparison Summary")
-            st.markdown(f"Performance of **{version_1}** compared to **{version_2}**:")
-        with summary_col2:
+        if all_common_concurrencies_sorted:
+            # Key includes filter selections so the widget resets when filters change
+            conc_key = f"compare_summary_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            selected_concurrencies = st.multiselect(
+                "Select Concurrency Level(s) for Geometric Mean",
+                options=all_common_concurrencies_sorted,
+                default=all_common_concurrencies_sorted,
+                key=conc_key,
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+                help=(
+                    "Choose which concurrency levels to include in geometric mean calculations. "
+                    "Only concurrency levels common to both versions are shown. "
+                    "Peak throughput always uses all available concurrency levels."
+                ),
+            )
+            if not selected_concurrencies:
+                st.warning("⚠️ Please select at least one concurrency level.")
+                return
+            selected_conc_set = set(selected_concurrencies)
+            st.caption(
+                f"ℹ️ Geometric mean metrics use concurrency levels: "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"Peak throughput uses all common concurrency levels."
+            )
+        else:
+            selected_conc_set = set()
+
+        # Extract ISL/OSL from profile for display
+        profile_short = selected_profile
+        if "(" in selected_profile and ")" in selected_profile:
+            profile_short = selected_profile.split("(")[-1].replace(")", "")
+
+        # Display title with GPU and ISL/OSL info + "How are these calculated?" popover
+        title_col, popover_col = st.columns([5, 1])
+        with title_col:
+            st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
+        with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
                 st.markdown("""
                 **Mean Change Calculation:**
@@ -1628,637 +2588,7 @@ def render_version_comparison_section(filtered_df):
                 This consensus approach provides a more robust assessment by requiring multiple metrics to agree before declaring a clear winner or loser.
 
                 **Note**: Each accelerator-TP combination is compared independently across all common concurrency levels.
-                """)
-
-        summary_rows = []
-        is_higher_better = metric_column in ["output_tok/sec", "total_tok/sec"]
-
-        for model in sorted(common_models):
-            model_short = model.split("/")[-1] if "/" in model else model
-            model_configs = common_configs[common_configs["model"] == model]
-            common_acc_tp = model_configs[["accelerator", "TP"]].drop_duplicates()
-
-            # Calculate summary for each accelerator-TP combination
-            for _, acc_tp_row in common_acc_tp.iterrows():
-                accelerator = acc_tp_row["accelerator"]
-                tp = int(acc_tp_row["TP"])
-
-                # Filter data for this specific model and configuration
-                model_v1_data = df_v1[
-                    (df_v1["model"] == model)
-                    & (df_v1["accelerator"] == accelerator)
-                    & (df_v1["TP"] == tp)
-                ].copy()
-
-                model_v2_data = df_v2[
-                    (df_v2["model"] == model)
-                    & (df_v2["accelerator"] == accelerator)
-                    & (df_v2["TP"] == tp)
-                ].copy()
-
-                # Get common concurrencies
-                v1_concurrencies = set(model_v1_data["intended concurrency"].unique())
-                v2_concurrencies = set(model_v2_data["intended concurrency"].unique())
-                common_concurrencies = sorted(
-                    v1_concurrencies.intersection(v2_concurrencies)
-                )
-
-                if common_concurrencies:
-                    v1_common = model_v1_data[
-                        model_v1_data["intended concurrency"].isin(common_concurrencies)
-                    ]
-                    v2_common = model_v2_data[
-                        model_v2_data["intended concurrency"].isin(common_concurrencies)
-                    ]
-
-                    # Calculate median change across all common concurrencies
-                    metric_changes = []
-                    for concurrency in common_concurrencies:
-                        v1_row = v1_common[
-                            v1_common["intended concurrency"] == concurrency
-                        ]
-                        v2_row = v2_common[
-                            v2_common["intended concurrency"] == concurrency
-                        ]
-
-                        if not v1_row.empty and not v2_row.empty:
-                            v1_val = v1_row.iloc[0][metric_column]
-                            v2_val = v2_row.iloc[0][metric_column]
-
-                            if pd.notna(v1_val) and pd.notna(v2_val) and v2_val > 0:
-                                change = ((v1_val - v2_val) / v2_val) * 100
-                                metric_changes.append(change)
-
-                    # Calculate median, mean, and geometric mean change
-                    median_change = np.median(metric_changes) if metric_changes else 0
-                    mean_change = np.mean(metric_changes) if metric_changes else 0
-
-                    # Calculate geometric mean of percentage changes
-                    # Convert to growth factors, compute geometric mean, convert back
-                    if metric_changes:
-                        # Filter out changes that would result in non-positive growth factors
-                        valid_changes = [c for c in metric_changes if c > -100]
-                        if valid_changes:
-                            growth_factors = [1 + (c / 100) for c in valid_changes]
-                            geom_mean_factor = np.prod(growth_factors) ** (
-                                1 / len(growth_factors)
-                            )
-                            geom_mean_change = (geom_mean_factor - 1) * 100
-                        else:
-                            geom_mean_change = 0
-                    else:
-                        geom_mean_change = 0
-
-                    # Calculate percentage difference (v1 compared to v2) for peak values
-                    if is_higher_better:
-                        # For throughput, compare max values
-                        v1_max = v1_common[metric_column].max()
-                        v2_max = v2_common[metric_column].max()
-                        if v2_max > 0:
-                            pct_change = ((v1_max - v2_max) / v2_max) * 100
-                        else:
-                            pct_change = 0
-                    else:
-                        # For latency, compare values at max throughput
-                        v1_max_throughput_idx = v1_common["output_tok/sec"].idxmax()
-                        v2_max_throughput_idx = v2_common["output_tok/sec"].idxmax()
-                        v1_latency_at_max = v1_common.loc[
-                            v1_max_throughput_idx, metric_column
-                        ]
-                        v2_latency_at_max = v2_common.loc[
-                            v2_max_throughput_idx, metric_column
-                        ]
-                        if v2_latency_at_max > 0:
-                            pct_change = (
-                                (v1_latency_at_max - v2_latency_at_max)
-                                / v2_latency_at_max
-                            ) * 100
-                        else:
-                            pct_change = 0
-
-                    # Determine emoji and status based on all four metrics (mean, median, geometric mean, peak)
-                    # For throughput: positive is good, negative is bad
-                    # For latency: negative is good (lower), positive is bad (higher)
-                    mean_improvement = mean_change if is_higher_better else -mean_change
-                    median_improvement = (
-                        median_change if is_higher_better else -median_change
-                    )
-                    geom_mean_improvement = (
-                        geom_mean_change if is_higher_better else -geom_mean_change
-                    )
-                    peak_improvement = pct_change if is_higher_better else -pct_change
-
-                    # Count how many metrics show improvement, decline, or similarity
-                    improvements = sum(
-                        [
-                            1 if mean_improvement >= 5 else 0,
-                            1 if median_improvement >= 5 else 0,
-                            1 if geom_mean_improvement >= 5 else 0,
-                            1 if peak_improvement >= 5 else 0,
-                        ]
-                    )
-
-                    declines = sum(
-                        [
-                            1 if mean_improvement <= -5 else 0,
-                            1 if median_improvement <= -5 else 0,
-                            1 if geom_mean_improvement <= -5 else 0,
-                            1 if peak_improvement <= -5 else 0,
-                        ]
-                    )
-
-                    # Determine status based on consensus across all four metrics
-                    if improvements >= 3:
-                        # At least 3 out of 4 show improvement
-                        emoji = "🟢"
-                        status = "Better"
-                    elif declines >= 3:
-                        # At least 3 out of 4 show decline
-                        emoji = "🔴"
-                        status = "Worse"
-                    else:
-                        # Mixed signals or metrics show similar performance
-                        emoji = "🟡"
-                        status = "Similar"
-
-                    # Format the change text
-                    change_text = f"{'+' if pct_change > 0 else ''}{pct_change:.1f}%"
-                    median_change_text = (
-                        f"{'+' if median_change > 0 else ''}{median_change:.1f}%"
-                    )
-                    mean_change_text = (
-                        f"{'+' if mean_change > 0 else ''}{mean_change:.1f}%"
-                    )
-                    geom_mean_change_text = (
-                        f"{'+' if geom_mean_change > 0 else ''}{geom_mean_change:.1f}%"
-                    )
-
-                    summary_rows.append(
-                        {
-                            "": emoji,
-                            "Model": model_short,
-                            "Accelerator": accelerator,
-                            "TP": tp,
-                            "Status": status,
-                            "Mean": mean_change_text,
-                            "Median": median_change_text,
-                            "Geometric Mean": geom_mean_change_text,
-                            "Peak": change_text,
-                        }
-                    )
-
-        if summary_rows:
-            summary_df = pd.DataFrame(summary_rows)
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
-            st.caption(
-                "**Status**: Based on consensus across all four metrics (Mean, Median, Geometric Mean, Peak) | "
-                "🟢 Better: ≥3 metrics show ≥5% improvement | "
-                "🟡 Similar: Mixed signals or <5% difference | "
-                "🔴 Worse: ≥3 metrics show ≥5% decline | "
-                "**Mean**: arithmetic average | **Median**: typical (robust to outliers) | **Geometric Mean**: geometric mean (better for ratios) | **Peak**: best-case"
-            )
-
-        st.markdown("---")
-        st.markdown("### 📈 Detailed Comparisons")
-
-        # For each common model, create an expander with comparison graph
-        for model in sorted(common_models):
-            model_short = model.split("/")[-1] if "/" in model else model
-            model_configs = common_configs[common_configs["model"] == model]
-
-            # Get unique accelerator and TP combinations for this model that are common in BOTH versions
-            config_summary = []
-            for _, row in model_configs.iterrows():
-                config_summary.append(f"{row['accelerator']} (TP={int(row['TP'])})")
-
-            with st.expander(
-                f"📈 {model_short} - {', '.join(set(config_summary))}", expanded=False
-            ):
-                # Get data for this model from both versions
-                # But ONLY for the common accelerator/TP combinations
-                common_acc_tp = model_configs[["accelerator", "TP"]].drop_duplicates()
-
-                # Filter to only common configurations
-                model_v1_data = pd.merge(
-                    df_v1[df_v1["model"] == model],
-                    common_acc_tp,
-                    on=["accelerator", "TP"],
-                    how="inner",
-                ).copy()
-
-                model_v2_data = pd.merge(
-                    df_v2[df_v2["model"] == model],
-                    common_acc_tp,
-                    on=["accelerator", "TP"],
-                    how="inner",
-                ).copy()
-
-                # Add version label
-                model_v1_data["version_label"] = version_1
-                model_v2_data["version_label"] = version_2
-
-                # Combine data
-                combined_data = pd.concat([model_v1_data, model_v2_data])
-
-                # Create identifier for grouping
-                combined_data["config_id"] = (
-                    combined_data["accelerator"]
-                    + " | TP="
-                    + combined_data["TP"].astype(str)
-                    + " | "
-                    + combined_data["version_label"]
-                )
-
-                # Sort by concurrency
-                combined_data = combined_data.sort_values("intended concurrency")
-
-                # Create line plot
-                fig = px.line(
-                    combined_data,
-                    x="intended concurrency",
-                    y=metric_column,
-                    color="config_id",
-                    markers=True,
-                    title=f"{model_short}: Concurrency vs {metric_label}",
-                    labels={
-                        "intended concurrency": "Concurrency",
-                        metric_column: metric_label,
-                        "config_id": "Configuration",
-                    },
-                    template="plotly_white",
-                )
-
-                fig.update_layout(
-                    legend_title_text="Configuration (Accelerator | TP | Version)",
-                    legend={"font": {"size": 12}},
-                    height=500,
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Now show separate summary statistics for each accelerator-TP combination
-                for _, acc_tp_row in common_acc_tp.iterrows():
-                    accelerator = acc_tp_row["accelerator"]
-                    tp = int(acc_tp_row["TP"])
-
-                    st.markdown("---")
-                    st.markdown(f"### {accelerator} (TP={tp})")
-
-                    # Filter data for this specific accelerator-TP combination
-                    v1_config_data = model_v1_data[
-                        (model_v1_data["accelerator"] == accelerator)
-                        & (model_v1_data["TP"] == tp)
-                    ].copy()
-
-                    v2_config_data = model_v2_data[
-                        (model_v2_data["accelerator"] == accelerator)
-                        & (model_v2_data["TP"] == tp)
-                    ].copy()
-
-                    # Get common concurrencies for this specific configuration
-                    v1_concurrencies = set(
-                        v1_config_data["intended concurrency"].unique()
-                    )
-                    v2_concurrencies = set(
-                        v2_config_data["intended concurrency"].unique()
-                    )
-                    common_concurrencies = sorted(
-                        v1_concurrencies.intersection(v2_concurrencies)
-                    )
-
-                    if common_concurrencies:
-                        # Filter to only common concurrencies for comparison
-                        v1_common = v1_config_data[
-                            v1_config_data["intended concurrency"].isin(
-                                common_concurrencies
-                            )
-                        ]
-                        v2_common = v2_config_data[
-                            v2_config_data["intended concurrency"].isin(
-                                common_concurrencies
-                            )
-                        ]
-
-                        # Calculate statistics at common concurrencies
-                        v1_median = v1_common[metric_column].median()
-                        v1_max = v1_common[metric_column].max()
-                        v1_min = v1_common[metric_column].min()
-
-                        v2_median = v2_common[metric_column].median()
-                        v2_max = v2_common[metric_column].max()
-                        v2_min = v2_common[metric_column].min()
-
-                        # Find concurrency at which max and min occurred
-                        v1_max_concurrency = v1_common[
-                            v1_common[metric_column] == v1_max
-                        ]["intended concurrency"].iloc[0]
-                        v1_min_concurrency = v1_common[
-                            v1_common[metric_column] == v1_min
-                        ]["intended concurrency"].iloc[0]
-                        v2_max_concurrency = v2_common[
-                            v2_common[metric_column] == v2_max
-                        ]["intended concurrency"].iloc[0]
-                        v2_min_concurrency = v2_common[
-                            v2_common[metric_column] == v2_min
-                        ]["intended concurrency"].iloc[0]
-
-                        # Create summary statistics table
-                        st.markdown("**Summary Statistics (at common concurrencies):**")
-
-                        # Get unit and precision for display
-                        unit = ""
-                        precision = 2
-                        if metric_column == "output_tok/sec":
-                            unit = " tokens/s"
-                            precision = 2
-                        elif metric_column == "ttft_p95_s":
-                            unit = " s"
-                            precision = 3
-                        elif metric_column == "itl_p95":
-                            unit = " ms"
-                            precision = 2
-
-                        summary_data = {
-                            "Statistic": [
-                                f"Median {metric_label}",
-                                f"Max {metric_label} (at concurrency)",
-                                f"Min {metric_label} (at concurrency)",
-                            ],
-                            version_1: [
-                                f"{v1_median:.{precision}f}{unit}",
-                                f"{v1_max:.{precision}f}{unit} (C={int(v1_max_concurrency)})",
-                                f"{v1_min:.{precision}f}{unit} (C={int(v1_min_concurrency)})",
-                            ],
-                            version_2: [
-                                f"{v2_median:.{precision}f}{unit}",
-                                f"{v2_max:.{precision}f}{unit} (C={int(v2_max_concurrency)})",
-                                f"{v2_min:.{precision}f}{unit} (C={int(v2_min_concurrency)})",
-                            ],
-                        }
-                        summary_df = pd.DataFrame(summary_data)
-                        st.dataframe(
-                            summary_df, use_container_width=True, hide_index=True
-                        )
-
-                        # Determine which version is better and by how much (based on best values)
-                        # For throughput, higher is better; for latency, lower is better
-                        is_higher_better = metric_column in [
-                            "output_tok/sec",
-                            "total_tok/sec",
-                        ]
-
-                        if is_higher_better:
-                            # For throughput, compare max values (best = highest)
-                            # Calculate v1 compared to v2
-                            if v2_max > 0:
-                                pct_change = ((v1_max - v2_max) / v2_max) * 100
-                                abs_pct_change = abs(pct_change)
-
-                                if abs_pct_change < 5:
-                                    # Similar performance (< 5% difference)
-                                    st.warning(
-                                        f"🟡 **{version_1}** and **{version_2}** have similar performance (**{abs_pct_change:.1f}%** difference)"
-                                    )
-                                elif pct_change > 0:
-                                    # v1 is better
-                                    st.success(
-                                        f"✅ **{version_1}** is **{abs_pct_change:.1f}% better** than **{version_2}** (higher max {metric_label.lower()} at C={int(v1_max_concurrency)})"
-                                    )
-                                else:
-                                    # v1 is worse
-                                    st.error(
-                                        f"❌ **{version_1}** is **{abs_pct_change:.1f}% worse** than **{version_2}** (lower max {metric_label.lower()} at C={int(v1_max_concurrency)})"
-                                    )
-                        else:  # Lower is better (for latency metrics)
-                            # For latency, compare values at max throughput concurrency
-                            # First, find where max throughput occurs for each version
-                            v1_max_throughput_idx = v1_common["output_tok/sec"].idxmax()
-                            v2_max_throughput_idx = v2_common["output_tok/sec"].idxmax()
-
-                            v1_latency_at_max = v1_common.loc[
-                                v1_max_throughput_idx, metric_column
-                            ]
-                            v2_latency_at_max = v2_common.loc[
-                                v2_max_throughput_idx, metric_column
-                            ]
-
-                            v1_concurrency_at_max = v1_common.loc[
-                                v1_max_throughput_idx, "intended concurrency"
-                            ]
-                            v2_concurrency_at_max = v2_common.loc[
-                                v2_max_throughput_idx, "intended concurrency"
-                            ]
-
-                            # Calculate v1 compared to v2
-                            if v2_latency_at_max > 0:
-                                pct_change = (
-                                    (v1_latency_at_max - v2_latency_at_max)
-                                    / v2_latency_at_max
-                                ) * 100
-                                abs_pct_change = abs(pct_change)
-
-                                if abs_pct_change < 5:
-                                    # Similar performance (< 5% difference)
-                                    st.warning(
-                                        f"🟡 **{version_1}** and **{version_2}** have similar performance (**{abs_pct_change:.1f}%** difference)"
-                                    )
-                                elif pct_change < 0:
-                                    # v1 is better (lower latency)
-                                    st.success(
-                                        f"✅ **{version_1}** is **{abs_pct_change:.1f}% better** than **{version_2}** (lower {metric_label.lower()} at max throughput: C={int(v1_concurrency_at_max)})"
-                                    )
-                                else:
-                                    # v1 is worse (higher latency)
-                                    st.error(
-                                        f"❌ **{version_1}** is **{abs_pct_change:.1f}% worse** than **{version_2}** (higher {metric_label.lower()} at max throughput: C={int(v2_concurrency_at_max)})"
-                                    )
-
-                        st.caption(
-                            f"💡 Comparison based on {len(common_concurrencies)} common concurrency level(s): {', '.join(map(str, common_concurrencies))}"
-                        )
-                    else:
-                        st.warning(
-                            f"⚠️ No common concurrency levels found for {accelerator} (TP={tp})."
-                        )
-
-                # Add explanation of calculations (once at the end)
-                st.markdown("---")
-                with st.expander(
-                    "ℹ️ How are these statistics calculated?", expanded=False
-                ):
-                    st.markdown(f"""
-                    **Median Calculation:**
-                    - The median is the middle value when all {metric_label.lower()} measurements at common concurrency levels are sorted
-                    - More robust than mean as it's not affected by outliers
-                    - Calculated across all data points at the common concurrency levels for each accelerator-TP combination
-
-                    **Max/Min Calculation:**
-                    - Max: Highest {metric_label.lower()} value observed across all common concurrency levels
-                    - Min: Lowest {metric_label.lower()} value observed across all common concurrency levels
-                    - The concurrency level (C=X) shows where this extreme value occurred
-
-                    **Percentage Difference Calculation:**
-                    - **Mean Change**: Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average)
-                      - Shows the average performance difference across all concurrency levels
-                      - Can be affected by outliers (extreme values)
-                      - Formula: `mean([(v1 - v2) / v2 × 100 for each concurrency level])`
-                    - **Median Change**: Calculated by taking the percentage change at each common concurrency level, then taking the median
-                      - Shows the typical performance difference across all concurrency levels
-                      - More robust to outliers - better represents typical performance
-                      - Formula: `median([(v1 - v2) / v2 × 100 for each concurrency level])`
-                    - **Geometric Mean Change**: Converts % changes to growth factors (multipliers), computes geometric mean, converts back
-                      - Growth factor = `1 + (% change / 100)` → e.g., +10% becomes 1.10, -20% becomes 0.80
-                      - We subtract 1 at the end because 1.0 = "no change" = 0%
-                      - Better for ratios: +100% then -50% = 0% net change (correct), not +25% (arithmetic mean)
-                      - Formula: `((∏ growth_factors)^(1/n) - 1) × 100`
-                    - **Peak Change**:
-                      - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) × 100`
-                        - Compares maximum throughput values (best = highest performance)
-                        - Higher is better
-                      - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) × 100`
-                        - Compares latency values at the concurrency where max throughput occurs for each version
-                        - This shows latency characteristics at peak performance
-                        - Lower is better
-                    - **Note**: Each accelerator-TP combination is compared independently
                     """)
-
-
-def render_compare_versions_summary_section(df):
-    """📸 Compare Versions Summary Section - Generate a summary table comparing two versions across multiple metrics."""
-    if "compare_versions_summary_expanded" not in st.session_state:
-        st.session_state.compare_versions_summary_expanded = False
-
-    with st.expander(
-        "📸 Compare Versions Summary",
-        expanded=st.session_state.compare_versions_summary_expanded,
-    ):
-        st.markdown(
-            "💡 **Generate a comprehensive summary table comparing performance between two versions across all models and metrics.**"
-        )
-
-        # Get available versions, accelerators, and profiles from full data
-        available_versions = sorted(df["version"].unique().tolist())
-        available_accelerators = sorted(df["accelerator"].unique().tolist())
-        available_profiles = sorted(df["profile"].unique().tolist())
-
-        if len(available_versions) < 2:
-            st.warning(
-                "⚠️ Need at least 2 versions in the data to compare. Please check your data."
-            )
-            return
-
-        # Filters row
-        col1, col2, col3, col4 = st.columns(4)
-
-        # Set default versions
-        default_v1 = "vLLM-0.13.0"
-        default_v2 = "TRT-LLM-1.2.0rc2"
-
-        # Find index for default version 1
-        v1_default_index = 0
-        if default_v1 in available_versions:
-            v1_default_index = available_versions.index(default_v1)
-
-        with col1:
-            version_1 = st.selectbox(
-                "Select Version 1 (Baseline)",
-                options=available_versions,
-                index=v1_default_index,
-                key="compare_summary_v1",
-                on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
-            )
-
-        with col2:
-            version_2_options = [v for v in available_versions if v != version_1]
-            # Find index for default version 2
-            v2_default_index = 0
-            if default_v2 in version_2_options:
-                v2_default_index = version_2_options.index(default_v2)
-
-            version_2 = (
-                st.selectbox(
-                    "Select Version 2 (Comparison)",
-                    options=version_2_options,
-                    index=v2_default_index if version_2_options else None,
-                    key="compare_summary_v2",
-                    on_change=keep_expander_open,
-                    args=("compare_versions_summary_expanded",),
-                )
-                if version_2_options
-                else None
-            )
-
-        with col3:
-            selected_accelerator = st.selectbox(
-                "Select GPU",
-                options=available_accelerators,
-                index=0,
-                key="compare_summary_accelerator",
-                on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
-            )
-
-        with col4:
-            # Set default profile to "Profile A: Balanced (1k/1k)"
-            default_profile = "Profile A: Balanced (1k/1k)"
-            profile_default_index = 0
-            if default_profile in available_profiles:
-                profile_default_index = available_profiles.index(default_profile)
-
-            selected_profile = st.selectbox(
-                "Select ISL/OSL Profile",
-                options=available_profiles,
-                index=profile_default_index,
-                key="compare_summary_profile",
-                on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
-            )
-
-        if not version_2:
-            st.warning("⚠️ Please select a second version to compare.")
-            return
-
-        # Filter data for each version based on selected accelerator and profile
-        df_v1 = df[
-            (df["version"] == version_1)
-            & (df["accelerator"] == selected_accelerator)
-            & (df["profile"] == selected_profile)
-        ].copy()
-
-        df_v2 = df[
-            (df["version"] == version_2)
-            & (df["accelerator"] == selected_accelerator)
-            & (df["profile"] == selected_profile)
-        ].copy()
-
-        if df_v1.empty or df_v2.empty:
-            st.warning(
-                "⚠️ No data available for the selected combination. "
-                "Try different accelerator or profile settings."
-            )
-            return
-
-        # Find common model+TP combinations between both versions
-        # This ensures we compare the same model with the same TP value
-        v1_model_tp = set(zip(df_v1["model"].tolist(), df_v1["TP"].tolist()))
-        v2_model_tp = set(zip(df_v2["model"].tolist(), df_v2["TP"].tolist()))
-        common_model_tp = sorted(v1_model_tp.intersection(v2_model_tp))
-
-        if not common_model_tp:
-            st.warning(
-                f"⚠️ No common model+TP combinations found between {version_1} and {version_2} "
-                f"for {selected_accelerator} with profile {selected_profile}."
-            )
-            return
-
-        # Extract ISL/OSL from profile for display
-        profile_short = selected_profile
-        if "(" in selected_profile and ")" in selected_profile:
-            profile_short = selected_profile.split("(")[-1].replace(")", "")
-
-        # Display title with GPU and ISL/OSL info
-        st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
         st.markdown(f"**Comparing:** {version_1} vs {version_2}")
 
         # Define metrics to compare
@@ -2308,19 +2638,24 @@ def render_compare_versions_summary_section(df):
                 return None
             return np.exp(np.mean(np.log(positive_values)))
 
-        def get_comparison_result(v1_data, v2_data, metric_config):
+        def get_comparison_result(v1_data, v2_data, metric_config, user_conc_set):
             """Calculate comparison between two versions for a specific metric."""
             column = metric_config["column"]
             aggregation = metric_config["aggregation"]
             higher_is_better = metric_config["higher_is_better"]
 
-            # Get common concurrencies
+            # Get common concurrencies for this model+TP, intersected with user selection
             v1_concurrencies = set(v1_data["intended concurrency"].dropna().unique())
             v2_concurrencies = set(v2_data["intended concurrency"].dropna().unique())
             common_concurrencies = v1_concurrencies.intersection(v2_concurrencies)
 
+            # For peak metrics use all common concurrencies;
+            # for geom_mean metrics restrict to user-selected concurrencies
+            if aggregation == "geom_mean":
+                common_concurrencies = common_concurrencies.intersection(user_conc_set)
+
             if not common_concurrencies:
-                return None, None, None, None
+                return None, None, None, None, None
 
             v1_common = v1_data[
                 v1_data["intended concurrency"].isin(common_concurrencies)
@@ -2333,39 +2668,69 @@ def render_compare_versions_summary_section(df):
             v2_values = v2_common[column].dropna().tolist()
 
             if not v1_values or not v2_values:
-                return None, None, None, None
+                return None, None, None, None, None
 
             if aggregation == "peak":
                 if higher_is_better:
                     v1_val = max(v1_values)
                     v2_val = max(v2_values)
-                    # Find concurrency at peak for v1
                     v1_peak_idx = v1_common[column].idxmax()
-                    peak_concurrency = int(
+                    v1_peak_conc = int(
                         v1_common.loc[v1_peak_idx, "intended concurrency"]
+                    )
+                    v2_peak_idx = v2_common[column].idxmax()
+                    v2_peak_conc = int(
+                        v2_common.loc[v2_peak_idx, "intended concurrency"]
                     )
                 else:
                     v1_val = min(v1_values)
                     v2_val = min(v2_values)
                     v1_peak_idx = v1_common[column].idxmin()
-                    peak_concurrency = int(
+                    v1_peak_conc = int(
                         v1_common.loc[v1_peak_idx, "intended concurrency"]
+                    )
+                    v2_peak_idx = v2_common[column].idxmin()
+                    v2_peak_conc = int(
+                        v2_common.loc[v2_peak_idx, "intended concurrency"]
                     )
             else:  # geom_mean
                 v1_val = calculate_geom_mean(v1_values)
                 v2_val = calculate_geom_mean(v2_values)
-                peak_concurrency = None
+                v1_peak_conc = None
+                v2_peak_conc = None
 
             if v1_val is None or v2_val is None or v2_val == 0:
-                return None, None, None, None
+                return None, None, None, None, None
 
-            # Calculate percentage difference (v1 compared to v2)
             pct_diff = ((v1_val - v2_val) / v2_val) * 100
-
-            # Determine which version is better
             v1_better = pct_diff > 0 if higher_is_better else pct_diff < 0
 
-            return pct_diff, v1_better, peak_concurrency, abs(pct_diff) < 5
+            return pct_diff, v1_better, v1_peak_conc, v2_peak_conc, abs(pct_diff) < 5
+
+        # Check for duplicate rows (same version/model/TP/concurrency)
+        dup_warnings = []
+        for _label, df_check, ver_name in [
+            ("Version 1", df_v1, version_1),
+            ("Version 2", df_v2, version_2),
+        ]:
+            for model, tp in common_model_tp:
+                subset = df_check[(df_check["model"] == model) & (df_check["TP"] == tp)]
+                conc_counts = subset["intended concurrency"].value_counts()
+                dups = conc_counts[conc_counts > 1]
+                if not dups.empty:
+                    m_short = model.split("/")[-1] if "/" in model else model
+                    tp_s = f"TP={int(tp)}" if pd.notna(tp) else ""
+                    conc_list = ", ".join(str(int(c)) for c in sorted(dups.index))
+                    dup_warnings.append(
+                        f"**{ver_name}** — {m_short} ({tp_s}): duplicate rows at "
+                        f"concurrency {conc_list}"
+                    )
+        if dup_warnings:
+            st.warning(
+                "⚠️ **Duplicate data rows detected** — geometric mean results may be "
+                "skewed. Consider removing duplicates from the CSV.\n\n"
+                + "\n".join(f"- {w}" for w in dup_warnings)
+            )
 
         # Build summary table data
         summary_data = []
@@ -2383,29 +2748,30 @@ def render_compare_versions_summary_section(df):
             row_data = {"Model": f"{model_short} {tp_str}"}
 
             for metric_name, metric_config in metrics_config.items():
-                pct_diff, v1_better, peak_conc, is_similar = get_comparison_result(
-                    v1_model_data, v2_model_data, metric_config
+                pct_diff, v1_better, v1_peak, v2_peak, is_similar = (
+                    get_comparison_result(
+                        v1_model_data, v2_model_data, metric_config, selected_conc_set
+                    )
                 )
 
                 if pct_diff is None:
                     row_data[metric_name] = "N/A"
                 else:
-                    # Format the cell content
                     sign = "+" if pct_diff > 0 else ""
-                    if metric_config["show_concurrency"] and peak_conc:
+                    if metric_config["show_concurrency"] and v1_peak is not None:
                         cell_text = (
-                            f"{version_1} ({sign}{pct_diff:.1f}%) at conc {peak_conc}"
+                            f"{version_1} ({sign}{pct_diff:.1f}%) "
+                            f"peak@{v1_peak} vs {v2_peak}"
                         )
                     else:
                         cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
 
-                    # Determine color based on which version is better
                     if is_similar:
-                        color = "🟡"  # Similar
+                        color = "🟡"
                     elif v1_better:
-                        color = "🟢"  # V1 better
+                        color = "🟢"
                     else:
-                        color = "🔴"  # V2 better
+                        color = "🔴"
 
                     row_data[metric_name] = f"{color} {cell_text}"
 
@@ -2413,6 +2779,242 @@ def render_compare_versions_summary_section(df):
 
         if summary_data:
             summary_df = pd.DataFrame(summary_data)
+
+            # --- Metric comparison dialog (popup) ---
+            @st.dialog("Version Comparison — Metric Details", width="large")
+            def _show_metric_dialog(metric_name):
+                """Render a popup with interactive line graphs."""
+                mcfg = metrics_config[metric_name]
+                col = mcfg["column"]
+                agg = mcfg["aggregation"]
+                mcfg["higher_is_better"]
+
+                # Clean title: strip aggregation suffix, add "vs Concurrency"
+                display_title = metric_name.replace(" (Geometric Mean)", "").replace(
+                    " (Peak)", ""
+                )
+                st.markdown(f"#### {display_title} vs Concurrency")
+                st.markdown(
+                    f"**{version_1}** vs **{version_2}** &nbsp;|&nbsp; "
+                    f"**{selected_accelerator}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
+                )
+
+                # Paired color palettes: warm tones for v1, cool tones for v2
+                _palette_v1 = [
+                    "#EF553B",
+                    "#FF7F0E",
+                    "#D62728",
+                    "#E377C2",
+                    "#FF6692",
+                    "#FFA15A",
+                    "#FECB52",
+                    "#F0027F",
+                    "#BF5B17",
+                    "#E6550D",
+                    "#FD8D3C",
+                    "#FDAE6B",
+                    "#FC4E2A",
+                    "#FB6A4A",
+                    "#CB181D",
+                    "#EF3B2C",
+                ]
+                _palette_v2 = [
+                    "#636EFA",
+                    "#1F77B4",
+                    "#00CC96",
+                    "#19D3F3",
+                    "#AB63FA",
+                    "#17BECF",
+                    "#2CA02C",
+                    "#7F7F7F",
+                    "#386CB0",
+                    "#3690C0",
+                    "#74C476",
+                    "#9E9AC8",
+                    "#6A51A3",
+                    "#807DBA",
+                    "#0570B0",
+                    "#4292C6",
+                ]
+
+                # Collect per-concurrency data for all models
+                per_model = []
+                for m, tp in common_model_tp:
+                    m_short = m.split("/")[-1] if "/" in m else m
+                    tp_s = f" (TP={int(tp)})" if pd.notna(tp) else ""
+                    lbl = f"{m_short}{tp_s}"
+
+                    d1 = df_v1[(df_v1["model"] == m) & (df_v1["TP"] == tp)]
+                    d2 = df_v2[(df_v2["model"] == m) & (df_v2["TP"] == tp)]
+
+                    c1 = set(d1["intended concurrency"].dropna().unique())
+                    c2 = set(d2["intended concurrency"].dropna().unique())
+                    cc = c1.intersection(c2)
+                    if agg == "geom_mean":
+                        cc = cc.intersection(selected_conc_set)
+                    if not cc:
+                        continue
+
+                    d1c = d1[d1["intended concurrency"].isin(cc)]
+                    d2c = d2[d2["intended concurrency"].isin(cc)]
+
+                    cc_sorted = sorted(cc)
+                    v1_by_c, v2_by_c = [], []
+                    for c in cc_sorted:
+                        r1 = d1c[d1c["intended concurrency"] == c][col].values
+                        r2 = d2c[d2c["intended concurrency"] == c][col].values
+                        v1_by_c.append(float(r1[0]) if len(r1) > 0 else None)
+                        v2_by_c.append(float(r2[0]) if len(r2) > 0 else None)
+
+                    if not any(v is not None for v in v1_by_c) and not any(
+                        v is not None for v in v2_by_c
+                    ):
+                        continue
+
+                    per_model.append(
+                        {
+                            "label": lbl,
+                            "conc": cc_sorted,
+                            "v1": v1_by_c,
+                            "v2": v2_by_c,
+                        }
+                    )
+
+                if not per_model:
+                    st.warning("No data available for this metric.")
+                    return
+
+                # Convert TTFT P95 from ms → seconds
+                if col == "ttft_p95":
+                    for md in per_model:
+                        md["v1"] = [
+                            v / 1000 if v is not None else None for v in md["v1"]
+                        ]
+                        md["v2"] = [
+                            v / 1000 if v is not None else None for v in md["v2"]
+                        ]
+
+                # Build a single interactive line chart with all models
+                fig = go.Figure()
+                for idx, md in enumerate(per_model):
+                    c_v1 = _palette_v1[idx % len(_palette_v1)]
+                    c_v2 = _palette_v2[idx % len(_palette_v2)]
+                    x_vals = [int(c) for c in md["conc"]]
+
+                    # Version 1 — solid line, warm color
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["v1"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({version_1})",
+                            line={"color": c_v1, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {version_1}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+                    # Version 2 — solid line, cool color
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["v2"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({version_2})",
+                            line={"color": c_v2, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {version_2}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+
+                # Y-axis unit
+                if "tok/sec" in col:
+                    y_title = "Tokens / sec"
+                elif "latency" in col.lower() or col == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                        "font": {"size": 11},
+                        "itemclick": "toggle",
+                        "itemdoubleclick": "toggleothers",
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": sorted(
+                            {int(c) for md in per_model for c in md["conc"]}
+                        ),
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"dlg_line_{metric_name}",
+                )
+
+                st.caption(
+                    "💡 **Tip:** Click a legend entry to toggle it. "
+                    "Double-click to isolate a single trace. "
+                    f"Warm colors (reds/oranges) = **{version_1}**, "
+                    f"cool colors (blues/greens) = **{version_2}**."
+                )
+
+                if agg == "geom_mean":
+                    conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
+                    st.caption(
+                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
+                        "(filtered by geometric mean concurrency selection)."
+                    )
+                else:
+                    st.caption(
+                        "ℹ️ Showing data across all common concurrency "
+                        "levels between the two versions."
+                    )
+
+            # --- Metric comparison buttons ---
+            st.markdown(
+                "**📊 Click a metric below to open a detailed comparison popup:**"
+            )
+            # Exclude "Peak Output Throughput" (same underlying graph as
+            # Output Throughput since both use output_tok/sec vs concurrency)
+            btn_metrics = [m for m in metrics_config if m != "Peak Output Throughput"]
+            btn_cols = st.columns(len(btn_metrics))
+            for i, m_name in enumerate(btn_metrics):
+                with btn_cols[i]:
+                    short = m_name.replace(" (Geometric Mean)", "").replace(
+                        "Throughput", "Tput"
+                    )
+                    if st.button(
+                        f"📊 {short}",
+                        key=f"cmp_btn_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.compare_versions_summary_expanded = True
+                        _show_metric_dialog(m_name)
+
+            st.markdown("")
 
             # Add hover tip note above table, aligned right
             st.markdown(
@@ -2431,19 +3033,19 @@ def render_compare_versions_summary_section(df):
                 ),
                 "Peak Output Throughput": st.column_config.TextColumn(
                     "Peak Output Throughput",
-                    help="Maximum output tokens/sec achieved, with the concurrency level where it occurred",
+                    help="Maximum output tokens/sec achieved. Shows peak concurrency for V1 vs V2 (e.g. peak@200 vs 100).",
                 ),
                 "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
                     "Output Throughput (Geometric Mean)",
-                    help="Geometric mean of output tok/sec across all concurrency levels",
+                    help="Geometric mean of output tok/sec across selected concurrency levels",
                 ),
                 "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
                     "Total Throughput (Geometric Mean)",
-                    help="Geometric mean of total (input + output) tok/sec across all concurrency levels",
+                    help="Geometric mean of total (input + output) tok/sec across selected concurrency levels",
                 ),
                 "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
                     "End-to-End Latency (Geometric Mean)",
-                    help="Geometric mean of request latency median across all concurrency levels",
+                    help="Geometric mean of request latency median across selected concurrency levels",
                 ),
                 "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
                     "TTFT P95 (Geometric Mean)",
@@ -2618,6 +3220,785 @@ def render_compare_versions_summary_section(df):
                             version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
                                 v1_itl, v2_itl, False, "P95 ITL"
+                            ),
+                        },
+                    ]
+
+                    detail_df = pd.DataFrame(detail_rows)
+                    st.dataframe(
+                        detail_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        else:
+            st.info("No comparison data available for the selected filters.")
+
+
+def render_compare_models_section(filtered_df, selected_profile):
+    """⚖️ Compare Models Section - Compare two models across multiple metrics (Custom ISL/OSL only)."""
+    if selected_profile != "Custom":
+        return
+
+    if "compare_models_expanded" not in st.session_state:
+        st.session_state.compare_models_expanded = False
+
+    with st.expander(
+        "⚖️ Compare Models",
+        expanded=st.session_state.compare_models_expanded,
+    ):
+        st.markdown(
+            "💡 **Compare performance between two models across all versions and metrics.**"
+        )
+
+        available_models = sorted(filtered_df["model"].unique().tolist())
+
+        if len(available_models) < 2:
+            st.warning(
+                "⚠️ Need at least 2 models in the filtered data to compare. "
+                "Please adjust your filters."
+            )
+            return
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            model_1 = st.selectbox(
+                "Select Model 1 (Baseline)",
+                options=available_models,
+                index=0,
+                key="compare_models_m1",
+                on_change=keep_expander_open,
+                args=("compare_models_expanded",),
+            )
+
+        with col2:
+            model_2_options = [m for m in available_models if m != model_1]
+            model_2 = (
+                st.selectbox(
+                    "Select Model 2 (Comparison)",
+                    options=model_2_options,
+                    index=0 if model_2_options else None,
+                    key="compare_models_m2",
+                    on_change=keep_expander_open,
+                    args=("compare_models_expanded",),
+                )
+                if model_2_options
+                else None
+            )
+
+        if not model_2:
+            st.warning("⚠️ Please select a second model to compare.")
+            return
+
+        df_m1 = filtered_df[filtered_df["model"] == model_1].copy()
+        df_m2 = filtered_df[filtered_df["model"] == model_2].copy()
+
+        if df_m1.empty or df_m2.empty:
+            st.warning(
+                "⚠️ No data available for one of the selected models with the current filters."
+            )
+            return
+
+        # Find common version+TP combinations between both models
+        m1_version_tp = set(zip(df_m1["version"].tolist(), df_m1["TP"].tolist()))
+        m2_version_tp = set(zip(df_m2["version"].tolist(), df_m2["TP"].tolist()))
+        common_version_tp = sorted(m1_version_tp.intersection(m2_version_tp))
+
+        if not common_version_tp:
+            st.warning(
+                "⚠️ No common version+TP combinations found between the two models "
+                "with the current filters."
+            )
+            return
+
+        # Collect the union of all common concurrency levels across version+TP combos
+        all_common_concurrencies: set = set()
+        for version, tp in common_version_tp:
+            m1_conc = set(
+                df_m1[(df_m1["version"] == version) & (df_m1["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            m2_conc = set(
+                df_m2[(df_m2["version"] == version) & (df_m2["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            all_common_concurrencies.update(m1_conc.intersection(m2_conc))
+
+        all_common_concurrencies_sorted = sorted(
+            int(c) for c in all_common_concurrencies
+        )
+
+        if all_common_concurrencies_sorted:
+            conc_key = f"compare_models_conc_{model_1}_{model_2}"
+            selected_concurrencies = st.multiselect(
+                "Select Concurrency Level(s) for Geometric Mean",
+                options=all_common_concurrencies_sorted,
+                default=all_common_concurrencies_sorted,
+                key=conc_key,
+                on_change=keep_expander_open,
+                args=("compare_models_expanded",),
+                help=(
+                    "Choose which concurrency levels to include in geometric mean calculations. "
+                    "Only concurrency levels common to both models are shown. "
+                    "Peak throughput always uses all available concurrency levels."
+                ),
+            )
+            if not selected_concurrencies:
+                st.warning("⚠️ Please select at least one concurrency level.")
+                return
+            selected_conc_set = set(selected_concurrencies)
+            st.caption(
+                f"ℹ️ Geometric mean metrics use concurrency levels: "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"Peak throughput uses all common concurrency levels."
+            )
+        else:
+            selected_conc_set = set()
+
+        model_1_short = model_1.split("/")[-1] if "/" in model_1 else model_1
+        model_2_short = model_2.split("/")[-1] if "/" in model_2 else model_2
+
+        title_col, popover_col = st.columns([5, 1])
+        with title_col:
+            st.markdown(f"### Comparing: {model_1_short} vs {model_2_short}")
+        with popover_col:
+            with st.popover("ℹ️ How are these calculated?"):
+                st.markdown("""
+                **Geometric Mean Change Calculation:**
+
+                *Step 1: Convert % changes to Growth Factors*
+                - Formula: `growth_factor = 1 + (% change / 100)`
+
+                *Step 2: Compute Geometric Mean of Growth Factors*
+                - Multiply all growth factors together, then take the nth root
+
+                *Step 3: Convert back to % change*
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
+
+                *Why use Geometric Mean?*
+                - Arithmetic mean of +100% and -50% = +25% (misleading!)
+                - Geometric mean: (2.0 x 0.5)^0.5 - 1 = 0% (correct)
+                - Better for ratios/percentages because it respects multiplicative relationships
+
+                **Peak Change Calculation:**
+                - **For Throughput**: `((Model 1 Max - Model 2 Max) / Model 2 Max) x 100`
+                - **For Latency**: Compares latency values at the concurrency where max throughput occurs
+
+                **How to Interpret:**
+                - **+X%** means Model 1's metric value is X% **higher** than Model 2's
+                - **-X%** means Model 1's metric value is X% **lower** than Model 2's
+
+                | Metric Type | +X% means | -X% means |
+                |-------------|-----------|-----------|
+                | **Throughput** | M1 is X% faster | M1 is X% slower |
+                | **Latency** | M1 is X% slower | M1 is X% faster |
+
+                **Status:** 🟢 Better (>=5% improvement) | 🟡 Similar (<5%) | 🔴 Worse (>=5% decline)
+                    """)
+
+        st.markdown(f"**Comparing:** {model_1_short} vs {model_2_short}")
+
+        metrics_config = {
+            "Peak Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "peak",
+                "higher_is_better": True,
+                "show_concurrency": True,
+            },
+            "Output Throughput (Geometric Mean)": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "Total Throughput (Geometric Mean)": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "End-to-End Latency (Geometric Mean)": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "TTFT P95 (Geometric Mean)": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "ITL P95 (Geometric Mean)": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+        }
+
+        def calculate_geom_mean(values):
+            """Calculate geometric mean of positive values."""
+            positive_values = [v for v in values if v > 0]
+            if not positive_values:
+                return None
+            return np.exp(np.mean(np.log(positive_values)))
+
+        def get_comparison_result(m1_data, m2_data, metric_config, user_conc_set):
+            """Calculate comparison between two models for a specific metric."""
+            column = metric_config["column"]
+            aggregation = metric_config["aggregation"]
+            higher_is_better = metric_config["higher_is_better"]
+
+            m1_concurrencies = set(m1_data["intended concurrency"].dropna().unique())
+            m2_concurrencies = set(m2_data["intended concurrency"].dropna().unique())
+            common_concurrencies = m1_concurrencies.intersection(m2_concurrencies)
+
+            if aggregation == "geom_mean":
+                common_concurrencies = common_concurrencies.intersection(user_conc_set)
+
+            if not common_concurrencies:
+                return None, None, None, None, None
+
+            m1_common = m1_data[
+                m1_data["intended concurrency"].isin(common_concurrencies)
+            ]
+            m2_common = m2_data[
+                m2_data["intended concurrency"].isin(common_concurrencies)
+            ]
+
+            m1_values = m1_common[column].dropna().tolist()
+            m2_values = m2_common[column].dropna().tolist()
+
+            if not m1_values or not m2_values:
+                return None, None, None, None, None
+
+            if aggregation == "peak":
+                if higher_is_better:
+                    m1_val = max(m1_values)
+                    m2_val = max(m2_values)
+                    m1_peak_idx = m1_common[column].idxmax()
+                    m1_peak_conc = int(
+                        m1_common.loc[m1_peak_idx, "intended concurrency"]
+                    )
+                    m2_peak_idx = m2_common[column].idxmax()
+                    m2_peak_conc = int(
+                        m2_common.loc[m2_peak_idx, "intended concurrency"]
+                    )
+                else:
+                    m1_val = min(m1_values)
+                    m2_val = min(m2_values)
+                    m1_peak_idx = m1_common[column].idxmin()
+                    m1_peak_conc = int(
+                        m1_common.loc[m1_peak_idx, "intended concurrency"]
+                    )
+                    m2_peak_idx = m2_common[column].idxmin()
+                    m2_peak_conc = int(
+                        m2_common.loc[m2_peak_idx, "intended concurrency"]
+                    )
+            else:
+                m1_val = calculate_geom_mean(m1_values)
+                m2_val = calculate_geom_mean(m2_values)
+                m1_peak_conc = None
+                m2_peak_conc = None
+
+            if m1_val is None or m2_val is None or m2_val == 0:
+                return None, None, None, None, None
+
+            pct_diff = ((m1_val - m2_val) / m2_val) * 100
+            m1_better = pct_diff > 0 if higher_is_better else pct_diff < 0
+
+            return pct_diff, m1_better, m1_peak_conc, m2_peak_conc, abs(pct_diff) < 5
+
+        # Check for duplicate rows (same model/version/TP/concurrency)
+        dup_warnings = []
+        for _label, df_check, name in [
+            ("Model 1", df_m1, model_1_short),
+            ("Model 2", df_m2, model_2_short),
+        ]:
+            for version, tp in common_version_tp:
+                subset = df_check[
+                    (df_check["version"] == version) & (df_check["TP"] == tp)
+                ]
+                conc_counts = subset["intended concurrency"].value_counts()
+                dups = conc_counts[conc_counts > 1]
+                if not dups.empty:
+                    tp_s = f"TP={int(tp)}" if pd.notna(tp) else ""
+                    conc_list = ", ".join(str(int(c)) for c in sorted(dups.index))
+                    dup_warnings.append(
+                        f"**{name}** ({version} {tp_s}): duplicate rows at "
+                        f"concurrency {conc_list}"
+                    )
+        if dup_warnings:
+            st.warning(
+                "⚠️ **Duplicate data rows detected** — geometric mean results may be "
+                "skewed. Consider removing duplicates from the CSV.\n\n"
+                + "\n".join(f"- {w}" for w in dup_warnings)
+            )
+
+        # Build summary table data
+        summary_data = []
+
+        for version, tp in common_version_tp:
+            v_m1_data = df_m1[(df_m1["version"] == version) & (df_m1["TP"] == tp)]
+            v_m2_data = df_m2[(df_m2["version"] == version) & (df_m2["TP"] == tp)]
+
+            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+            row_data = {"Version": f"{version} {tp_str}"}
+
+            for metric_name, metric_config in metrics_config.items():
+                pct_diff, m1_better, m1_peak, m2_peak, is_similar = (
+                    get_comparison_result(
+                        v_m1_data, v_m2_data, metric_config, selected_conc_set
+                    )
+                )
+
+                if pct_diff is None:
+                    row_data[metric_name] = "N/A"
+                else:
+                    sign = "+" if pct_diff > 0 else ""
+                    if metric_config["show_concurrency"] and m1_peak is not None:
+                        cell_text = (
+                            f"{model_1_short} ({sign}{pct_diff:.1f}%) "
+                            f"peak@{m1_peak} vs {m2_peak}"
+                        )
+                    else:
+                        cell_text = f"{model_1_short} ({sign}{pct_diff:.1f}%)"
+
+                    if is_similar:
+                        color = "🟡"
+                    elif m1_better:
+                        color = "🟢"
+                    else:
+                        color = "🔴"
+
+                    row_data[metric_name] = f"{color} {cell_text}"
+
+            summary_data.append(row_data)
+
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+
+            # --- Metric comparison dialog (popup) ---
+            @st.dialog("Model Comparison — Metric Details", width="large")
+            def _show_model_metric_dialog(metric_name):
+                """Render a popup with interactive line graphs."""
+                mcfg = metrics_config[metric_name]
+                col = mcfg["column"]
+                agg = mcfg["aggregation"]
+
+                display_title = metric_name.replace(" (Geometric Mean)", "").replace(
+                    " (Peak)", ""
+                )
+                st.markdown(f"#### {display_title} vs Concurrency")
+                st.markdown(f"**{model_1_short}** vs **{model_2_short}**")
+
+                _palette_m1 = [
+                    "#EF553B",
+                    "#FF7F0E",
+                    "#D62728",
+                    "#E377C2",
+                    "#FF6692",
+                    "#FFA15A",
+                    "#FECB52",
+                    "#F0027F",
+                    "#BF5B17",
+                    "#E6550D",
+                    "#FD8D3C",
+                    "#FDAE6B",
+                    "#FC4E2A",
+                    "#FB6A4A",
+                    "#CB181D",
+                    "#EF3B2C",
+                ]
+                _palette_m2 = [
+                    "#636EFA",
+                    "#1F77B4",
+                    "#00CC96",
+                    "#19D3F3",
+                    "#AB63FA",
+                    "#17BECF",
+                    "#2CA02C",
+                    "#7F7F7F",
+                    "#386CB0",
+                    "#3690C0",
+                    "#74C476",
+                    "#9E9AC8",
+                    "#6A51A3",
+                    "#807DBA",
+                    "#0570B0",
+                    "#4292C6",
+                ]
+
+                per_version = []
+                for v, tp in common_version_tp:
+                    tp_s = f" (TP={int(tp)})" if pd.notna(tp) else ""
+                    lbl = f"{v}{tp_s}"
+
+                    d1 = df_m1[(df_m1["version"] == v) & (df_m1["TP"] == tp)]
+                    d2 = df_m2[(df_m2["version"] == v) & (df_m2["TP"] == tp)]
+
+                    c1 = set(d1["intended concurrency"].dropna().unique())
+                    c2 = set(d2["intended concurrency"].dropna().unique())
+                    cc = c1.intersection(c2)
+                    if agg == "geom_mean":
+                        cc = cc.intersection(selected_conc_set)
+                    if not cc:
+                        continue
+
+                    d1c = d1[d1["intended concurrency"].isin(cc)]
+                    d2c = d2[d2["intended concurrency"].isin(cc)]
+
+                    cc_sorted = sorted(cc)
+                    m1_by_c, m2_by_c = [], []
+                    for c in cc_sorted:
+                        r1 = d1c[d1c["intended concurrency"] == c][col].values
+                        r2 = d2c[d2c["intended concurrency"] == c][col].values
+                        m1_by_c.append(float(r1[0]) if len(r1) > 0 else None)
+                        m2_by_c.append(float(r2[0]) if len(r2) > 0 else None)
+
+                    if not any(v is not None for v in m1_by_c) and not any(
+                        v is not None for v in m2_by_c
+                    ):
+                        continue
+
+                    per_version.append(
+                        {
+                            "label": lbl,
+                            "conc": cc_sorted,
+                            "m1": m1_by_c,
+                            "m2": m2_by_c,
+                        }
+                    )
+
+                if not per_version:
+                    st.warning("No data available for this metric.")
+                    return
+
+                # Convert TTFT P95 from ms → seconds
+                if col == "ttft_p95":
+                    for md in per_version:
+                        md["m1"] = [
+                            v / 1000 if v is not None else None for v in md["m1"]
+                        ]
+                        md["m2"] = [
+                            v / 1000 if v is not None else None for v in md["m2"]
+                        ]
+
+                fig = go.Figure()
+                for idx, md in enumerate(per_version):
+                    c_m1 = _palette_m1[idx % len(_palette_m1)]
+                    c_m2 = _palette_m2[idx % len(_palette_m2)]
+                    x_vals = [int(c) for c in md["conc"]]
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["m1"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({model_1_short})",
+                            line={"color": c_m1, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {model_1_short}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["m2"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({model_2_short})",
+                            line={"color": c_m2, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {model_2_short}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+
+                if "tok/sec" in col:
+                    y_title = "Tokens / sec"
+                elif "latency" in col.lower() or col == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                        "font": {"size": 11},
+                        "itemclick": "toggle",
+                        "itemdoubleclick": "toggleothers",
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": sorted(
+                            {int(c) for md in per_version for c in md["conc"]}
+                        ),
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"cmp_models_dlg_line_{metric_name}",
+                )
+
+                st.caption(
+                    "💡 **Tip:** Click a legend entry to toggle it. "
+                    "Double-click to isolate a single trace. "
+                    f"Warm colors (reds/oranges) = **{model_1_short}**, "
+                    f"cool colors (blues/greens) = **{model_2_short}**."
+                )
+
+                if agg == "geom_mean":
+                    conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
+                    st.caption(
+                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
+                        "(filtered by geometric mean concurrency selection)."
+                    )
+                else:
+                    st.caption(
+                        "ℹ️ Showing data across all common concurrency "
+                        "levels between the two models."
+                    )
+
+            # --- Metric comparison buttons ---
+            st.markdown(
+                "**📊 Click a metric below to open a detailed comparison popup:**"
+            )
+            btn_metrics = [m for m in metrics_config if m != "Peak Output Throughput"]
+            btn_cols = st.columns(len(btn_metrics))
+            for i, m_name in enumerate(btn_metrics):
+                with btn_cols[i]:
+                    short = m_name.replace(" (Geometric Mean)", "").replace(
+                        "Throughput", "Tput"
+                    )
+                    if st.button(
+                        f"📊 {short}",
+                        key=f"cmp_models_btn_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.compare_models_expanded = True
+                        _show_model_metric_dialog(m_name)
+
+            st.markdown("")
+
+            st.markdown(
+                "<div style='text-align: right;'>"
+                "<span style='font-size: 0.85em; color: gray;'>"
+                "💡 <b>Tip:</b> Hover over column headers to see detailed descriptions."
+                "</span></div>",
+                unsafe_allow_html=True,
+            )
+
+            column_config = {
+                "Version": st.column_config.TextColumn(
+                    "Version",
+                    help="Version with tensor parallelism (TP) configuration",
+                ),
+                "Peak Output Throughput": st.column_config.TextColumn(
+                    "Peak Output Throughput",
+                    help="Maximum output tokens/sec achieved. Shows peak concurrency for M1 vs M2 (e.g. peak@200 vs 100).",
+                ),
+                "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Output Throughput (Geometric Mean)",
+                    help="Geometric mean of output tok/sec across selected concurrency levels",
+                ),
+                "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Total Throughput (Geometric Mean)",
+                    help="Geometric mean of total (input + output) tok/sec across selected concurrency levels",
+                ),
+                "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
+                    "End-to-End Latency (Geometric Mean)",
+                    help="Geometric mean of request latency median across selected concurrency levels",
+                ),
+                "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "TTFT P95 (Geometric Mean)",
+                    help="Geometric mean of Time-to-First-Token (P95) across selected concurrency levels",
+                ),
+                "ITL P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "ITL P95 (Geometric Mean)",
+                    help="Geometric mean of Inter-Token Latency (P95) across selected concurrency levels",
+                ),
+            }
+
+            st.dataframe(
+                summary_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+            )
+
+            st.markdown("---")
+            st.markdown(
+                f"**Legend:** "
+                f"🟢 {model_1_short} performs better than {model_2_short} | "
+                f"🔴 {model_1_short} performs worse than {model_2_short} | "
+                f"🟡 Similar Performance (< 5% difference)"
+            )
+
+            # Detailed version+TP comparison sections
+            st.markdown("---")
+            st.markdown("### 📋 Detailed Version Comparisons")
+            st.markdown("*Click on a version to see detailed metrics comparison*")
+
+            for idx, (version, tp) in enumerate(common_version_tp, 1):
+                v_m1_data = df_m1[(df_m1["version"] == version) & (df_m1["TP"] == tp)]
+                v_m2_data = df_m2[(df_m2["version"] == version) & (df_m2["TP"] == tp)]
+
+                tp_val = int(tp) if pd.notna(tp) else "N/A"
+
+                m1_concurrencies = set(
+                    v_m1_data["intended concurrency"].dropna().unique()
+                )
+                m2_concurrencies = set(
+                    v_m2_data["intended concurrency"].dropna().unique()
+                )
+                common_conc = m1_concurrencies.intersection(m2_concurrencies)
+
+                if not common_conc:
+                    continue
+
+                m1_common = v_m1_data[
+                    v_m1_data["intended concurrency"].isin(common_conc)
+                ]
+                m2_common = v_m2_data[
+                    v_m2_data["intended concurrency"].isin(common_conc)
+                ]
+
+                m1_peak_idx = m1_common["output_tok/sec"].idxmax()
+                m2_peak_idx = m2_common["output_tok/sec"].idxmax()
+
+                m1_peak_throughput = m1_common.loc[m1_peak_idx, "output_tok/sec"]
+                m2_peak_throughput = m2_common.loc[m2_peak_idx, "output_tok/sec"]
+                m1_peak_conc = int(m1_common.loc[m1_peak_idx, "intended concurrency"])
+                m2_peak_conc = int(m2_common.loc[m2_peak_idx, "intended concurrency"])
+
+                m1_total_throughput = m1_common.loc[m1_peak_idx, "total_tok/sec"]
+                m2_total_throughput = m2_common.loc[m2_peak_idx, "total_tok/sec"]
+
+                m1_e2e_latency = m1_common.loc[m1_peak_idx, "request_latency_median"]
+                m2_e2e_latency = m2_common.loc[m2_peak_idx, "request_latency_median"]
+
+                m1_ttft = m1_common.loc[m1_peak_idx, "ttft_p95"]
+                m2_ttft = m2_common.loc[m2_peak_idx, "ttft_p95"]
+
+                m1_itl = m1_common.loc[m1_peak_idx, "itl_p95"]
+                m2_itl = m2_common.loc[m2_peak_idx, "itl_p95"]
+
+                def format_value(val, unit="", decimals=0, round_up=False):
+                    """Format a numeric value with optional unit."""
+                    if pd.isna(val):
+                        return "N/A"
+                    if round_up:
+                        import math
+
+                        if decimals == 0:
+                            return f"~{int(math.ceil(val)):,}{unit}"
+                        else:
+                            factor = 10**decimals
+                            rounded_val = math.ceil(val * factor) / factor
+                            return f"~{rounded_val:,.{decimals}f}{unit}"
+                    if decimals == 0:
+                        return f"~{int(val):,}{unit}"
+                    return f"~{val:,.{decimals}f}{unit}"
+
+                def get_winner_text(m1_val, m2_val, higher_is_better, metric_name):
+                    """Generate winner text for a metric."""
+                    if pd.isna(m1_val) or pd.isna(m2_val) or m2_val == 0:
+                        return "N/A"
+
+                    pct_diff = ((m1_val - m2_val) / m2_val) * 100
+
+                    if higher_is_better:
+                        if pct_diff > 5:
+                            return f"{model_1_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                        elif pct_diff < -5:
+                            return f"{model_2_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                        else:
+                            return f"Similar (~{abs(pct_diff):.1f}% difference)"
+                    else:
+                        if pct_diff < -5:
+                            return f"{model_1_short} has {abs(pct_diff):.1f}% lower {metric_name}"
+                        elif pct_diff > 5:
+                            return f"{model_2_short} has {abs(pct_diff):.1f}% lower {metric_name}"
+                        else:
+                            return f"Similar (~{abs(pct_diff):.1f}% difference)"
+
+                with st.expander(f"{idx}. {version} (TP={tp_val})"):
+                    detail_rows = [
+                        {
+                            "Metric": "Peak Output Throughput (output tok/s)",
+                            model_1_short: f"{format_value(m1_peak_throughput)} tok/s at {m1_peak_conc} concurrent users",
+                            model_2_short: f"{format_value(m2_peak_throughput)} tok/s at {m2_peak_conc} concurrent users",
+                            "Difference/Winner": get_winner_text(
+                                m1_peak_throughput,
+                                m2_peak_throughput,
+                                True,
+                                "peak output throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Total Throughput (input + output tok/s)",
+                            model_1_short: f"{format_value(m1_total_throughput)} tok/s at {m1_peak_conc} concurrent users",
+                            model_2_short: f"{format_value(m2_total_throughput)} tok/s at {m2_peak_conc} concurrent users",
+                            "Difference/Winner": get_winner_text(
+                                m1_total_throughput,
+                                m2_total_throughput,
+                                True,
+                                "total throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Median E2E Latency at Peak Throughput",
+                            model_1_short: f"{format_value(m1_e2e_latency, 's', 0, round_up=True)}",
+                            model_2_short: f"{format_value(m2_e2e_latency, 's', 0, round_up=True)}",
+                            "Difference/Winner": get_winner_text(
+                                m1_e2e_latency, m2_e2e_latency, False, "E2E latency"
+                            ),
+                        },
+                        {
+                            "Metric": "TTFT P95 at Peak Throughput",
+                            model_1_short: f"{format_value(m1_ttft / 1000, 's', 2, round_up=True)}"
+                            if pd.notna(m1_ttft)
+                            else "N/A",
+                            model_2_short: f"{format_value(m2_ttft / 1000, 's', 2, round_up=True)}"
+                            if pd.notna(m2_ttft)
+                            else "N/A",
+                            "Difference/Winner": get_winner_text(
+                                m1_ttft, m2_ttft, False, "P95 TTFT"
+                            ),
+                        },
+                        {
+                            "Metric": "ITL P95 at Peak Throughput",
+                            model_1_short: f"{format_value(m1_itl, 'ms', 0, round_up=True)}",
+                            model_2_short: f"{format_value(m2_itl, 'ms', 0, round_up=True)}",
+                            "Difference/Winner": get_winner_text(
+                                m1_itl, m2_itl, False, "P95 ITL"
                             ),
                         },
                     ]
@@ -5313,8 +6694,17 @@ def render_header_with_theme_toggle():
 
 def render_confidentiality_notice():
     """Render the confidentiality notice."""
-    st.warning(
-        "⚠️ **CONFIDENTIAL**: Any data displayed here is only for internal use. If in doubt, please contact Ashish Kamra at #forum-psap."
+    st.markdown(
+        '<div style="background-color: rgba(255,165,0,0.12); border-left: 4px solid #ffa500; '
+        'padding: 8px 12px; border-radius: 4px; font-size: 0.90rem; line-height: 1.4;">'
+        "⚠️ <b>Performance Data Disclaimer</b> — Red Hat Confidential.<br>"
+        "<b>Sharing Policy:</b> Disclosure to third parties is permitted only under a signed NDA. "
+        "Public referencing, blogging, or external publication requires prior consultation and "
+        "approval from the PSAP Inference Team (Contact: @psap-inference on #forum-psap). "
+        "Users are encouraged to leverage these insights for internal analysis and guided "
+        "customer-facing support."
+        "</div>",
+        unsafe_allow_html=True,
     )
 
 
@@ -5343,8 +6733,8 @@ if previous_view != selected_view and previous_view is not None:
     # Reset all expander states when view changes
     st.session_state.performance_plots_expanded = False
     st.session_state.pareto_expanded = False
-    st.session_state.version_comparison_expanded = False
     st.session_state.compare_versions_summary_expanded = False
+    st.session_state.compare_models_expanded = False
     st.session_state.model_comparison_expanded = False
     st.session_state.runtime_configs_expanded = False
     st.session_state.energy_expanded = False
@@ -5481,10 +6871,8 @@ def main():
 
         if any([url_accelerators, url_models, url_versions, url_profile, url_tp_sizes]):
             preferred_versions = [
-                "RHAIIS-3.2.3",
-                "RHAIIS-3.2.5",
-                "vLLM-0.11.0",
-                "vLLM-0.11.2",
+                "RHAIIS-3.3",
+                "vLLM-0.13.0",
             ]
             available_versions = sorted(df["version"].unique().tolist())
             default_versions = [
@@ -5513,8 +6901,8 @@ def main():
                 url_profile
                 if url_profile
                 else (
-                    "Profile B: Variable Workload (512/2k)"
-                    if "Profile B: Variable Workload (512/2k)"
+                    "Profile A: Balanced (1k/1k)"
+                    if "Profile A: Balanced (1k/1k)"
                     in sorted(df["profile"].unique().tolist())
                     else (
                         sorted(df["profile"].unique().tolist())[0]
@@ -5531,10 +6919,8 @@ def main():
             st.session_state.use_url_filters = True
         else:
             preferred_versions = [
-                "RHAIIS-3.2.3",
-                "RHAIIS-3.2.5",
-                "vLLM-0.11.0",
-                "vLLM-0.11.2",
+                "RHAIIS-3.3",
+                "vLLM-0.13.0",
             ]
             available_versions = sorted(df["version"].unique().tolist())
             default_versions = [
@@ -5554,8 +6940,8 @@ def main():
             st.session_state.baseline_models = default_models
             st.session_state.baseline_versions = default_versions
             st.session_state.baseline_profile = (
-                "Profile B: Variable Workload (512/2k)"
-                if "Profile B: Variable Workload (512/2k)"
+                "Profile A: Balanced (1k/1k)"
+                if "Profile A: Balanced (1k/1k)"
                 in sorted(df["profile"].unique().tolist())
                 else (
                     sorted(df["profile"].unique().tolist())[0]
@@ -5588,10 +6974,13 @@ def main():
 
         # If no profile selected yet, determine the default that will be selected
         if not current_profile:
-            available_profiles = sorted(df["profile"].unique().tolist())
+            available_profiles_raw = sorted(df["profile"].unique().tolist())
+            available_profiles = [
+                p for p in available_profiles_raw if p != "Custom"
+            ] + (["Custom"] if "Custom" in available_profiles_raw else [])
 
-            # Default to Profile B (512/2k) when clearing or as fallback
-            default_profile = "Profile B: Variable Workload (512/2k)"
+            # Default to Profile A (1k/1k) when clearing or as fallback
+            default_profile = "Profile A: Balanced (1k/1k)"
 
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
@@ -5678,12 +7067,16 @@ def main():
         if selected_accelerators:
             temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
 
-        profiles = (
+        profiles_raw = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
         )
+        # Sort so "Custom" always comes last to avoid it being picked as profiles[0] fallback
+        profiles = [p for p in profiles_raw if p != "Custom"] + (
+            ["Custom"] if "Custom" in profiles_raw else []
+        )
 
-        # Default to Profile B (512/2k) when clearing or as fallback
-        default_profile = "Profile B: Variable Workload (512/2k)"
+        # Default to Profile A (1k/1k) when clearing or as fallback
+        default_profile = "Profile A: Balanced (1k/1k)"
 
         if st.session_state.get("clear_all_filters", False) or st.session_state.get(
             "filters_were_cleared", False
@@ -5716,17 +7109,35 @@ def main():
                 )
             )
 
+        # Initialize session state for profile key BEFORE the widget renders.
+        # This avoids the "double-click" issue caused by conflicting `index`
+        # and session state values — when both are sent to the frontend,
+        # a stale `index` (computed from baseline_profile which lags one
+        # render behind) can override the user's selection.
+        profile_key = f"profile_filter_{st.session_state.filter_change_key}"
+        if profile_key not in st.session_state:
+            # First render with this key — set the computed default
+            if profiles_default and profiles_default in profiles:
+                st.session_state[profile_key] = profiles_default
+            elif profiles:
+                st.session_state[profile_key] = (
+                    default_profile if default_profile in profiles else profiles[0]
+                )
+        elif st.session_state.get(profile_key) not in profiles and profiles:
+            # Stored value is no longer in the options (e.g. accelerators
+            # changed and the profile is no longer available) — reset
+            st.session_state[profile_key] = (
+                profiles_default
+                if profiles_default and profiles_default in profiles
+                else (default_profile if default_profile in profiles else profiles[0])
+            )
+
         selected_profile = (
             st.selectbox(
                 "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                 profiles,
-                index=(
-                    profiles.index(profiles_default)
-                    if profiles_default in profiles
-                    else 0
-                ),
                 format_func=clean_profile_name,
-                key=f"profile_filter_{st.session_state.filter_change_key}",
+                key=profile_key,
             )
             if profiles
             else None
@@ -5924,7 +7335,7 @@ def main():
 
         with btn_col1:
             if st.button(
-                "🔄 Reset to Defaults", help="Reset filters to system/URL defaults"
+                "↩ Reset to Defaults", help="Reset filters to system/URL defaults"
             ):
                 st.session_state.clear_all_filters = False
                 st.session_state.filters_were_cleared = False
@@ -5935,7 +7346,6 @@ def main():
                 # Close all expanders when resetting filters
                 st.session_state.performance_plots_expanded = False
                 st.session_state.model_comparison_expanded = False
-                st.session_state.version_comparison_expanded = False
                 st.session_state.runtime_configs_expanded = False
                 st.session_state.energy_expanded = False
                 # Reset filter state tracking
@@ -5953,7 +7363,6 @@ def main():
                 # Close all expanders when clearing filters
                 st.session_state.performance_plots_expanded = False
                 st.session_state.model_comparison_expanded = False
-                st.session_state.version_comparison_expanded = False
                 st.session_state.runtime_configs_expanded = False
                 st.session_state.energy_expanded = False
                 # Reset filter state tracking
@@ -6120,7 +7529,7 @@ def main():
     ):
         st.session_state.performance_plots_expanded = False
         st.session_state.model_comparison_expanded = False
-        st.session_state.version_comparison_expanded = False
+        st.session_state.compare_models_expanded = False
         st.session_state.runtime_configs_expanded = False
         st.session_state.energy_expanded = False
 
@@ -6137,431 +7546,28 @@ def main():
         st.markdown("---")
 
         render_performance_plots_section(filtered_df)
-        render_pareto_plots_section()
+        render_dataset_representation_section(selected_profile)
+        if selected_profile != "Custom":
+            render_pareto_plots_section(preloaded_df=df)
+        else:
+            render_custom_pareto_tradeoff_section(filtered_df)
 
-        def analyze_performance_changes(df):
-            comparison_data = []
-
-            def get_version_type(version):
-                return version.split("-")[0] if "-" in version else version
-
-            df_with_type = df.copy()
-            df_with_type["version_type"] = df_with_type["version"].apply(
-                get_version_type
+        if selected_profile != "Custom":
+            render_model_performance_comparison_section(
+                filtered_df, accelerator_color_map
             )
-
-            for (
-                model,
-                accelerator,
-                tp,
-                profile,
-                version_type,
-            ), group in df_with_type.groupby(
-                ["model", "accelerator", "TP", "profile", "version_type"]
-            ):
-                if len(group["version"].unique()) < 2:
-                    continue
-
-                versions = sorted(group["version"].unique())
-
-                # Compare each version with the previous one (within same type)
-                for i in range(1, len(versions)):
-                    older_version = versions[i - 1]
-                    newer_version = versions[i]
-
-                    older_version_data = group[group["version"] == older_version]
-                    newer_version_data = group[group["version"] == newer_version]
-
-                    # Find common concurrency levels between versions
-                    older_concurrencies = set(
-                        older_version_data["intended concurrency"].dropna()
-                    )
-                    newer_concurrencies = set(
-                        newer_version_data["intended concurrency"].dropna()
-                    )
-                    common_concurrencies = older_concurrencies.intersection(
-                        newer_concurrencies
-                    )
-
-                    if not common_concurrencies:
-                        continue
-
-                    # Calculate performance changes for each common concurrency level
-                    metric_changes = {
-                        "throughput": [],
-                        "ttft": [],
-                        "itl": [],
-                        "efficiency": [],
-                    }
-                    metric_values = {
-                        "throughput_older": [],
-                        "throughput_newer": [],
-                        "ttft_older": [],
-                        "ttft_newer": [],
-                        "itl_older": [],
-                        "itl_newer": [],
-                        "efficiency_older": [],
-                        "efficiency_newer": [],
-                    }
-
-                    # Store all concurrency-level data for peak analysis
-                    concurrency_data = []
-
-                    for concurrency in common_concurrencies:
-                        older_row = older_version_data[
-                            older_version_data["intended concurrency"] == concurrency
-                        ]
-                        newer_row = newer_version_data[
-                            newer_version_data["intended concurrency"] == concurrency
-                        ]
-
-                        if older_row.empty or newer_row.empty:
-                            continue
-
-                        older_row = older_row.iloc[0]
-                        newer_row = newer_row.iloc[0]
-
-                        # Store concurrency data for peak analysis
-                        concurrency_data.append(
-                            {
-                                "concurrency": concurrency,
-                                "older_throughput": (
-                                    older_row["output_tok/sec"]
-                                    if pd.notna(older_row["output_tok/sec"])
-                                    else None
-                                ),
-                                "newer_throughput": (
-                                    newer_row["output_tok/sec"]
-                                    if pd.notna(newer_row["output_tok/sec"])
-                                    else None
-                                ),
-                                "older_ttft": (
-                                    older_row["ttft_p95"]
-                                    if pd.notna(older_row["ttft_p95"])
-                                    else None
-                                ),
-                                "newer_ttft": (
-                                    newer_row["ttft_p95"]
-                                    if pd.notna(newer_row["ttft_p95"])
-                                    else None
-                                ),
-                                "older_itl": (
-                                    older_row["itl_p95"]
-                                    if pd.notna(older_row["itl_p95"])
-                                    else None
-                                ),
-                                "newer_itl": (
-                                    newer_row["itl_p95"]
-                                    if pd.notna(newer_row["itl_p95"])
-                                    else None
-                                ),
-                                "older_efficiency": (
-                                    older_row["efficiency_ratio"]
-                                    if pd.notna(older_row["efficiency_ratio"])
-                                    else None
-                                ),
-                                "newer_efficiency": (
-                                    newer_row["efficiency_ratio"]
-                                    if pd.notna(newer_row["efficiency_ratio"])
-                                    else None
-                                ),
-                            }
-                        )
-
-                        # Throughput comparison
-                        if (
-                            pd.notna(older_row["output_tok/sec"])
-                            and pd.notna(newer_row["output_tok/sec"])
-                            and older_row["output_tok/sec"] > 0
-                        ):
-                            change = (
-                                (
-                                    newer_row["output_tok/sec"]
-                                    - older_row["output_tok/sec"]
-                                )
-                                / older_row["output_tok/sec"]
-                            ) * 100
-                            metric_changes["throughput"].append(change)
-                            metric_values["throughput_older"].append(
-                                older_row["output_tok/sec"]
-                            )
-                            metric_values["throughput_newer"].append(
-                                newer_row["output_tok/sec"]
-                            )
-
-                        # TTFT comparison
-                        if (
-                            pd.notna(older_row["ttft_p95"])
-                            and pd.notna(newer_row["ttft_p95"])
-                            and older_row["ttft_p95"] > 0
-                        ):
-                            change = (
-                                (newer_row["ttft_p95"] - older_row["ttft_p95"])
-                                / older_row["ttft_p95"]
-                            ) * 100
-                            metric_changes["ttft"].append(change)
-                            metric_values["ttft_older"].append(older_row["ttft_p95"])
-                            metric_values["ttft_newer"].append(newer_row["ttft_p95"])
-
-                        # ITL comparison
-                        if (
-                            pd.notna(older_row["itl_p95"])
-                            and pd.notna(newer_row["itl_p95"])
-                            and older_row["itl_p95"] > 0
-                        ):
-                            change = (
-                                (newer_row["itl_p95"] - older_row["itl_p95"])
-                                / older_row["itl_p95"]
-                            ) * 100
-                            metric_changes["itl"].append(change)
-                            metric_values["itl_older"].append(older_row["itl_p95"])
-                            metric_values["itl_newer"].append(newer_row["itl_p95"])
-
-                        # Efficiency comparison
-                        if (
-                            pd.notna(older_row["efficiency_ratio"])
-                            and pd.notna(newer_row["efficiency_ratio"])
-                            and older_row["efficiency_ratio"] > 0
-                        ):
-                            change = (
-                                (
-                                    newer_row["efficiency_ratio"]
-                                    - older_row["efficiency_ratio"]
-                                )
-                                / older_row["efficiency_ratio"]
-                            ) * 100
-                            metric_changes["efficiency"].append(change)
-                            metric_values["efficiency_older"].append(
-                                older_row["efficiency_ratio"]
-                            )
-                            metric_values["efficiency_newer"].append(
-                                newer_row["efficiency_ratio"]
-                            )
-
-                    # Find peak values from same concurrency level for "(Old → New)" display
-                    def find_peak_from_same_concurrency(
-                        concurrency_data,
-                        metric_older,
-                        metric_newer,
-                        higher_is_better=True,
-                    ):
-                        """Find peak values from the same concurrency level for both older and newer versions."""
-                        valid_data = [
-                            d
-                            for d in concurrency_data
-                            if d[metric_older] is not None
-                            and d[metric_newer] is not None
-                        ]
-
-                        if not valid_data:
-                            return None, None, None
-
-                        if higher_is_better:
-                            # For throughput: find max older, then check if newer at same concurrency is available
-                            older_peak = max(valid_data, key=lambda x: x[metric_older])
-                            # Check if newer has data at the same concurrency level
-                            same_concurrency_newer = next(
-                                (
-                                    d[metric_newer]
-                                    for d in valid_data
-                                    if d["concurrency"] == older_peak["concurrency"]
-                                ),
-                                None,
-                            )
-
-                            if same_concurrency_newer is not None:
-                                return (
-                                    older_peak[metric_older],
-                                    same_concurrency_newer,
-                                    older_peak["concurrency"],
-                                )
-                        else:
-                            # For latency: find min older, then check if newer at same concurrency is available
-                            older_peak = min(valid_data, key=lambda x: x[metric_older])
-                            # Check if newer has data at the same concurrency level
-                            same_concurrency_newer = next(
-                                (
-                                    d[metric_newer]
-                                    for d in valid_data
-                                    if d["concurrency"] == older_peak["concurrency"]
-                                ),
-                                None,
-                            )
-
-                            if same_concurrency_newer is not None:
-                                return (
-                                    older_peak[metric_older],
-                                    same_concurrency_newer,
-                                    older_peak["concurrency"],
-                                )
-
-                        return None, None, None
-
-                    # Find peak comparisons from same concurrency levels
-                    peak_comparisons = {}
-
-                    # Throughput (higher is better)
-                    (
-                        throughput_older_peak,
-                        throughput_newer_peak,
-                        throughput_peak_concurrency,
-                    ) = find_peak_from_same_concurrency(
-                        concurrency_data,
-                        "older_throughput",
-                        "newer_throughput",
-                        higher_is_better=True,
-                    )
-                    if throughput_older_peak is not None:
-                        peak_comparisons["throughput_peak_older"] = (
-                            throughput_older_peak
-                        )
-                        peak_comparisons["throughput_peak_newer"] = (
-                            throughput_newer_peak
-                        )
-                        peak_comparisons["throughput_peak_concurrency"] = (
-                            throughput_peak_concurrency
-                        )
-
-                    # TTFT (lower is better)
-                    ttft_older_peak, ttft_newer_peak, ttft_peak_concurrency = (
-                        find_peak_from_same_concurrency(
-                            concurrency_data,
-                            "older_ttft",
-                            "newer_ttft",
-                            higher_is_better=False,
-                        )
-                    )
-                    if ttft_older_peak is not None:
-                        peak_comparisons["ttft_peak_older"] = ttft_older_peak
-                        peak_comparisons["ttft_peak_newer"] = ttft_newer_peak
-                        peak_comparisons["ttft_peak_concurrency"] = (
-                            ttft_peak_concurrency
-                        )
-
-                    # ITL (lower is better)
-                    itl_older_peak, itl_newer_peak, itl_peak_concurrency = (
-                        find_peak_from_same_concurrency(
-                            concurrency_data,
-                            "older_itl",
-                            "newer_itl",
-                            higher_is_better=False,
-                        )
-                    )
-                    if itl_older_peak is not None:
-                        peak_comparisons["itl_peak_older"] = itl_older_peak
-                        peak_comparisons["itl_peak_newer"] = itl_newer_peak
-                        peak_comparisons["itl_peak_concurrency"] = itl_peak_concurrency
-
-                    # Aggregate the changes (use median to be robust to outliers)
-                    metrics_comparison = {}
-                    metrics_comparison["concurrency_levels_compared"] = len(
-                        common_concurrencies
-                    )
-                    metrics_comparison["common_concurrencies"] = sorted(
-                        common_concurrencies
-                    )
-
-                    # Helper function to calculate geometric mean of percentage changes
-                    def calc_geom_mean_change(changes):
-                        """Calculate geometric mean of percentage changes using growth factors."""
-                        if not changes:
-                            return None
-                        # Filter out changes that would result in non-positive growth factors
-                        valid_changes = [c for c in changes if c > -100]
-                        if not valid_changes:
-                            return 0
-                        # Convert to growth factors, compute geometric mean, convert back
-                        growth_factors = [1 + (c / 100) for c in valid_changes]
-                        geom_mean_factor = np.prod(growth_factors) ** (
-                            1 / len(growth_factors)
-                        )
-                        return (geom_mean_factor - 1) * 100
-
-                    if metric_changes["throughput"]:
-                        metrics_comparison["throughput_change"] = np.median(
-                            metric_changes["throughput"]
-                        )
-                        metrics_comparison["throughput_geom_mean_change"] = (
-                            calc_geom_mean_change(metric_changes["throughput"])
-                        )
-                        metrics_comparison["throughput_older"] = np.median(
-                            metric_values["throughput_older"]
-                        )
-                        metrics_comparison["throughput_newer"] = np.median(
-                            metric_values["throughput_newer"]
-                        )
-
-                    if metric_changes["ttft"]:
-                        metrics_comparison["ttft_change"] = np.median(
-                            metric_changes["ttft"]
-                        )
-                        metrics_comparison["ttft_geom_mean_change"] = (
-                            calc_geom_mean_change(metric_changes["ttft"])
-                        )
-                        metrics_comparison["ttft_older"] = np.median(
-                            metric_values["ttft_older"]
-                        )
-                        metrics_comparison["ttft_newer"] = np.median(
-                            metric_values["ttft_newer"]
-                        )
-
-                    if metric_changes["itl"]:
-                        metrics_comparison["itl_change"] = np.median(
-                            metric_changes["itl"]
-                        )
-                        metrics_comparison["itl_geom_mean_change"] = (
-                            calc_geom_mean_change(metric_changes["itl"])
-                        )
-                        metrics_comparison["itl_older"] = np.median(
-                            metric_values["itl_older"]
-                        )
-                        metrics_comparison["itl_newer"] = np.median(
-                            metric_values["itl_newer"]
-                        )
-
-                    if metric_changes["efficiency"]:
-                        metrics_comparison["efficiency_change"] = np.median(
-                            metric_changes["efficiency"]
-                        )
-                        metrics_comparison["efficiency_geom_mean_change"] = (
-                            calc_geom_mean_change(metric_changes["efficiency"])
-                        )
-                        metrics_comparison["efficiency_older"] = np.median(
-                            metric_values["efficiency_older"]
-                        )
-                        metrics_comparison["efficiency_newer"] = np.median(
-                            metric_values["efficiency_newer"]
-                        )
-
-                    comparison_data.append(
-                        {
-                            "model": model.split("/")[-1] if "/" in model else model,
-                            "accelerator": accelerator,
-                            "tp": tp,
-                            "profile": (
-                                profile.split(":")[0] if ":" in profile else profile
-                            ),
-                            "version_type": version_type,
-                            "older_version": older_version,
-                            "newer_version": newer_version,
-                            **metrics_comparison,
-                            **peak_comparisons,
-                        }
-                    )
-
-            return pd.DataFrame(comparison_data)
-
-        render_model_performance_comparison_section(filtered_df, accelerator_color_map)
-        render_version_comparison_section(filtered_df)
         render_compare_versions_summary_section(
             df
         )  # Uses full df for independent filtering
-        render_regression_analysis_section(filtered_df, analyze_performance_changes)
-        render_cost_analysis_section(filtered_df, accelerator_color_map)
-        render_energy_carbon_methodology_section(
-            df
-        )  # Pass full df - energy section has independent filters
-        # render_performance_rankings_section(filtered_df)
+        render_compare_models_section(filtered_df, selected_profile)
+        if selected_profile != "Custom":
+            render_performance_trends_section(
+                df
+            )  # Uses full df for independent filtering
+            render_cost_analysis_section(filtered_df, accelerator_color_map)
+            render_energy_carbon_methodology_section(
+                df
+            )  # Pass full df - energy section has independent filters
         render_runtime_configs_section(filtered_df)
         render_filtered_data_section(filtered_df)
 
