@@ -151,6 +151,7 @@ def process_sharegpt():
             repo_id="anon8231489123/ShareGPT_Vicuna_unfiltered",
             filename="ShareGPT_V3_unfiltered_cleaned_split.json",
             repo_type="dataset",
+            revision="192ab2185289094fc556ec8ce5ce1e8e587154ca",
         )
 
         with open(json_path, encoding="utf-8") as f:
