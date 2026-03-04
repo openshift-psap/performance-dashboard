@@ -15,6 +15,15 @@ __pycache__/
 # Allow specific CSV files that should be version controlled
 !mlperf-data/mlperf-*.csv
 !mlperf-data/summaries/*.csv
+!datasets/summaries/*.csv
+
+# Ignore large original dataset files in datasets/ (pkl, parquet, npy)
+datasets/**/*.pkl
+datasets/**/*.parquet
+datasets/**/*.npy
+datasets/**/*.md5
+!datasets/summaries/*.csv
+!datasets/generate_summaries.py
 
 mlperf-datasets/
 

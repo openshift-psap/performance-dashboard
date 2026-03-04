@@ -8,6 +8,13 @@ mlperf-data/**/*.json
 mlperf-data/**/*.md5
 mlperf-data/original/
 
+# Ignore large original dataset files in datasets/ (only summaries are needed)
+datasets/**/*.pkl
+datasets/**/*.parquet
+datasets/**/*.npy
+datasets/**/*.md5
+datasets/**/LICENSE*
+
 # Python cache
 __pycache__/
 *.py[cod]
