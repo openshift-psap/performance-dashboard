@@ -139,6 +139,86 @@ def get_app_css():
         display: flex !important;
         align-items: center !important;
     }
+
+    /* In-page section navigation: sticky column, just below the divider line */
+    [data-testid="stColumn"]:has(.section-nav-marker) > div {
+        position: sticky;
+        top: 3rem;
+        height: fit-content;
+        align-self: flex-start;
+        margin-top: -1.5rem;
+    }
+
+
+    /* Section nav: container — transparent bg with visible border */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] {
+        gap: 0 !important;
+        border: 1px solid rgba(151, 166, 195, 0.25);
+        border-radius: 6px;
+        overflow: hidden;
+        background: transparent;
+    }
+
+    /* Section nav: each row */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label {
+        display: flex !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        padding: 0.75rem 1rem !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        font-size: 0.88rem !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease, border-left 0.15s ease !important;
+        border-bottom: 1px solid rgba(151, 166, 195, 0.18) !important;
+        border-left: 3px solid transparent !important;
+    }
+
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label:last-child {
+        border-bottom: none !important;
+    }
+
+    /* Hide radio circle indicator — target only the div that does NOT contain text */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label > div:not(:has([data-testid="stMarkdownContainer"])):not([data-testid="stMarkdownContainer"]) {
+        display: none !important;
+    }
+
+    /* Text container: fill width and lay out for chevron */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label [data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        flex: 1;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    /* Chevron on the right side */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label [data-testid="stMarkdownContainer"]::after {
+        content: "›";
+        font-size: 1.2rem;
+        opacity: 0.4;
+        padding-left: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    /* Hover state */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label:hover {
+        background-color: rgba(151, 166, 195, 0.08) !important;
+    }
+
+    /* Selected/active nav item — cover both possible Streamlit attributes */
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label[data-checked="true"],
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label[aria-checked="true"],
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label:has(input:checked) {
+        border-left: 3px solid #4a9eff !important;
+        background-color: rgba(74, 158, 255, 0.12) !important;
+        font-weight: 600 !important;
+    }
+
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label[data-checked="true"] [data-testid="stMarkdownContainer"]::after,
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label[aria-checked="true"] [data-testid="stMarkdownContainer"]::after,
+    [data-testid="stColumn"]:has(.section-nav-marker) [role="radiogroup"] > label:has(input:checked) [data-testid="stMarkdownContainer"]::after {
+        opacity: 0.7;
+    }
     </style>
     """
 
@@ -366,8 +446,8 @@ def get_dark_mode_css():
         color: #fafafa !important;
     }
 
-    /* Override any remaining dark text */
-    * {
+    /* Override remaining text in main app area */
+    .stApp, .stApp p, .stApp span, .stApp label, .stApp div, .stApp li {
         color: #fafafa !important;
     }
 
@@ -405,7 +485,7 @@ def get_light_mode_css():
     }
 
     /* Override sidebar if present */
-    .css-1d391kg {
+    [data-testid="stSidebar"] {
         background-color: #f8f9fa !important;
     }
 
@@ -547,25 +627,7 @@ def get_light_mode_css():
         color: #262730 !important;
     }
 
-    /* Override expander headers and content - comprehensive */
-    .streamlit-expander {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    /* Target expander content area when expanded */
-    .streamlit-expanderContent {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    /* Target expander details content */
-    details[open] > div {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    /* Target all expander-related divs */
+    /* Override expander styling */
     [data-testid="stExpander"] {
         background-color: #ffffff !important;
         color: #262730 !important;
@@ -574,52 +636,17 @@ def get_light_mode_css():
         margin-bottom: 16px !important;
     }
 
-    [data-testid="stExpander"] > div {
+    [data-testid="stExpander"] > div,
+    [data-testid="stExpander"] details,
+    [data-testid="stExpander"] details > div,
+    [data-testid="stExpander"] details[open] > div,
+    [data-testid="stExpander"] details[open] > div > div {
         background-color: #ffffff !important;
         color: #262730 !important;
-    }
-
-    /* Target expander summary and content */
-    .stExpander > details {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    .stExpander > details > div {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    /* Override any dark backgrounds in expanded sections - force normal state */
-    .stExpander details[open] {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    .stExpander details[open] > div {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    .stExpander details[open] > div > div {
-        background-color: #ffffff !important;
-        color: #262730 !important;
-    }
-
-    /* Force all nested content in expanded sections */
-    .stExpander details[open] * {
-        background-color: transparent !important;
-        color: #262730 !important;
-    }
-
-    /* But maintain white backgrounds for main containers */
-    .stExpander details[open] > div,
-    .stExpander details[open] > div > div {
-        background-color: #ffffff !important;
     }
 
     /* Override dataframe */
-    .stDataFrame {
+    [data-testid="stDataFrame"] {
         background-color: #ffffff !important;
         color: #262730 !important;
         border: 1px solid #e1e5e9 !important;
@@ -627,7 +654,7 @@ def get_light_mode_css():
     }
 
     /* Override plots and charts within expanded sections */
-    .stPlotlyChart {
+    [data-testid="stPlotlyChart"] {
         background-color: #ffffff !important;
     }
 
@@ -717,29 +744,33 @@ def get_light_mode_css():
         background-color: transparent !important;
     }
 
-    /* Override info boxes and alerts within expanded sections */
-    .stInfo {
+    /* Override info boxes and alerts */
+    [data-testid="stAlert"][data-baseweb="notification"][kind="info"],
+    [data-testid="stNotification"][kind="info"] {
         background-color: #e7f3ff !important;
         color: #262730 !important;
         border: 1px solid #b3d9ff !important;
         border-radius: 6px !important;
     }
 
-    .stSuccess {
+    [data-testid="stAlert"][kind="success"],
+    [data-testid="stNotification"][kind="success"] {
         background-color: #d1f2d1 !important;
         color: #262730 !important;
         border: 1px solid #a3d977 !important;
         border-radius: 6px !important;
     }
 
-    .stWarning {
+    [data-testid="stAlert"][kind="warning"],
+    [data-testid="stNotification"][kind="warning"] {
         background-color: #fff3cd !important;
         color: #262730 !important;
         border: 1px solid #ffd93d !important;
         border-radius: 6px !important;
     }
 
-    .stError {
+    [data-testid="stAlert"][kind="error"],
+    [data-testid="stNotification"][kind="error"] {
         background-color: #f8d7da !important;
         color: #262730 !important;
         border: 1px solid #f1a7aa !important;
@@ -747,7 +778,7 @@ def get_light_mode_css():
     }
 
     /* Override code blocks */
-    .stCode {
+    [data-testid="stCode"] {
         background-color: #f8f9fa !important;
         color: #262730 !important;
         border: 1px solid #e1e5e9 !important;
@@ -770,12 +801,13 @@ def get_light_mode_css():
     }
 
     /* Override all containers and content areas */
+    [data-testid="stElementContainer"],
     .element-container {
         background-color: transparent !important;
     }
 
-    /* Override any remaining dark text */
-    * {
+    /* Override remaining text in main app area */
+    .stApp, .stApp p, .stApp span, .stApp label, .stApp div, .stApp li {
         color: #262730 !important;
     }
 
@@ -800,7 +832,7 @@ def get_light_mode_css():
     }
 
     /* Target buttons by their parent element */
-    div[data-testid="column"] button {
+    div[data-testid="stColumn"] button {
         background-color: #ffffff !important;
         color: #262730 !important;
         border: 1px solid #d1d5db !important;
