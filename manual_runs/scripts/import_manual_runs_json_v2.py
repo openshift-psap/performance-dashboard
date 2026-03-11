@@ -389,9 +389,7 @@ def main():
             if getattr(args, flag) is None:
                 missing.append(f"--{flag.replace('_', '-')}")
         if missing:
-            parser.error(
-                f"The following flags are required: {', '.join(missing)}"
-            )
+            parser.error(f"The following flags are required: {', '.join(missing)}")
 
     print(f"Processing {args.json_file}...")
 
@@ -471,6 +469,8 @@ def main():
                 "itl_mean",
                 "itl_p99",
                 "runtime_args",
+                "guidellm_start_time_ms",
+                "guidellm_end_time_ms",
                 "image_tag",
                 "guidellm_version",
             ]
