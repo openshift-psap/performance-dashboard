@@ -31,6 +31,7 @@ def process_benchmark_section(
     prefill_pod_count=None,
     decode_pod_count=None,
     router_config=None,
+    notes=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -175,6 +176,7 @@ def process_benchmark_section(
         "guidellm_end_time_ms": guidellm_end_time_ms,
         "image_tag": image_tag,
         "guidellm_version": guidellm_version,
+        "notes": notes,
     }
 
     return row
@@ -195,6 +197,7 @@ def parse_guidellm_json(
     prefill_pod_count=None,
     decode_pod_count=None,
     router_config=None,
+    notes=None,
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -370,6 +373,11 @@ def main():
         default=None,
         help="[llm-d] Router/endpoint picker configuration (YAML or JSON string)",
     )
+    parser.add_argument(
+        "--notes",
+        default=None,
+        help="[llm-d] Free-form note applied to every row (e.g., 'baseline run')",
+    )
 
     args = parser.parse_args()
 
@@ -408,6 +416,7 @@ def main():
         prefill_pod_count=args.prefill_pod_count,
         decode_pod_count=args.decode_pod_count,
         router_config=args.router_config,
+        notes=args.notes,
     )
 
     if new_data_df is not None and not new_data_df.empty:
@@ -473,6 +482,7 @@ def main():
                 "guidellm_end_time_ms",
                 "image_tag",
                 "guidellm_version",
+                "notes",
             ]
         else:
             fieldnames = [
