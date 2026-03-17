@@ -4,15 +4,34 @@ This module provides functionality to load, process, and visualize
 LLM-D benchmark results with disaggregated prefill/decode architecture.
 """
 
+import contextlib
 import io
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Literal, Optional
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
+
+# Set global Plotly template if not already set by main dashboard
+if "plotly_white_light" not in pio.templates:
+    _light_hover = go.layout.Template(
+        layout=go.Layout(
+            hoverlabel={
+                "bgcolor": "white",
+                "font_color": "#262730",
+                "bordercolor": "#d1d5db",
+            },
+        ),
+    )
+    pio.templates["plotly_white_light"] = pio.templates["plotly_white"]
+    pio.templates["plotly_white_light"].layout.update(_light_hover.layout)
+    pio.templates.default = "plotly_white_light"
 
 # Configure logging
 logging.basicConfig(
@@ -69,24 +88,89 @@ def _read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.Da
     return pd.read_csv(io.StringIO(csv_content))
 
 
-def assign_profile(row):
-    """Assigns a human-readable profile name based on token counts."""
-    prompt_toks = row["prompt toks"]
-    output_toks = row["output toks"]
-    if prompt_toks == 1000 and output_toks == 1000:
-        return "Profile A: Balanced (1k/1k)"
-    elif prompt_toks == 512 and output_toks == 2048:
-        return "Profile B: Variable Workload (512/2k)"
-    elif prompt_toks == 2048 and output_toks == 128:
-        return "Profile C: Large Prompt (2k/128)"
-    elif prompt_toks == 32000 and output_toks == 256:
-        return "Profile D: Prefill Heavy (32k/256)"
-    elif prompt_toks == 8000 and output_toks == 1000:
-        return "Profile E: Prefill Heavy (8k/1k)"
-    elif prompt_toks == 1000 and output_toks == 100:
-        return "Profile F: Prefill Heavy (1k/100)"
+def _geometric_mean(values):
+    """Geometric mean of positive values. Accepts a list or pandas Series."""
+    if hasattr(values, "values"):
+        positive = values[values > 0].values
     else:
+        positive = [v for v in values if v > 0]
+    if len(positive) == 0:
+        return None
+    return float(np.exp(np.mean(np.log(positive))))
+
+
+def _compare_two_datasets(data_a, data_b, metric_config, user_conc_set):
+    """Compare two DataFrames on a metric.
+
+    Returns (pct_diff, a_is_better, a_peak_conc, b_peak_conc, is_similar).
+    """
+    column = metric_config["column"]
+    aggregation = metric_config["aggregation"]
+    higher_is_better = metric_config["higher_is_better"]
+
+    a_conc = set(data_a["intended concurrency"].dropna().unique())
+    b_conc = set(data_b["intended concurrency"].dropna().unique())
+    common = a_conc.intersection(b_conc)
+
+    if aggregation == "geom_mean":
+        common = common.intersection(user_conc_set)
+
+    if not common:
+        return None, None, None, None, None
+
+    a_common = data_a[data_a["intended concurrency"].isin(common)]
+    b_common = data_b[data_b["intended concurrency"].isin(common)]
+
+    a_vals = a_common[column].dropna().tolist()
+    b_vals = b_common[column].dropna().tolist()
+
+    if not a_vals or not b_vals:
+        return None, None, None, None, None
+
+    if aggregation == "peak":
+        if higher_is_better:
+            a_val, b_val = max(a_vals), max(b_vals)
+            a_peak_conc = int(
+                a_common.loc[a_common[column].idxmax(), "intended concurrency"]
+            )
+            b_peak_conc = int(
+                b_common.loc[b_common[column].idxmax(), "intended concurrency"]
+            )
+        else:
+            a_val, b_val = min(a_vals), min(b_vals)
+            a_peak_conc = int(
+                a_common.loc[a_common[column].idxmin(), "intended concurrency"]
+            )
+            b_peak_conc = int(
+                b_common.loc[b_common[column].idxmin(), "intended concurrency"]
+            )
+    else:
+        a_val = _geometric_mean(a_vals)
+        b_val = _geometric_mean(b_vals)
+        a_peak_conc = None
+        b_peak_conc = None
+
+    if a_val is None or b_val is None or b_val == 0:
+        return None, None, None, None, None
+
+    pct_diff = ((a_val - b_val) / b_val) * 100
+    a_better = pct_diff > 0 if higher_is_better else pct_diff < 0
+
+    return pct_diff, a_better, a_peak_conc, b_peak_conc, abs(pct_diff) < 5
+
+
+def _keep_expander_open(expander_key):
+    """Helper to keep an expander open after widget interaction."""
+    st.session_state[expander_key] = True
+
+
+def assign_profile(row):
+    """Assigns a profile label from the actual ISL/OSL values in the data."""
+    prompt_toks = int(row["prompt toks"])
+    output_toks = int(row["output toks"])
+    if prompt_toks == 0 and output_toks == 0:
         return "Custom"
+    return f"{prompt_toks}/{output_toks}"
 
 
 def clean_profile_name(profile_name):
@@ -99,6 +183,7 @@ def clean_profile_name(profile_name):
     return profile_name
 
 
+@st.cache_data(ttl=300)
 def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
     """Load and preprocess LLM-D benchmark data from CSV file or S3.
 
@@ -144,6 +229,11 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
         for col_name in numeric_cols:
             if col_name in df.columns:
                 df[col_name] = pd.to_numeric(df[col_name], errors="coerce")
+
+        # Replace 0 with NaN for pod counts — 0 means "not applicable", not "zero pods"
+        for pod_col in ["prefill_pod_count", "decode_pod_count"]:
+            if pod_col in df.columns:
+                df[pod_col] = df[pod_col].replace(0, pd.NA)
 
         # Assign profile based on prompt/output tokens
         if "prompt toks" in df.columns and "output toks" in df.columns:
@@ -198,28 +288,79 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         st.session_state.llmd_filters_were_cleared = False
 
     # Create columns for filters
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
-    filter_col4, filter_col5, filter_col6 = st.columns(3)
-    filter_col7, filter_col8, filter_col9 = st.columns(3)
+    # Row 1: Acc (narrow), ISL/OSL (narrow), Version (medium), Model (wide)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns([1, 1, 1.5, 2])
+    # Row 2: TP, Replicas, Prefill Pods, Decode Pods (equal width)
+    filter_col5, filter_col6, filter_col7, filter_col8 = st.columns(4)
 
-    # FILTER 1: Accelerator
+    # FILTER 1: Accelerator — filtered by current/default profile (bidirectional cascade)
     with filter_col1:
-        accelerators = sorted(df["accelerator"].unique().tolist())
+        temp_df = df.copy()
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        current_profile = st.session_state.get(
+            f"llmd_profile_filter_{st.session_state.llmd_filter_change_key}", None
+        )
+
+        if not current_profile:
+            available_profiles_raw = sorted(df["profile"].unique().tolist())
+            available_profiles = [
+                p for p in available_profiles_raw if p != "Custom"
+            ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+
+            if st.session_state.get(
+                "llmd_clear_all_filters", False
+            ) or st.session_state.get("llmd_filters_were_cleared", False):
+                current_profile = available_profiles[0] if available_profiles else None
+            else:
+                baseline_profile = st.session_state.get("llmd_baseline_profile", None)
+                current_profile = (
+                    baseline_profile
+                    if baseline_profile and baseline_profile in available_profiles
+                    else (available_profiles[0] if available_profiles else None)
+                )
+
+        if current_profile:
+            temp_df = temp_df[temp_df["profile"] == current_profile]
+
+        accelerators = (
+            sorted(temp_df["accelerator"].unique().tolist())
+            if not temp_df.empty
+            else []
+        )
+
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             acc_default = []
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_accelerators = st.session_state.get(
+                "llmd_baseline_accelerators", accelerators
+            )
+            acc_default = [a for a in baseline_accelerators if a in accelerators]
         else:
             baseline_accelerators = st.session_state.get(
                 "llmd_baseline_accelerators", accelerators
             )
-            # Ensure baseline values are in current available options
             acc_default = [a for a in baseline_accelerators if a in accelerators]
+
+        prev_accel_key = f"llmd_acc_filter_{st.session_state.llmd_filter_change_key}"
+        prev_selected = st.session_state.get(prev_accel_key, None)
+
+        if prev_selected is not None:
+            preserved_selections = [a for a in prev_selected if a in accelerators]
+        else:
+            persisted = st.session_state.get("llmd_persisted_accelerators", None)
+            preserved_selections = (
+                [a for a in persisted if a in accelerators]
+                if persisted is not None
+                else acc_default
+            )
 
         selected_accelerators = st.multiselect(
             "1️⃣ Select Accelerator(s)",
             accelerators,
-            default=acc_default,
-            key=f"llmd_acc_filter_{st.session_state.llmd_filter_change_key}",
+            default=preserved_selections,
+            key=prev_accel_key,
         )
 
     # FILTER 2: ISL/OSL Profile - filtered by accelerators
@@ -228,38 +369,54 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if selected_accelerators:
             temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]  # type: ignore[assignment]
 
-        profiles = (
+        profiles_raw = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
         )
+        profiles = [p for p in profiles_raw if p != "Custom"] + (
+            ["Custom"] if "Custom" in profiles_raw else []
+        )
 
-        default_profile = "Profile A: Balanced (1k/1k)"
-        if st.session_state.get("llmd_clear_all_filters", False):
-            profile_default = None
-        else:
-            baseline_profile = st.session_state.get(
-                "llmd_baseline_profile", default_profile
-            )
-            profile_default = (
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
+            profiles_default = profiles[0] if profiles else None
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_profile = st.session_state.get("llmd_baseline_profile", None)
+            profiles_default = (
                 baseline_profile
-                if baseline_profile in profiles
-                else (
-                    default_profile
-                    if default_profile in profiles
-                    else (profiles[0] if profiles else None)
-                )
+                if baseline_profile and baseline_profile in profiles
+                else (profiles[0] if profiles else None)
+            )
+        else:
+            baseline_profile = st.session_state.get("llmd_baseline_profile", None)
+            profiles_default = (
+                baseline_profile
+                if baseline_profile and baseline_profile in profiles
+                else (profiles[0] if profiles else None)
+            )
+
+        profile_key = f"llmd_profile_filter_{st.session_state.llmd_filter_change_key}"
+        if profile_key not in st.session_state:
+            persisted_profile = st.session_state.get("llmd_persisted_profile", None)
+            if persisted_profile and persisted_profile in profiles:
+                st.session_state[profile_key] = persisted_profile
+            elif profiles_default and profiles_default in profiles:
+                st.session_state[profile_key] = profiles_default
+            elif profiles:
+                st.session_state[profile_key] = profiles[0]
+        elif st.session_state.get(profile_key) not in profiles and profiles:
+            st.session_state[profile_key] = (
+                profiles_default
+                if profiles_default and profiles_default in profiles
+                else profiles[0]
             )
 
         selected_profile = (
             st.selectbox(
                 "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                 profiles,
-                index=(
-                    profiles.index(profile_default)
-                    if profile_default in profiles
-                    else 0
-                ),
                 format_func=clean_profile_name,
-                key=f"llmd_profile_filter_{st.session_state.llmd_filter_change_key}",
+                key=profile_key,
             )
             if profiles
             else None
@@ -267,9 +424,10 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
         selected_profiles = [selected_profile] if selected_profile is not None else []
 
-        # Update baseline_profile to remember user's current selection
         if selected_profile is not None:
             st.session_state.llmd_baseline_profile = selected_profile
+            if st.session_state.get("llmd_filters_were_cleared", False):
+                st.session_state.llmd_filters_were_cleared = False
 
     # FILTER 3: Version - filtered by accelerators and profile
     with filter_col3:
@@ -283,20 +441,43 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             sorted(temp_df["version"].unique().tolist()) if not temp_df.empty else []
         )
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        default_rhoai_versions = [v for v in versions if v.startswith("RHOAI")]
+
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             version_default = []
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_versions = st.session_state.get(
+                "llmd_baseline_versions", default_rhoai_versions or versions
+            )
+            version_default = [v for v in baseline_versions if v in versions]
         else:
             baseline_versions = st.session_state.get(
-                "llmd_baseline_versions", versions[:1] if versions else []
+                "llmd_baseline_versions", default_rhoai_versions or versions
             )
-            # Ensure baseline values are in current available options
             version_default = [v for v in baseline_versions if v in versions]
+
+        prev_versions_key = (
+            f"llmd_version_filter_{st.session_state.llmd_filter_change_key}"
+        )
+        prev_selected = st.session_state.get(prev_versions_key, None)
+
+        if prev_selected is not None:
+            preserved_selections = [v for v in prev_selected if v in versions]
+        else:
+            persisted = st.session_state.get("llmd_persisted_versions", None)
+            preserved_selections = (
+                [v for v in persisted if v in versions]
+                if persisted is not None
+                else version_default
+            )
 
         selected_versions = st.multiselect(
             "3️⃣ Select Version(s)",
             versions,
-            default=version_default,
-            key=f"llmd_version_filter_{st.session_state.llmd_filter_change_key}",
+            default=preserved_selections,
+            key=prev_versions_key,
         )
 
     # FILTER 4: Model - filtered by accelerators, profile, and version
@@ -335,7 +516,12 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if prev_selected is not None:
             preserved_selections = [m for m in prev_selected if m in models]
         else:
-            preserved_selections = models_to_select
+            persisted = st.session_state.get("llmd_persisted_models", None)
+            preserved_selections = (
+                [m for m in persisted if m in models]
+                if persisted is not None
+                else models_to_select
+            )
 
         selected_models = st.multiselect(
             "4️⃣ Select Model(s)",
@@ -350,6 +536,20 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             value=select_all_models_checked,
             key=select_all_models_key,
         )
+
+    # Track model changes for auto-selecting downstream filters
+    select_all_models_key = (
+        f"select_all_models_{st.session_state.llmd_filter_change_key}"
+    )
+    select_all_checked = st.session_state.get(select_all_models_key, False)
+
+    tracking_key = "llmd_previous_models_for_tp_tracking"
+    prev_selected_models = st.session_state.get(tracking_key, None)
+    models_changed = (
+        (prev_selected_models != selected_models)
+        if prev_selected_models is not None
+        else (bool(selected_models))
+    )
 
     # FILTER 5: TP size
     with filter_col5:
@@ -369,27 +569,33 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             else []
         )
 
-        # Check if "Select All Models" is checked or if models are selected
-        select_all_models_key = (
-            f"select_all_models_{st.session_state.llmd_filter_change_key}"
-        )
-        select_all_models_checked = st.session_state.get(select_all_models_key, False)
+        prev_tp_key = f"llmd_tp_filter_{st.session_state.llmd_filter_change_key}_all_{select_all_checked}"
+        prev_selected_tp = st.session_state.get(prev_tp_key, None)
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             tp_default = []
-        elif select_all_models_checked or selected_models:
-            # If "Select All Models" is checked OR models are selected, auto-select all TP sizes
+        elif models_changed and selected_models or select_all_checked:
             tp_default = tp_sizes
+        elif prev_selected_tp is not None:
+            tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
+        elif st.session_state.get("llmd_persisted_tp") is not None:
+            tp_default = [
+                tp for tp in st.session_state.llmd_persisted_tp if tp in tp_sizes
+            ]
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_tp = st.session_state.get("llmd_baseline_tp", tp_sizes)
+            tp_default = [tp for tp in baseline_tp if tp in tp_sizes]
         else:
             baseline_tp = st.session_state.get("llmd_baseline_tp", tp_sizes)
-            # Ensure baseline values are in current available options
             tp_default = [tp for tp in baseline_tp if tp in tp_sizes]
 
         selected_tp = st.multiselect(
             "5️⃣ Select TP Size(s)",
             tp_sizes,
             default=tp_default,
-            key=f"llmd_tp_filter_{st.session_state.llmd_filter_change_key}",
+            key=prev_tp_key,
         )
 
     # FILTER 6: Replicas
@@ -412,30 +618,37 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             else []
         )
 
-        # Check if "Select All Models" is checked or if models are selected
-        select_all_models_key = (
-            f"select_all_models_{st.session_state.llmd_filter_change_key}"
-        )
-        select_all_models_checked = st.session_state.get(select_all_models_key, False)
+        prev_replicas_key = f"llmd_replicas_filter_{st.session_state.llmd_filter_change_key}_all_{select_all_checked}"
+        prev_selected_replicas = st.session_state.get(prev_replicas_key, None)
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             replicas_default = []
-        elif select_all_models_checked or selected_models:
-            # If "Select All Models" is checked OR models are selected, auto-select all replicas
+        elif models_changed and selected_models or select_all_checked:
             replicas_default = replicas
-        else:
+        elif prev_selected_replicas is not None:
+            replicas_default = [r for r in prev_selected_replicas if r in replicas]
+        elif st.session_state.get("llmd_persisted_replicas") is not None:
+            replicas_default = [
+                r for r in st.session_state.llmd_persisted_replicas if r in replicas
+            ]
+        elif st.session_state.get("llmd_reset_to_defaults", False):
             baseline_replicas = st.session_state.get("llmd_baseline_replicas", replicas)
-            # Ensure baseline_replicas is always a list
             if not isinstance(baseline_replicas, list):
                 baseline_replicas = [baseline_replicas] if baseline_replicas else []
-            # Ensure baseline values are in current available options
+            replicas_default = [r for r in baseline_replicas if r in replicas]
+        else:
+            baseline_replicas = st.session_state.get("llmd_baseline_replicas", replicas)
+            if not isinstance(baseline_replicas, list):
+                baseline_replicas = [baseline_replicas] if baseline_replicas else []
             replicas_default = [r for r in baseline_replicas if r in replicas]
 
         selected_replicas = st.multiselect(
             "6️⃣ Select # of Replicas",
             replicas,
             default=replicas_default,
-            key=f"llmd_replicas_filter_{st.session_state.llmd_filter_change_key}",
+            key=prev_replicas_key,
         )
 
     # FILTER 7: Prefill Pod Count
@@ -454,35 +667,47 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if selected_replicas:
             temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
 
-        prefill_pods = (
+        _prefill_numeric = (
             sorted(temp_df["prefill_pod_count"].dropna().unique().tolist())
             if not temp_df.empty
             else []
         )
-
-        # Check if "Select All Models" is checked or if models are selected
-        select_all_models_key = (
-            f"select_all_models_{st.session_state.llmd_filter_change_key}"
+        _has_prefill_na = (
+            not temp_df.empty and temp_df["prefill_pod_count"].isna().any()
         )
-        select_all_models_checked = st.session_state.get(select_all_models_key, False)
+        prefill_pods = _prefill_numeric + (["N/A"] if _has_prefill_na else [])
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        prev_prefill_key = f"llmd_prefill_filter_{st.session_state.llmd_filter_change_key}_all_{select_all_checked}"
+        prev_selected_prefill = st.session_state.get(prev_prefill_key, None)
+
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             prefill_default = []
-        elif select_all_models_checked or selected_models:
-            # If "Select All Models" is checked OR models are selected, auto-select all prefill pod counts
+        elif models_changed and selected_models or select_all_checked:
             prefill_default = prefill_pods
+        elif prev_selected_prefill is not None:
+            prefill_default = [p for p in prev_selected_prefill if p in prefill_pods]
+        elif st.session_state.get("llmd_persisted_prefill") is not None:
+            prefill_default = [
+                p for p in st.session_state.llmd_persisted_prefill if p in prefill_pods
+            ]
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_prefill = st.session_state.get(
+                "llmd_baseline_prefill", prefill_pods
+            )
+            prefill_default = [p for p in baseline_prefill if p in prefill_pods]
         else:
             baseline_prefill = st.session_state.get(
                 "llmd_baseline_prefill", prefill_pods
             )
-            # Ensure baseline values are in current available options
             prefill_default = [p for p in baseline_prefill if p in prefill_pods]
 
         selected_prefill_pods = st.multiselect(
             "7️⃣ Select Prefill Pod Count",
             prefill_pods,
             default=prefill_default,
-            key=f"llmd_prefill_filter_{st.session_state.llmd_filter_change_key}",
+            key=prev_prefill_key,
         )
 
     # FILTER 8: Decode Pod Count
@@ -501,242 +726,275 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if selected_replicas:
             temp_df = temp_df[temp_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
         if selected_prefill_pods:
-            temp_df = temp_df[temp_df["prefill_pod_count"].isin(selected_prefill_pods)]  # type: ignore[assignment]
+            _pf_nums = [v for v in selected_prefill_pods if v != "N/A"]
+            _pf_na = "N/A" in selected_prefill_pods
+            temp_df = temp_df[  # type: ignore[assignment]
+                temp_df["prefill_pod_count"].isin(_pf_nums)
+                | (_pf_na & temp_df["prefill_pod_count"].isna())
+            ]
 
-        decode_pods = (
+        _decode_numeric = (
             sorted(temp_df["decode_pod_count"].dropna().unique().tolist())
             if not temp_df.empty
             else []
         )
+        _has_decode_na = not temp_df.empty and temp_df["decode_pod_count"].isna().any()
+        decode_pods = _decode_numeric + (["N/A"] if _has_decode_na else [])
 
-        # Check if "Select All Models" is checked or if models are selected
-        select_all_models_key = (
-            f"select_all_models_{st.session_state.llmd_filter_change_key}"
-        )
-        select_all_models_checked = st.session_state.get(select_all_models_key, False)
+        prev_decode_key = f"llmd_decode_filter_{st.session_state.llmd_filter_change_key}_all_{select_all_checked}"
+        prev_selected_decode = st.session_state.get(prev_decode_key, None)
 
-        if st.session_state.get("llmd_clear_all_filters", False):
+        if st.session_state.get(
+            "llmd_clear_all_filters", False
+        ) or st.session_state.get("llmd_filters_were_cleared", False):
             decode_default = []
-        elif select_all_models_checked or selected_models:
-            # If "Select All Models" is checked OR models are selected, auto-select all decode pod counts
+        elif models_changed and selected_models or select_all_checked:
             decode_default = decode_pods
+        elif prev_selected_decode is not None:
+            decode_default = [d for d in prev_selected_decode if d in decode_pods]
+        elif st.session_state.get("llmd_persisted_decode") is not None:
+            decode_default = [
+                d for d in st.session_state.llmd_persisted_decode if d in decode_pods
+            ]
+        elif st.session_state.get("llmd_reset_to_defaults", False):
+            baseline_decode = st.session_state.get("llmd_baseline_decode", decode_pods)
+            decode_default = [d for d in baseline_decode if d in decode_pods]
         else:
             baseline_decode = st.session_state.get("llmd_baseline_decode", decode_pods)
-            # Ensure baseline values are in current available options
             decode_default = [d for d in baseline_decode if d in decode_pods]
 
         selected_decode_pods = st.multiselect(
             "8️⃣ Select Decode Pod Count",
             decode_pods,
             default=decode_default,
-            key=f"llmd_decode_filter_{st.session_state.llmd_filter_change_key}",
+            key=prev_decode_key,
         )
 
-    # Filter buttons next to decode pod count
-    with filter_col9:
-        btn_col1, btn_col2, btn_col3 = st.columns(3)
+    # Filter action buttons
+    if "llmd_nav_collapsed" not in st.session_state:
+        st.session_state.llmd_nav_collapsed = False
+    btn_col1, _, btn_col2, btn_col3 = st.columns([1, 2.5, 1, 1])
 
-        with btn_col1:
+    with btn_col1:
+        if st.session_state.llmd_nav_collapsed:
             if st.button(
-                "🔄 Reset to Defaults",
-                help="Reset filters to default values",
-                key="llmd_reset_btn",
+                "☰ Sections",
+                help="Expand section navigation",
+                key="llmd_expand_nav",
+                use_container_width=True,
             ):
-                st.session_state.llmd_clear_all_filters = False
-                st.session_state.llmd_filters_were_cleared = False
-                st.session_state.llmd_reset_to_defaults = True
-                st.session_state.llmd_filter_change_key += 1
+                st.session_state.llmd_nav_collapsed = False
+                st.rerun()
+        else:
+            if st.button(
+                "« Collapse",
+                help="Collapse section navigation",
+                key="llmd_collapse_nav",
+                use_container_width=True,
+            ):
+                st.session_state.llmd_nav_collapsed = True
                 st.rerun()
 
-        with btn_col2:
-            if st.button(
-                "🧹 Clear Filters",
-                help="Clear all filter selections",
-                key="llmd_clear_btn",
-            ):
-                st.session_state.llmd_clear_all_filters = True
-                st.session_state.llmd_filters_were_cleared = True
-                st.session_state.llmd_filter_change_key += 1
-                st.rerun()
+    with btn_col2:
+        with st.popover("❓ Filters Help", use_container_width=True):
+            st.markdown("### ✅ Valid Filter Combinations")
+            st.markdown("View all valid combinations of filters:")
 
-        with btn_col3:
-            with st.popover("❓ Filters Help", use_container_width=True):
-                st.markdown("### ✅ Valid Filter Combinations")
-                st.markdown("View all valid combinations of filters:")
+            # Selector for tree view type
+            tree_view = st.radio(
+                "Group by:",
+                options=["Model", "Version"],
+                horizontal=True,
+                key="llmd_filter_help_tree_view",
+            )
 
-                # Selector for tree view type
-                tree_view = st.radio(
-                    "Group by:",
-                    options=["Model", "Version"],
-                    horizontal=True,
-                    key="llmd_filter_help_tree_view",
-                )
+            if tree_view == "Model":
+                # Group by Model → Accelerator → Version → Profile → TP → Replicas → Pods
+                models = sorted(df["model"].unique())
 
-                if tree_view == "Model":
-                    # Group by Model → Accelerator → Version → Profile → TP → Replicas → Pods
-                    models = sorted(df["model"].unique())
+                for model in models:
+                    model_short = model.split("/")[-1] if "/" in model else model
+                    model_data = df[df["model"] == model]
 
-                    for model in models:
-                        model_short = model.split("/")[-1] if "/" in model else model
-                        model_data = df[df["model"] == model]
-
-                        with st.expander(f"🤖 {model_short}", expanded=False):
-                            combo_dict: dict[
+                    with st.expander(f"🤖 {model_short}", expanded=False):
+                        combo_dict: dict[
+                            str,
+                            dict[
                                 str,
-                                dict[
-                                    str,
-                                    dict[
-                                        str, dict[int, dict[int, set[tuple[int, int]]]]
-                                    ],
-                                ],
-                            ] = {}
-                            for _, row in model_data.iterrows():
-                                acc = row["accelerator"]
-                                version = row["version"]
-                                profile = row["profile"]
-                                tp = row["TP"]
-                                replicas = row["replicas"]
-                                prefill = row["prefill_pod_count"]
-                                decode = row["decode_pod_count"]
+                                dict[str, dict[int, dict[int, set[tuple[int, int]]]]],
+                            ],
+                        ] = {}
+                        for _, row in model_data.iterrows():
+                            acc = row["accelerator"]
+                            version = row["version"]
+                            profile = row["profile"]
+                            tp = row["TP"]
+                            replicas = row["replicas"]
+                            prefill = row["prefill_pod_count"]
+                            decode = row["decode_pod_count"]
 
-                                if acc not in combo_dict:
-                                    combo_dict[acc] = {}
-                                if version not in combo_dict[acc]:
-                                    combo_dict[acc][version] = {}
-                                if profile not in combo_dict[acc][version]:
-                                    combo_dict[acc][version][profile] = {}
-                                if tp not in combo_dict[acc][version][profile]:
-                                    combo_dict[acc][version][profile][tp] = {}
-                                if (
-                                    replicas
-                                    not in combo_dict[acc][version][profile][tp]
-                                ):
-                                    combo_dict[acc][version][profile][tp][replicas] = (
-                                        set()
+                            if acc not in combo_dict:
+                                combo_dict[acc] = {}
+                            if version not in combo_dict[acc]:
+                                combo_dict[acc][version] = {}
+                            if profile not in combo_dict[acc][version]:
+                                combo_dict[acc][version][profile] = {}
+                            if tp not in combo_dict[acc][version][profile]:
+                                combo_dict[acc][version][profile][tp] = {}
+                            if replicas not in combo_dict[acc][version][profile][tp]:
+                                combo_dict[acc][version][profile][tp][replicas] = set()
+
+                            _p = "N/A" if pd.isna(prefill) else int(prefill)
+                            _d = "N/A" if pd.isna(decode) else int(decode)
+                            combo_dict[acc][version][profile][tp][replicas].add(
+                                (_p, _d)  # type: ignore[arg-type]
+                            )
+
+                        tree_text = ""
+                        for acc in sorted(combo_dict.keys()):
+                            tree_text += f"🔧 {acc}\n"
+
+                            versions = sorted(combo_dict[acc].keys())
+                            for version in versions:
+                                tree_text += f"    📦 {version}\n"
+
+                                profiles = sorted(combo_dict[acc][version].keys())
+                                for profile in profiles:
+                                    profile_display = clean_profile_name(profile)
+                                    tree_text += f"        📋 {profile_display}\n"
+
+                                    tps = sorted(
+                                        combo_dict[acc][version][profile].keys()
                                     )
+                                    for tp in tps:
+                                        tree_text += f"            🔢 TP: {tp}\n"
 
-                                combo_dict[acc][version][profile][tp][replicas].add(
-                                    (int(prefill), int(decode))
-                                )
-
-                            tree_text = ""
-                            for acc in sorted(combo_dict.keys()):
-                                tree_text += f"🔧 {acc}\n"
-
-                                versions = sorted(combo_dict[acc].keys())
-                                for version in versions:
-                                    tree_text += f"    📦 {version}\n"
-
-                                    profiles = sorted(combo_dict[acc][version].keys())
-                                    for profile in profiles:
-                                        profile_display = clean_profile_name(profile)
-                                        tree_text += f"        📋 {profile_display}\n"
-
-                                        tps = sorted(
-                                            combo_dict[acc][version][profile].keys()
+                                        replicas_list = sorted(
+                                            combo_dict[acc][version][profile][tp].keys()
                                         )
-                                        for tp in tps:
-                                            tree_text += f"            🔢 TP: {tp}\n"
-
-                                            replicas_list = sorted(
-                                                combo_dict[acc][version][profile][
-                                                    tp
-                                                ].keys()
+                                        for replica in replicas_list:
+                                            pods = sorted(
+                                                combo_dict[acc][version][profile][tp][
+                                                    replica
+                                                ],
+                                                key=str,
                                             )
-                                            for replica in replicas_list:
-                                                pods = sorted(
-                                                    combo_dict[acc][version][profile][
-                                                        tp
-                                                    ][replica]
-                                                )
-                                                pods_str = ", ".join(
-                                                    [f"({p}/{d})" for p, d in pods]
-                                                )
-                                                tree_text += f"                👥 Replicas: {replica} → Pods(P/D): {pods_str}\n"
-                                tree_text += "\n"
+                                            pods_str = ", ".join(
+                                                [f"({p}/{d})" for p, d in pods]
+                                            )
+                                            tree_text += f"                👥 Replicas: {replica} → Pods(P/D): {pods_str}\n"
+                            tree_text += "\n"
 
-                            st.code(tree_text, language=None)
+                        st.code(tree_text, language=None)
 
-                else:  # Group by Version
-                    # Group by Version → Accelerator → Model → Profile → TP → Replicas → Pods
-                    versions = sorted(df["version"].unique())
+            else:  # Group by Version
+                # Group by Version → Accelerator → Model → Profile → TP → Replicas → Pods
+                versions = sorted(df["version"].unique())
 
-                    for version in versions:
-                        version_data = df[df["version"] == version]
+                for version in versions:
+                    version_data = df[df["version"] == version]
 
-                        with st.expander(f"📦 {version}", expanded=False):
-                            combo_dict = {}
-                            for _, row in version_data.iterrows():
-                                acc = row["accelerator"]
-                                model = row["model"]
-                                model_short = (
-                                    model.split("/")[-1] if "/" in model else model
-                                )
-                                profile = row["profile"]
-                                tp = row["TP"]
-                                replicas = row["replicas"]
-                                prefill = row["prefill_pod_count"]
-                                decode = row["decode_pod_count"]
+                    with st.expander(f"📦 {version}", expanded=False):
+                        combo_dict = {}
+                        for _, row in version_data.iterrows():
+                            acc = row["accelerator"]
+                            model = row["model"]
+                            model_short = (
+                                model.split("/")[-1] if "/" in model else model
+                            )
+                            profile = row["profile"]
+                            tp = row["TP"]
+                            replicas = row["replicas"]
+                            prefill = row["prefill_pod_count"]
+                            decode = row["decode_pod_count"]
 
-                                if acc not in combo_dict:
-                                    combo_dict[acc] = {}
-                                if model_short not in combo_dict[acc]:
-                                    combo_dict[acc][model_short] = {}
-                                if profile not in combo_dict[acc][model_short]:
-                                    combo_dict[acc][model_short][profile] = {}
-                                if tp not in combo_dict[acc][model_short][profile]:
-                                    combo_dict[acc][model_short][profile][tp] = {}
-                                if (
-                                    replicas
-                                    not in combo_dict[acc][model_short][profile][tp]
-                                ):
-                                    combo_dict[acc][model_short][profile][tp][
-                                        replicas
-                                    ] = set()
-
-                                combo_dict[acc][model_short][profile][tp][replicas].add(
-                                    (int(prefill), int(decode))
+                            if acc not in combo_dict:
+                                combo_dict[acc] = {}
+                            if model_short not in combo_dict[acc]:
+                                combo_dict[acc][model_short] = {}
+                            if profile not in combo_dict[acc][model_short]:
+                                combo_dict[acc][model_short][profile] = {}
+                            if tp not in combo_dict[acc][model_short][profile]:
+                                combo_dict[acc][model_short][profile][tp] = {}
+                            if (
+                                replicas
+                                not in combo_dict[acc][model_short][profile][tp]
+                            ):
+                                combo_dict[acc][model_short][profile][tp][replicas] = (
+                                    set()
                                 )
 
-                            tree_text = ""
-                            for acc in sorted(combo_dict.keys()):
-                                tree_text += f"🔧 {acc}\n"
+                            _p = "N/A" if pd.isna(prefill) else int(prefill)
+                            _d = "N/A" if pd.isna(decode) else int(decode)
+                            combo_dict[acc][model_short][profile][tp][replicas].add(
+                                (_p, _d)  # type: ignore[arg-type]
+                            )
 
-                                models = sorted(combo_dict[acc].keys())
-                                for model_short in models:
-                                    tree_text += f"    🤖 {model_short}\n"
+                        tree_text = ""
+                        for acc in sorted(combo_dict.keys()):
+                            tree_text += f"🔧 {acc}\n"
 
-                                    profiles = sorted(
-                                        combo_dict[acc][model_short].keys()
+                            models = sorted(combo_dict[acc].keys())
+                            for model_short in models:
+                                tree_text += f"    🤖 {model_short}\n"
+
+                                profiles = sorted(combo_dict[acc][model_short].keys())
+                                for profile in profiles:
+                                    profile_display = clean_profile_name(profile)
+                                    tree_text += f"        📋 {profile_display}\n"
+
+                                    tps = sorted(
+                                        combo_dict[acc][model_short][profile].keys()
                                     )
-                                    for profile in profiles:
-                                        profile_display = clean_profile_name(profile)
-                                        tree_text += f"        📋 {profile_display}\n"
+                                    for tp in tps:
+                                        tree_text += f"            🔢 TP: {tp}\n"
 
-                                        tps = sorted(
-                                            combo_dict[acc][model_short][profile].keys()
+                                        replicas_list = sorted(
+                                            combo_dict[acc][model_short][profile][
+                                                tp
+                                            ].keys()
                                         )
-                                        for tp in tps:
-                                            tree_text += f"            🔢 TP: {tp}\n"
-
-                                            replicas_list = sorted(
+                                        for replica in replicas_list:
+                                            pods = sorted(
                                                 combo_dict[acc][model_short][profile][
                                                     tp
-                                                ].keys()
+                                                ][replica],
+                                                key=str,
                                             )
-                                            for replica in replicas_list:
-                                                pods = sorted(
-                                                    combo_dict[acc][model_short][
-                                                        profile
-                                                    ][tp][replica]
-                                                )
-                                                pods_str = ", ".join(
-                                                    [f"({p}/{d})" for p, d in pods]
-                                                )
-                                                tree_text += f"                👥 Replicas: {replica} → Pods(P/D): {pods_str}\n"
-                                tree_text += "\n"
+                                            pods_str = ", ".join(
+                                                [f"({p}/{d})" for p, d in pods]
+                                            )
+                                            tree_text += f"                👥 Replicas: {replica} → Pods(P/D): {pods_str}\n"
+                            tree_text += "\n"
 
-                            st.code(tree_text, language=None)
+                        st.code(tree_text, language=None)
+
+    with btn_col3:
+        if st.button(
+            "↩ Reset to Defaults",
+            help="Reset filters to default values",
+            key="llmd_reset_btn",
+        ):
+            st.session_state.llmd_clear_all_filters = False
+            st.session_state.llmd_filters_were_cleared = False
+            st.session_state.llmd_reset_to_defaults = True
+            st.session_state.llmd_filter_change_key += 1
+            st.session_state.llmd_previous_models_for_tp_tracking = None
+            st.session_state.performance_plots_expanded = False
+            st.session_state.rhaiis_comparison_expanded = False
+            st.session_state.llmd_compare_versions_expanded = False
+            st.session_state.runtime_configs_expanded = False
+            if "llmd_previous_filter_state" in st.session_state:
+                del st.session_state.llmd_previous_filter_state
+            st.rerun()
+
+    # Update model tracking variable for TP/downstream auto-select detection
+    st.session_state[tracking_key] = selected_models
+
+    if st.session_state.get("llmd_clear_all_filters", False):
+        st.session_state.llmd_clear_all_filters = False
+    if st.session_state.get("llmd_reset_to_defaults", False):
+        st.session_state.llmd_reset_to_defaults = False
 
     # Apply all filters
     filtered_df = df.copy()
@@ -756,12 +1014,18 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     if selected_replicas:
         filtered_df = filtered_df[filtered_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
     if selected_prefill_pods:
+        _pf_nums = [v for v in selected_prefill_pods if v != "N/A"]
+        _pf_na = "N/A" in selected_prefill_pods
         filtered_df = filtered_df[  # type: ignore[assignment]
-            filtered_df["prefill_pod_count"].isin(selected_prefill_pods)
+            filtered_df["prefill_pod_count"].isin(_pf_nums)
+            | (_pf_na & filtered_df["prefill_pod_count"].isna())
         ]
     if selected_decode_pods:
+        _dc_nums = [v for v in selected_decode_pods if v != "N/A"]
+        _dc_na = "N/A" in selected_decode_pods
         filtered_df = filtered_df[  # type: ignore[assignment]
-            filtered_df["decode_pod_count"].isin(selected_decode_pods)
+            filtered_df["decode_pod_count"].isin(_dc_nums)
+            | (_dc_na & filtered_df["decode_pod_count"].isna())
         ]
 
     filter_selections = {
@@ -775,21 +1039,50 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "decode_pods": selected_decode_pods,
     }
 
-    # Reset state flags after processing
-    if st.session_state.get("llmd_clear_all_filters", False):
-        st.session_state.llmd_clear_all_filters = False
-    if st.session_state.get("llmd_reset_to_defaults", False):
-        st.session_state.llmd_reset_to_defaults = False
+    # Detect filter changes and collapse expanders
+    current_filter_state = {
+        "accelerators": tuple(sorted(selected_accelerators)),
+        "models": tuple(sorted(selected_models)),
+        "versions": tuple(sorted(selected_versions)),
+        "profile": selected_profile,
+        "tp": tuple(sorted(selected_tp)),
+        "replicas": tuple(sorted(selected_replicas)),
+        "prefill_pods": tuple(sorted(selected_prefill_pods)),
+        "decode_pods": tuple(sorted(selected_decode_pods)),
+    }
+
+    previous_filter_state = st.session_state.get("llmd_previous_filter_state", None)
+
+    if (
+        previous_filter_state is not None
+        and previous_filter_state != current_filter_state
+    ):
+        st.session_state.performance_plots_expanded = False
+        st.session_state.rhaiis_comparison_expanded = False
+        st.session_state.llmd_compare_versions_expanded = False
+        st.session_state.runtime_configs_expanded = False
+
+    st.session_state.llmd_previous_filter_state = current_filter_state
+
+    # Persist filter selections so they survive section switches
+    st.session_state.llmd_persisted_accelerators = list(selected_accelerators)
+    st.session_state.llmd_persisted_profile = selected_profile
+    st.session_state.llmd_persisted_profiles = list(selected_profiles)
+    st.session_state.llmd_persisted_versions = list(selected_versions)
+    st.session_state.llmd_persisted_models = list(selected_models)
+    st.session_state.llmd_persisted_tp = list(selected_tp)
+    st.session_state.llmd_persisted_replicas = list(selected_replicas)
+    st.session_state.llmd_persisted_prefill = list(selected_prefill_pods)
+    st.session_state.llmd_persisted_decode = list(selected_decode_pods)
 
     # Store baseline values
     if not st.session_state.get("llmd_baseline_accelerators"):
         st.session_state.llmd_baseline_accelerators = accelerators
-        st.session_state.llmd_baseline_profile = (
-            default_profile
-            if default_profile in profiles
-            else (profiles[0] if profiles else None)
+        st.session_state.llmd_baseline_profile = profiles[0] if profiles else None
+        rhoai_versions = [v for v in versions if v.startswith("RHOAI")]
+        st.session_state.llmd_baseline_versions = (
+            rhoai_versions if rhoai_versions else versions[:1]
         )
-        st.session_state.llmd_baseline_versions = versions[:1] if versions else []
         st.session_state.llmd_baseline_models = models[:1] if models else []
         st.session_state.llmd_baseline_tp = tp_sizes
         st.session_state.llmd_baseline_replicas = replicas
@@ -799,6 +1092,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return filtered_df, filter_selections
 
 
+@st.cache_data(ttl=300)
 def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFrame:
     """Load RHAIIS data for comparison from S3 or local file.
 
@@ -806,10 +1100,10 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
     Otherwise, falls back to local file system.
 
     Args:
-        file_path: Path to the RHAIIS CSV file (fallback)
+        file_path: Path to the RHAIIS CSV file (fallback).
 
     Returns:
-        DataFrame with RHAIIS data
+        DataFrame with RHAIIS data.
     """
     try:
         # Try S3 first if configured
@@ -843,18 +1137,25 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
         return pd.DataFrame()
 
 
-def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
+def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame, use_expander=True):
     """Render comparison section between LLM-D and RHAIIS.
 
     Args:
         llmd_filtered_df: Filtered LLM-D DataFrame
+        use_expander: Whether to wrap content in a collapsible expander.
     """
-    if "rhaiis_comparison_expanded" not in st.session_state:
-        st.session_state.rhaiis_comparison_expanded = False
-
-    with st.expander(
-        "🔄 Compare with RHAIIS", expanded=st.session_state.rhaiis_comparison_expanded
-    ):
+    if use_expander:
+        if "rhaiis_comparison_expanded" not in st.session_state:
+            st.session_state.rhaiis_comparison_expanded = False
+        ctx = st.expander(
+            "🔄 Compare with RHAIIS",
+            expanded=st.session_state.rhaiis_comparison_expanded,
+        )
+    else:
+        ctx = contextlib.nullcontext()  # type: ignore[assignment]
+    with ctx:
+        if not use_expander:
+            st.subheader("🔄 Compare with RHAIIS")
         st.markdown(
             """
             **Compare disaggregated LLM-D performance with traditional RHAIIS architecture.**
@@ -922,7 +1223,7 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
             return
 
         # Filters for comparison
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
         with filter_col1:
             selected_comparison_model = st.selectbox(
@@ -933,6 +1234,47 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
             )
 
         with filter_col2:
+            # Get LLM-D versions available for the selected model
+            llmd_model_data = llmd_single_replica[
+                llmd_single_replica["model"] == selected_comparison_model
+            ]
+            llmd_versions = sorted(llmd_model_data["version"].unique().tolist())
+
+            if not llmd_versions:
+                st.warning("⚠️ No LLM-D versions found for this model.")
+                return
+
+            if "rhaiis_comparison_llmd_version_selected" not in st.session_state:
+                rhoai_defaults = [v for v in llmd_versions if v.startswith("RHOAI")]
+                st.session_state.rhaiis_comparison_llmd_version_selected = (
+                    rhoai_defaults[0] if rhoai_defaults else llmd_versions[0]
+                )
+
+            llmd_version_default_index = 0
+            if (
+                st.session_state.rhaiis_comparison_llmd_version_selected
+                in llmd_versions
+            ):
+                llmd_version_default_index = llmd_versions.index(
+                    st.session_state.rhaiis_comparison_llmd_version_selected
+                )
+
+            selected_llmd_version = st.selectbox(
+                "Select LLM-D Version",
+                options=llmd_versions,
+                index=llmd_version_default_index,
+                key="rhaiis_comparison_llmd_version",
+            )
+
+            st.session_state.rhaiis_comparison_llmd_version_selected = (
+                selected_llmd_version
+            )
+
+            llmd_model_data = llmd_model_data[
+                llmd_model_data["version"] == selected_llmd_version
+            ]
+
+        with filter_col3:
             # Get RHAIIS versions for the selected model (only versions containing "RHAIIS")
             rhaiis_model_data = rhaiis_df[
                 rhaiis_df["model"] == selected_comparison_model
@@ -944,9 +1286,7 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                 st.warning("⚠️ No RHAIIS versions found for this model.")
                 return
 
-            # Preserve version selection in session state
             if "rhaiis_comparison_version_selected" not in st.session_state:
-                # Default to RHAIIS-3.2.3 if available, otherwise use first available
                 if "RHAIIS-3.2.3" in rhaiis_versions:
                     st.session_state.rhaiis_comparison_version_selected = "RHAIIS-3.2.3"
                 else:
@@ -954,7 +1294,6 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                         rhaiis_versions[0]
                     )
 
-            # Use preserved version if it exists in current options, otherwise default to RHAIIS-3.2.3 or first available
             default_version_index = 0
             if st.session_state.rhaiis_comparison_version_selected in rhaiis_versions:
                 default_version_index = rhaiis_versions.index(
@@ -971,21 +1310,15 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                 key="rhaiis_comparison_version",
             )
 
-            # Update session state with current selection
             st.session_state.rhaiis_comparison_version_selected = (
                 selected_rhaiis_version
             )
 
-        with filter_col3:
-            # Get common profiles
-            llmd_model_data = llmd_single_replica[
-                llmd_single_replica["model"] == selected_comparison_model
-            ]
+        with filter_col4:
             rhaiis_version_data = rhaiis_model_data[
                 rhaiis_model_data["version"] == selected_rhaiis_version
             ]
 
-            # Check if 'profile' column exists, handle missing column gracefully
             if (
                 "profile" not in llmd_model_data.columns
                 or "profile" not in rhaiis_version_data.columns
@@ -1005,11 +1338,9 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                 )
                 return
 
-            # Preserve profile selection in session state
             if "rhaiis_comparison_profile_selected" not in st.session_state:
                 st.session_state.rhaiis_comparison_profile_selected = common_profiles[0]
 
-            # Use preserved profile if it exists in current options, otherwise use first available
             default_profile_index = 0
             if st.session_state.rhaiis_comparison_profile_selected in common_profiles:
                 default_profile_index = common_profiles.index(
@@ -1024,7 +1355,6 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                 key="rhaiis_comparison_profile",
             )
 
-            # Update session state with current selection
             st.session_state.rhaiis_comparison_profile_selected = (
                 selected_comparison_profile
             )
@@ -1052,9 +1382,9 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
             + ") | TP="
             + llmd_comparison["TP"].astype(str)
             + " | P="
-            + llmd_comparison["prefill_pod_count"].astype(str)
+            + llmd_comparison["prefill_pod_count"].fillna("N/A").astype(str)
             + "/D="
-            + llmd_comparison["decode_pod_count"].astype(str)
+            + llmd_comparison["decode_pod_count"].fillna("N/A").astype(str)
         )
         rhaiis_comparison["config_label"] = (
             "RHAIIS ("
@@ -1092,7 +1422,7 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                     "output_tok/sec": "Output Tokens/sec",
                     "config_label": "Configuration",
                 },
-                template="plotly_white",
+                template="plotly_white_light",
             )
             fig.update_layout(
                 legend={
@@ -1105,7 +1435,7 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                 },
                 height=500,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, theme=None)
 
         with tab2:
             # Latency comparison
@@ -1124,13 +1454,13 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                         "ttft_median": "TTFT Median (ms)",
                         "config_label": "Configuration",
                     },
-                    template="plotly_white",
+                    template="plotly_white_light",
                 )
                 fig_ttft.update_layout(
                     legend={"font": {"size": 10}},
                     height=400,
                 )
-                st.plotly_chart(fig_ttft, use_container_width=True)
+                st.plotly_chart(fig_ttft, use_container_width=True, theme=None)
 
             with col2:
                 fig_tpot = px.line(
@@ -1145,13 +1475,13 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
                         "tpot_median": "TPOT Median (ms)",
                         "config_label": "Configuration",
                     },
-                    template="plotly_white",
+                    template="plotly_white_light",
                 )
                 fig_tpot.update_layout(
                     legend={"font": {"size": 10}},
                     height=400,
                 )
-                st.plotly_chart(fig_tpot, use_container_width=True)
+                st.plotly_chart(fig_tpot, use_container_width=True, theme=None)
 
         with tab3:
             # Summary statistics comparison
@@ -1276,14 +1606,711 @@ def render_rhaiis_comparison_section(llmd_filtered_df: pd.DataFrame):
             )
 
 
-def render_performance_plots_section(filtered_df):
-    """Render performance plots section for LLM-D dashboard."""
-    if "performance_plots_expanded" not in st.session_state:
-        st.session_state.performance_plots_expanded = False
+@st.fragment
+def render_compare_versions_section(df, use_expander=True):
+    """Compare two LLM-D versions across multiple metrics."""
+    if use_expander:
+        if "llmd_compare_versions_expanded" not in st.session_state:
+            st.session_state.llmd_compare_versions_expanded = False
+        ctx = st.expander(
+            "⚖️ Compare Versions",
+            expanded=st.session_state.llmd_compare_versions_expanded,
+        )
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        if not use_expander:
+            st.subheader("⚖️ Compare Versions")
+        st.markdown(
+            "💡 **Generate a summary table comparing performance between two LLM-D versions across all models and metrics.**"
+        )
 
-    with st.expander(
-        "📈 Performance Plots", expanded=st.session_state.performance_plots_expanded
-    ):
+        available_versions = sorted(df["version"].unique().tolist())
+        available_accelerators = sorted(df["accelerator"].unique().tolist())
+        available_profiles_raw = sorted(df["profile"].unique().tolist())
+        available_profiles = [p for p in available_profiles_raw if p != "Custom"] + (
+            ["Custom"] if "Custom" in available_profiles_raw else []
+        )
+
+        if len(available_versions) < 2:
+            st.warning("⚠️ Need at least 2 versions in the data to compare.")
+            return
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            version_1 = st.selectbox(
+                "Select Version 1 (Baseline)",
+                options=available_versions,
+                index=0,
+                key="llmd_compare_v1",
+                on_change=_keep_expander_open,
+                args=("llmd_compare_versions_expanded",),
+            )
+
+        with col2:
+            version_2_options = [v for v in available_versions if v != version_1]
+            version_2 = (
+                st.selectbox(
+                    "Select Version 2 (Comparison)",
+                    options=version_2_options,
+                    index=0 if version_2_options else None,
+                    key="llmd_compare_v2",
+                    on_change=_keep_expander_open,
+                    args=("llmd_compare_versions_expanded",),
+                )
+                if version_2_options
+                else None
+            )
+
+        with col3:
+            accel_default_index = 0
+            if "H200" in available_accelerators:
+                accel_default_index = available_accelerators.index("H200")
+            selected_accelerator = st.selectbox(
+                "Select GPU",
+                options=available_accelerators,
+                index=accel_default_index,
+                key="llmd_compare_accelerator",
+                on_change=_keep_expander_open,
+                args=("llmd_compare_versions_expanded",),
+            )
+
+        with col4:
+            selected_profile = st.selectbox(
+                "Select ISL/OSL Profile",
+                options=available_profiles,
+                index=0,
+                format_func=clean_profile_name,
+                key="llmd_compare_profile",
+                on_change=_keep_expander_open,
+                args=("llmd_compare_versions_expanded",),
+            )
+
+        if not version_2:
+            st.warning("⚠️ Please select a second version to compare.")
+            return
+
+        df_v1 = df[
+            (df["version"] == version_1)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
+
+        df_v2 = df[
+            (df["version"] == version_2)
+            & (df["accelerator"] == selected_accelerator)
+            & (df["profile"] == selected_profile)
+        ].copy()
+
+        if df_v1.empty or df_v2.empty:
+            st.warning(
+                "⚠️ No data available for the selected combination. "
+                "Try different accelerator or profile settings."
+            )
+            return
+
+        v1_model_tp = set(zip(df_v1["model"].tolist(), df_v1["TP"].tolist()))
+        v2_model_tp = set(zip(df_v2["model"].tolist(), df_v2["TP"].tolist()))
+        common_model_tp = sorted(v1_model_tp.intersection(v2_model_tp))
+
+        if not common_model_tp:
+            st.warning(
+                f"⚠️ No common model+TP combinations found between {version_1} and {version_2} "
+                f"for {selected_accelerator} with profile {clean_profile_name(selected_profile)}."
+            )
+            return
+
+        all_common_concurrencies: set = set()
+        for model, tp in common_model_tp:
+            v1_conc = set(
+                df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            v2_conc = set(
+                df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)][
+                    "intended concurrency"
+                ]
+                .dropna()
+                .unique()
+            )
+            all_common_concurrencies.update(v1_conc.intersection(v2_conc))
+
+        all_common_concurrencies_sorted = sorted(
+            int(c) for c in all_common_concurrencies
+        )
+
+        if all_common_concurrencies_sorted:
+            conc_key = f"llmd_compare_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            selected_concurrencies = st.multiselect(
+                "Select Concurrency Level(s) for Geometric Mean",
+                options=all_common_concurrencies_sorted,
+                default=all_common_concurrencies_sorted,
+                key=conc_key,
+                on_change=_keep_expander_open,
+                args=("llmd_compare_versions_expanded",),
+                help=(
+                    "Choose which concurrency levels to include in geometric mean calculations. "
+                    "Peak throughput always uses all available concurrency levels."
+                ),
+            )
+            if not selected_concurrencies:
+                st.warning("⚠️ Please select at least one concurrency level.")
+                return
+            selected_conc_set = set(selected_concurrencies)
+            st.caption(
+                f"ℹ️ Geometric mean metrics use concurrency levels: "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"Peak throughput uses all common concurrency levels."
+            )
+        else:
+            selected_conc_set = set()
+
+        profile_short = clean_profile_name(selected_profile)
+
+        title_col, popover_col = st.columns([5, 1])
+        with title_col:
+            st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
+        with popover_col:
+            with st.popover("ℹ️ How are these calculated?"):
+                st.markdown("""
+**Geometric Mean Calculation:**
+- Computes the geometric mean of the metric values across the selected concurrency levels
+- Better for ratios/percentages because it respects multiplicative relationships
+
+**Peak Calculation:**
+- For throughput: compares the maximum throughput across all common concurrency levels
+- Higher is better for throughput; lower is better for latency
+
+**Percentage Interpretation:**
+- **+X%** means V1's metric value is X% **higher** than V2's
+- **-X%** means V1's metric value is X% **lower** than V2's
+
+| Metric Type | +X% means | -X% means |
+|-------------|-----------|-----------|
+| **Throughput** | V1 is faster | V1 is slower |
+| **Latency** | V1 is slower | V1 is faster |
+
+**Status:** 🟢 Better (>=5%) | 🟡 Similar (<5%) | 🔴 Worse (>=5%)
+                """)
+        st.markdown(f"**Comparing:** {version_1} vs {version_2}")
+
+        metrics_config = {
+            "Peak Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "peak",
+                "higher_is_better": True,
+                "show_concurrency": True,
+            },
+            "Output Throughput (Geometric Mean)": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "Total Throughput (Geometric Mean)": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+                "show_concurrency": False,
+            },
+            "End-to-End Latency (Geometric Mean)": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "TTFT P95 (Geometric Mean)": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+            "ITL P95 (Geometric Mean)": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            },
+        }
+
+        dup_warnings = []
+        for _label, df_check, ver_name in [
+            ("Version 1", df_v1, version_1),
+            ("Version 2", df_v2, version_2),
+        ]:
+            for model, tp in common_model_tp:
+                subset = df_check[(df_check["model"] == model) & (df_check["TP"] == tp)]
+                conc_counts = subset["intended concurrency"].value_counts()
+                dups = conc_counts[conc_counts > 1]
+                if not dups.empty:
+                    m_short = model.split("/")[-1] if "/" in model else model
+                    tp_s = f"TP={int(tp)}" if pd.notna(tp) else ""
+                    conc_list = ", ".join(str(int(c)) for c in sorted(dups.index))
+                    dup_warnings.append(
+                        f"**{ver_name}** — {m_short} ({tp_s}): duplicate rows at "
+                        f"concurrency {conc_list}"
+                    )
+        if dup_warnings:
+            st.warning(
+                "⚠️ **Duplicate data rows detected** — geometric mean results may be "
+                "skewed. Consider removing duplicates from the CSV.\n\n"
+                + "\n".join(f"- {w}" for w in dup_warnings)
+            )
+
+        summary_data = []
+        for model, tp in common_model_tp:
+            model_short = model.split("/")[-1] if "/" in model else model
+            v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
+            v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+            row_data = {"Model": f"{model_short} {tp_str}"}
+
+            for metric_name, metric_config in metrics_config.items():
+                pct_diff, v1_better, v1_peak, v2_peak, is_similar = (
+                    _compare_two_datasets(
+                        v1_model_data, v2_model_data, metric_config, selected_conc_set
+                    )
+                )
+
+                if pct_diff is None:
+                    row_data[metric_name] = "N/A"
+                else:
+                    sign = "+" if pct_diff > 0 else ""
+                    if metric_config["show_concurrency"] and v1_peak is not None:
+                        cell_text = (
+                            f"{version_1} ({sign}{pct_diff:.1f}%) "
+                            f"peak@{v1_peak} vs {v2_peak}"
+                        )
+                    else:
+                        cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
+
+                    if is_similar:
+                        color = "🟡"
+                    elif v1_better:
+                        color = "🟢"
+                    else:
+                        color = "🔴"
+
+                    row_data[metric_name] = f"{color} {cell_text}"
+
+            summary_data.append(row_data)
+
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+
+            @st.dialog("Version Comparison — Metric Details", width="large")
+            def _show_metric_dialog(metric_name):
+                mcfg = metrics_config[metric_name]
+                col = mcfg["column"]
+                agg = mcfg["aggregation"]
+
+                display_title = metric_name.replace(" (Geometric Mean)", "").replace(
+                    " (Peak)", ""
+                )
+                st.markdown(f"#### {display_title} vs Concurrency")
+                st.markdown(
+                    f"**{version_1}** vs **{version_2}** &nbsp;|&nbsp; "
+                    f"**{selected_accelerator}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
+                )
+
+                _palette_v1 = [
+                    "#EF553B",
+                    "#FF7F0E",
+                    "#D62728",
+                    "#E377C2",
+                    "#FF6692",
+                    "#FFA15A",
+                    "#FECB52",
+                    "#F0027F",
+                ]
+                _palette_v2 = [
+                    "#636EFA",
+                    "#1F77B4",
+                    "#00CC96",
+                    "#19D3F3",
+                    "#AB63FA",
+                    "#17BECF",
+                    "#2CA02C",
+                    "#7F7F7F",
+                ]
+
+                per_model = []
+                for m, tp in common_model_tp:
+                    m_short = m.split("/")[-1] if "/" in m else m
+                    tp_s = f" (TP={int(tp)})" if pd.notna(tp) else ""
+                    lbl = f"{m_short}{tp_s}"
+
+                    d1 = df_v1[(df_v1["model"] == m) & (df_v1["TP"] == tp)]
+                    d2 = df_v2[(df_v2["model"] == m) & (df_v2["TP"] == tp)]
+
+                    c1 = set(d1["intended concurrency"].dropna().unique())
+                    c2 = set(d2["intended concurrency"].dropna().unique())
+                    cc = c1.intersection(c2)
+                    if agg == "geom_mean":
+                        cc = cc.intersection(selected_conc_set)
+                    if not cc:
+                        continue
+
+                    d1c = d1[d1["intended concurrency"].isin(cc)]
+                    d2c = d2[d2["intended concurrency"].isin(cc)]
+
+                    cc_sorted = sorted(cc)
+                    v1_by_c, v2_by_c = [], []
+                    for c in cc_sorted:
+                        r1 = d1c[d1c["intended concurrency"] == c][col].values
+                        r2 = d2c[d2c["intended concurrency"] == c][col].values
+                        v1_by_c.append(float(r1[0]) if len(r1) > 0 else None)
+                        v2_by_c.append(float(r2[0]) if len(r2) > 0 else None)
+
+                    if not any(v is not None for v in v1_by_c) and not any(
+                        v is not None for v in v2_by_c
+                    ):
+                        continue
+
+                    per_model.append(
+                        {"label": lbl, "conc": cc_sorted, "v1": v1_by_c, "v2": v2_by_c}
+                    )
+
+                if not per_model:
+                    st.warning("No data available for this metric.")
+                    return
+
+                if col == "ttft_p95":
+                    for md in per_model:
+                        md["v1"] = [
+                            v / 1000 if v is not None else None for v in md["v1"]
+                        ]
+                        md["v2"] = [
+                            v / 1000 if v is not None else None for v in md["v2"]
+                        ]
+
+                fig = go.Figure()
+                for idx, md in enumerate(per_model):
+                    c_v1 = _palette_v1[idx % len(_palette_v1)]
+                    c_v2 = _palette_v2[idx % len(_palette_v2)]
+                    x_vals = [int(c) for c in md["conc"]]
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["v1"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({version_1})",
+                            line={"color": c_v1, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {version_1}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x_vals,
+                            y=md["v2"],
+                            mode="lines+markers",
+                            name=f"{md['label']} ({version_2})",
+                            line={"color": c_v2, "width": 2.5},
+                            marker={"size": 8},
+                            legendgroup=md["label"],
+                            hovertemplate=(
+                                f"<b>{md['label']}</b> — {version_2}<br>"
+                                "Concurrency: %{x}<br>"
+                                "Value: %{y:,.2f}<extra></extra>"
+                            ),
+                        )
+                    )
+
+                if "tok/sec" in col:
+                    y_title = "Tokens / sec"
+                elif "latency" in col.lower() or col == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                        "font": {"size": 11},
+                        "itemclick": "toggle",
+                        "itemdoubleclick": "toggleothers",
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": sorted(
+                            {int(c) for md in per_model for c in md["conc"]}
+                        ),
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"llmd_dlg_line_{metric_name}",
+                    theme=None,
+                )
+
+                st.caption(
+                    "💡 **Tip:** Click a legend entry to toggle it. "
+                    "Double-click to isolate a single trace. "
+                    f"Warm colors (reds/oranges) = **{version_1}**, "
+                    f"cool colors (blues/greens) = **{version_2}**."
+                )
+
+            st.markdown(
+                "**📊 Click a metric below to open a detailed comparison popup:**"
+            )
+            btn_metrics = [m for m in metrics_config if m != "Peak Output Throughput"]
+            btn_cols = st.columns(len(btn_metrics))
+            for i, m_name in enumerate(btn_metrics):
+                with btn_cols[i]:
+                    short = m_name.replace(" (Geometric Mean)", "").replace(
+                        "Throughput", "Tput"
+                    )
+                    if st.button(
+                        f"📊 {short}",
+                        key=f"llmd_cmp_btn_{i}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.llmd_compare_versions_expanded = True
+                        _show_metric_dialog(m_name)
+
+            st.markdown("")
+
+            st.markdown(
+                "<div style='text-align: right;'>"
+                "<span style='font-size: 0.85em; color: gray;'>"
+                "💡 <b>Tip:</b> Hover over column headers to see detailed descriptions."
+                "</span></div>",
+                unsafe_allow_html=True,
+            )
+
+            column_config = {
+                "Model": st.column_config.TextColumn(
+                    "Model",
+                    help="Model name with tensor parallelism (TP) configuration",
+                ),
+                "Peak Output Throughput": st.column_config.TextColumn(
+                    "Peak Output Throughput",
+                    help="Maximum output tokens/sec achieved. Shows peak concurrency for V1 vs V2.",
+                ),
+                "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Output Throughput (Geometric Mean)",
+                    help="Geometric mean of output tok/sec across selected concurrency levels",
+                ),
+                "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
+                    "Total Throughput (Geometric Mean)",
+                    help="Geometric mean of total (input + output) tok/sec across selected concurrency levels",
+                ),
+                "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
+                    "End-to-End Latency (Geometric Mean)",
+                    help="Geometric mean of request latency median across selected concurrency levels",
+                ),
+                "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "TTFT P95 (Geometric Mean)",
+                    help="Geometric mean of Time-to-First-Token (P95) across selected concurrency levels",
+                ),
+                "ITL P95 (Geometric Mean)": st.column_config.TextColumn(
+                    "ITL P95 (Geometric Mean)",
+                    help="Geometric mean of Inter-Token Latency (P95) across selected concurrency levels",
+                ),
+            }
+
+            st.dataframe(
+                summary_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+            )
+
+            st.markdown("---")
+            st.markdown(
+                f"**Legend:** "
+                f"🟢 {version_1} performs better than {version_2} | "
+                f"🔴 {version_1} performs worse than {version_2} | "
+                f"🟡 Similar Performance (< 5% difference)"
+            )
+
+            st.markdown("---")
+            st.markdown("### 📋 Detailed Model Comparisons")
+            st.markdown("*Click on a model to see detailed metrics comparison*")
+
+            for idx, (model, tp) in enumerate(common_model_tp, 1):
+                model_short = model.split("/")[-1] if "/" in model else model
+                v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
+                v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+
+                tp_val = int(tp) if pd.notna(tp) else "N/A"
+
+                v1_concurrencies = set(
+                    v1_model_data["intended concurrency"].dropna().unique()
+                )
+                v2_concurrencies = set(
+                    v2_model_data["intended concurrency"].dropna().unique()
+                )
+                common_conc = v1_concurrencies.intersection(v2_concurrencies)
+
+                if not common_conc:
+                    continue
+
+                v1_common = v1_model_data[
+                    v1_model_data["intended concurrency"].isin(common_conc)
+                ]
+                v2_common = v2_model_data[
+                    v2_model_data["intended concurrency"].isin(common_conc)
+                ]
+
+                v1_peak_idx = v1_common["output_tok/sec"].idxmax()
+                v2_peak_idx = v2_common["output_tok/sec"].idxmax()
+
+                v1_peak_throughput = v1_common.loc[v1_peak_idx, "output_tok/sec"]
+                v2_peak_throughput = v2_common.loc[v2_peak_idx, "output_tok/sec"]
+                v1_peak_conc = int(v1_common.loc[v1_peak_idx, "intended concurrency"])
+                v2_peak_conc = int(v2_common.loc[v2_peak_idx, "intended concurrency"])
+
+                v1_total_throughput = v1_common.loc[v1_peak_idx, "total_tok/sec"]
+                v2_total_throughput = v2_common.loc[v2_peak_idx, "total_tok/sec"]
+
+                v1_e2e_latency = v1_common.loc[v1_peak_idx, "request_latency_median"]
+                v2_e2e_latency = v2_common.loc[v2_peak_idx, "request_latency_median"]
+
+                v1_ttft = v1_common.loc[v1_peak_idx, "ttft_p95"]
+                v2_ttft = v2_common.loc[v2_peak_idx, "ttft_p95"]
+
+                v1_itl = v1_common.loc[v1_peak_idx, "itl_p95"]
+                v2_itl = v2_common.loc[v2_peak_idx, "itl_p95"]
+
+                def _fmt(val, unit="", decimals=0, round_up=False):
+                    import math
+
+                    if pd.isna(val):
+                        return "N/A"
+                    if round_up:
+                        if decimals == 0:
+                            return f"~{int(math.ceil(val)):,}{unit}"
+                        factor = 10**decimals
+                        rounded_val = math.ceil(val * factor) / factor
+                        return f"~{rounded_val:,.{decimals}f}{unit}"
+                    if decimals == 0:
+                        return f"~{int(val):,}{unit}"
+                    return f"~{val:,.{decimals}f}{unit}"
+
+                def _winner(v1_val, v2_val, higher_is_better, metric_label):
+                    if pd.isna(v1_val) or pd.isna(v2_val) or v2_val == 0:
+                        return "N/A"
+                    pct = ((v1_val - v2_val) / v2_val) * 100
+                    if higher_is_better:
+                        if pct > 5:
+                            return f"{version_1} has +{abs(pct):.1f}% higher {metric_label}"
+                        elif pct < -5:
+                            return f"{version_2} has +{abs(pct):.1f}% higher {metric_label}"
+                        else:
+                            return f"Similar (~{abs(pct):.1f}% difference)"
+                    else:
+                        if pct < -5:
+                            return (
+                                f"{version_1} has {abs(pct):.1f}% lower {metric_label}"
+                            )
+                        elif pct > 5:
+                            return (
+                                f"{version_2} has {abs(pct):.1f}% lower {metric_label}"
+                            )
+                        else:
+                            return f"Similar (~{abs(pct):.1f}% difference)"
+
+                with st.expander(f"{idx}. {model_short} (TP={tp_val})"):
+                    detail_rows = [
+                        {
+                            "Metric": "Peak Output Throughput (output tok/s)",
+                            version_1: f"{_fmt(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2: f"{_fmt(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            "Difference/Winner": _winner(
+                                v1_peak_throughput,
+                                v2_peak_throughput,
+                                True,
+                                "peak output throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Total Throughput (input + output tok/s)",
+                            version_1: f"{_fmt(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2: f"{_fmt(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            "Difference/Winner": _winner(
+                                v1_total_throughput,
+                                v2_total_throughput,
+                                True,
+                                "total throughput",
+                            ),
+                        },
+                        {
+                            "Metric": "Median E2E Latency at Peak Throughput",
+                            version_1: _fmt(v1_e2e_latency, "s", 0, round_up=True),
+                            version_2: _fmt(v2_e2e_latency, "s", 0, round_up=True),
+                            "Difference/Winner": _winner(
+                                v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
+                            ),
+                        },
+                        {
+                            "Metric": "TTFT P95 at Peak Throughput",
+                            version_1: _fmt(v1_ttft / 1000, "s", 2, round_up=True)
+                            if pd.notna(v1_ttft)
+                            else "N/A",
+                            version_2: _fmt(v2_ttft / 1000, "s", 2, round_up=True)
+                            if pd.notna(v2_ttft)
+                            else "N/A",
+                            "Difference/Winner": _winner(
+                                v1_ttft, v2_ttft, False, "P95 TTFT"
+                            ),
+                        },
+                        {
+                            "Metric": "ITL P95 at Peak Throughput",
+                            version_1: _fmt(v1_itl, "ms", 0, round_up=True),
+                            version_2: _fmt(v2_itl, "ms", 0, round_up=True),
+                            "Difference/Winner": _winner(
+                                v1_itl, v2_itl, False, "P95 ITL"
+                            ),
+                        },
+                    ]
+
+                    detail_df = pd.DataFrame(detail_rows)
+                    st.dataframe(
+                        detail_df,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+        else:
+            st.info("No comparison data available for the selected filters.")
+
+
+def render_performance_plots_section(filtered_df, use_expander=True):
+    """Render performance plots section for LLM-D dashboard."""
+    if use_expander:
+        if "performance_plots_expanded" not in st.session_state:
+            st.session_state.performance_plots_expanded = False
+        ctx = st.expander(
+            "📈 Performance Plots",
+            expanded=st.session_state.performance_plots_expanded,
+        )
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        if not use_expander:
+            st.subheader("📈 Performance Plots")
         st.markdown(
             "💡 **Tip:** Click on the full screen view (⛶) of any graph to get a detailed view."
         )
@@ -1303,9 +2330,9 @@ def render_performance_plots_section(filtered_df):
             + " | R="
             + filtered_df["replicas"].astype(str)
             + " | P="
-            + filtered_df["prefill_pod_count"].astype(str)
+            + filtered_df["prefill_pod_count"].fillna("N/A").astype(str)
             + "/D="
-            + filtered_df["decode_pod_count"].astype(str)
+            + filtered_df["decode_pod_count"].fillna("N/A").astype(str)
         )
 
         filtered_df_sorted = filtered_df.sort_values(
@@ -1367,7 +2394,7 @@ def render_performance_plots_section(filtered_df):
                 y_axis: y_axis_display_label,
                 "run_identifier": "Run",
             },
-            template="plotly_white",
+            template="plotly_white_light",
             category_orders={
                 "run_identifier": filtered_df_sorted["run_identifier"].unique().tolist()
             },
@@ -1376,7 +2403,7 @@ def render_performance_plots_section(filtered_df):
             legend_title_text="Run Details (Accelerator | Model | Version | TP | Replicas | Prefill/Decode Count)",
             legend={"font": {"size": 14}},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
         # Right-align the legend caption
         caption_col1, caption_col2 = st.columns([3, 1])
@@ -1384,15 +2411,20 @@ def render_performance_plots_section(filtered_df):
             st.caption("📜 **Tip**: Scroll within the legend box to see all runs")
 
 
-def render_runtime_configs_section(filtered_df):
+def render_runtime_configs_section(filtered_df, use_expander=True):
     """Render runtime server configs section for LLM-D dashboard."""
-    if "runtime_configs_expanded" not in st.session_state:
-        st.session_state.runtime_configs_expanded = False
-
-    with st.expander(
-        "⚙️ Runtime Server Configs Used",
-        expanded=st.session_state.runtime_configs_expanded,
-    ):
+    if use_expander:
+        if "runtime_configs_expanded" not in st.session_state:
+            st.session_state.runtime_configs_expanded = False
+        ctx = st.expander(
+            "⚙️ Runtime Server Configs Used",
+            expanded=st.session_state.runtime_configs_expanded,
+        )
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        if not use_expander:
+            st.subheader("⚙️ Runtime Server Configs Used")
         if "runtime_args" in filtered_df.columns:
             st.markdown(
                 "**Runtime configurations for your current filter selections:**"
@@ -1425,6 +2457,7 @@ def render_runtime_configs_section(filtered_df):
                     ]
                 ].copy()
 
+                configs_df.reset_index(drop=True, inplace=True)
                 configs_df.insert(0, "Config #", range(1, len(configs_df) + 1))
                 configs_df.rename(
                     columns={
@@ -1438,6 +2471,10 @@ def render_runtime_configs_section(filtered_df):
                     },
                     inplace=True,
                 )
+                for _pc in ["Prefill Pods", "Decode Pods"]:
+                    configs_df[_pc] = configs_df[_pc].apply(
+                        lambda v: "N/A" if pd.isna(v) else str(int(v))
+                    )
 
                 # Calculate dynamic height
                 row_height = 40
@@ -1478,10 +2515,10 @@ def render_runtime_configs_section(filtered_df):
                             "Version", width=100, pinned=True
                         ),
                         "Replicas": st.column_config.NumberColumn("Replicas", width=80),
-                        "Prefill Pods": st.column_config.NumberColumn(
+                        "Prefill Pods": st.column_config.TextColumn(
                             "Prefill Pods", width=100
                         ),
-                        "Decode Pods": st.column_config.NumberColumn(
+                        "Decode Pods": st.column_config.TextColumn(
                             "Decode Pods", width=100
                         ),
                         "Runtime Arguments": st.column_config.TextColumn(
@@ -1517,13 +2554,24 @@ def render_runtime_configs_section(filtered_df):
             )
 
 
-def render_filtered_data_section(filtered_df):
+def render_filtered_data_section(filtered_df, use_expander=True):
     """Render filtered data table section for LLM-D dashboard."""
-    with st.expander("📄 Filtered Data from the above filters", expanded=False):
+    if use_expander:
+        ctx = st.expander("📄 Filtered Data from the above filters", expanded=False)
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        if not use_expander:
+            st.subheader("📄 Filtered Data")
         st.info(
             "💡 **Tips**: Hover over column headers to see detailed descriptions of each field."
         )
         display_filtered_df = filtered_df.copy()
+        for _pc in ["prefill_pod_count", "decode_pod_count"]:
+            if _pc in display_filtered_df.columns:
+                display_filtered_df[_pc] = display_filtered_df[_pc].apply(
+                    lambda v: "N/A" if pd.isna(v) else str(int(v))
+                )
         display_filtered_df.reset_index(drop=True, inplace=True)
         display_filtered_df.insert(0, "Row #", range(1, len(display_filtered_df) + 1))
 
@@ -1575,13 +2623,13 @@ def render_filtered_data_section(filtered_df):
                 "replicas",
                 help="Number of replica instances deployed",
             ),
-            "prefill_pod_count": st.column_config.NumberColumn(
+            "prefill_pod_count": st.column_config.TextColumn(
                 "prefill_pod_count",
-                help="Number of pods dedicated to prefill (prompt processing)",
+                help="Number of pods dedicated to prefill (prompt processing). N/A when not applicable.",
             ),
-            "decode_pod_count": st.column_config.NumberColumn(
+            "decode_pod_count": st.column_config.TextColumn(
                 "decode_pod_count",
-                help="Number of pods dedicated to decode (token generation)",
+                help="Number of pods dedicated to decode (token generation). N/A when not applicable.",
             ),
             "router_config": st.column_config.TextColumn(
                 "router_config",
@@ -1774,17 +2822,166 @@ def render_llmd_dashboard(llmd_csv_path: str):
         st.error("No data available. Please check the data file.")
         return
 
-    # Render filters
-    filtered_df, filter_selections = render_llmd_filters(df)
+    # Section navigation via sidebar
+    section_list = [
+        "📈 Performance Plots",
+        "⚖️ Compare Versions",
+        "🔄 Compare with RHAIIS",
+        "⚙️ Runtime Server Configs",
+        "📄 Filtered Data",
+    ]
 
-    if filtered_df.empty:
-        st.warning("⚠️ No runs match the selected filters.")
-        return
+    SECTION_GROUPS = [
+        (
+            "Performance Analysis",
+            [
+                "📈 Performance Plots",
+                "⚖️ Compare Versions",
+                "🔄 Compare with RHAIIS",
+            ],
+        ),
+        (
+            "Tools",
+            [
+                "⚙️ Runtime Server Configs",
+                "📄 Filtered Data",
+            ],
+        ),
+    ]
 
-    st.markdown("---")
+    current_section = st.session_state.get("llmd_active_section", section_list[0])
+    if current_section not in section_list:
+        current_section = section_list[0]
+    st.session_state.llmd_active_section = current_section
 
-    # Render sections
-    render_performance_plots_section(filtered_df)
-    render_rhaiis_comparison_section(filtered_df)
-    render_runtime_configs_section(filtered_df)
-    render_filtered_data_section(filtered_df)
+    LLMD_SECTIONS_WITHOUT_GLOBAL_FILTERS = {
+        "⚖️ Compare Versions",
+        "🔄 Compare with RHAIIS",
+    }
+    _show_global_filters = current_section not in LLMD_SECTIONS_WITHOUT_GLOBAL_FILTERS
+
+    if _show_global_filters:
+        filtered_df, filter_selections = render_llmd_filters(df)
+
+        if filtered_df.empty:
+            st.warning("⚠️ No runs match the selected filters.")
+            return
+
+        st.markdown("---")
+    else:
+        filtered_df = df.copy()
+
+    with st.sidebar:
+        for group_name, group_sections in SECTION_GROUPS:
+            visible = [s for s in group_sections if s in section_list]
+            if not visible:
+                continue
+            st.markdown(
+                f'<p class="nav-group-header">{group_name}</p>',
+                unsafe_allow_html=True,
+            )
+            for section_name in visible:
+                is_active = section_name == current_section
+                btn_type: Literal["primary", "secondary"] = (
+                    "primary" if is_active else "secondary"
+                )
+                if st.button(
+                    section_name,
+                    key=f"llmd_nav_{section_name}",
+                    use_container_width=True,
+                    type=btn_type,
+                ):
+                    st.session_state.llmd_active_section = section_name
+                    st.rerun()
+
+    def _render_selected_section(sel):
+        if sel == "📈 Performance Plots":
+            render_performance_plots_section(filtered_df, use_expander=False)
+        elif sel == "⚖️ Compare Versions":
+            render_compare_versions_section(df, use_expander=False)
+        elif sel == "🔄 Compare with RHAIIS":
+            render_rhaiis_comparison_section(df, use_expander=False)
+        elif sel == "⚙️ Runtime Server Configs":
+            render_runtime_configs_section(filtered_df, use_expander=False)
+        elif sel == "📄 Filtered Data":
+            render_filtered_data_section(filtered_df, use_expander=False)
+
+    _render_selected_section(current_section)
+
+    # Click anywhere on main area to collapse sidebar + scroll to top + hamburger icon
+    import streamlit.components.v1 as _stc
+
+    _stc.html(
+        f"""
+<script>
+(function() {{
+    var doc = parent.document;
+
+    // --- Scroll to top on section change ---
+    var currentSection = "{current_section}";
+    if (doc._lastSection && doc._lastSection !== currentSection) {{
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (main) main.scrollTop = 0;
+        var sc = doc.querySelector('.main');
+        if (sc) sc.scrollTop = 0;
+        parent.window.scrollTo(0, 0);
+    }}
+    doc._lastSection = currentSection;
+
+    // --- Click-to-close sidebar ---
+    if (doc._sidebarClickClose) {{
+        doc.removeEventListener('click', doc._sidebarClickClose);
+    }}
+    if (doc._clickCloseTimeout) {{
+        clearTimeout(doc._clickCloseTimeout);
+    }}
+
+    doc._sidebarClickClose = function(e) {{
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (!sb || sb.getAttribute('aria-expanded') !== 'true') return;
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (!main || !main.contains(e.target)) return;
+        setTimeout(function() {{
+            var sb2 = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb2 || sb2.getAttribute('aria-expanded') !== 'true') return;
+            var closeBtn = sb2.querySelector('[data-testid="stSidebarHeader"] button')
+                        || sb2.querySelector('button[kind="headerNoPadding"]')
+                        || sb2.querySelector('button[kind="header"]');
+            if (closeBtn) closeBtn.click();
+        }}, 0);
+    }};
+
+    var clickDelay = doc._clickCloseInitialized ? 0 : 1500;
+    doc._clickCloseInitialized = true;
+    doc._clickCloseTimeout = setTimeout(function() {{
+        doc.addEventListener('click', doc._sidebarClickClose);
+    }}, clickDelay);
+
+    // --- Hamburger icon replacement ---
+    if (doc._hamburgerInterval) clearInterval(doc._hamburgerInterval);
+
+    function scan() {{
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (sb) {{
+            var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                   || sb.querySelector('button[kind="headerNoPadding"]')
+                   || sb.querySelector('button[kind="header"]');
+            if (hdr) hdr.classList.add('hamburger-btn');
+        }}
+        var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
+        if (!sidebarOpen) {{
+            var header = doc.querySelector('[data-testid="stHeader"]');
+            if (header) {{
+                var firstBtn = header.querySelector('button');
+                if (firstBtn) firstBtn.classList.add('hamburger-btn');
+            }}
+        }}
+    }}
+
+    scan();
+    doc._hamburgerInterval = setInterval(scan, 500);
+}})();
+</script>
+""",
+        height=0,
+    )
