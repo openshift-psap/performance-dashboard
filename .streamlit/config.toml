@@ -1,0 +1,10 @@
+[global]
+disableWidgetStateDuplicationWarning = true
+
+[theme]
+base = "light"
+primaryColor = "#cc0000"
+backgroundColor = "#fafbfd"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#1a1f36"
+font = "sans serif"
