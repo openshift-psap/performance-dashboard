@@ -167,7 +167,7 @@ dmypy.json
 # Streamlit
 
 !.streamlit/config.toml
-
+.streamlit/
 
 # IDE files
 .vscode/
