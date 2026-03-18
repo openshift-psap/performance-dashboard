@@ -10,7 +10,22 @@ from typing import Optional
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
+
+if "plotly_white_light" not in pio.templates:
+    _light_hover = go.layout.Template(
+        layout=go.Layout(
+            hoverlabel={
+                "bgcolor": "white",
+                "font_color": "#262730",
+                "bordercolor": "#d1d5db",
+            },
+        ),
+    )
+    pio.templates["plotly_white_light"] = pio.templates["plotly_white"]
+    pio.templates["plotly_white_light"].layout.update(_light_hover.layout)
+    pio.templates.default = "plotly_white_light"
 
 from dashboard_styles import (
     generate_color_palette,
@@ -19,6 +34,7 @@ from dashboard_styles import (
 )
 
 
+@st.cache_data(ttl=300)
 def load_mlperf_data(file_path: str) -> pd.DataFrame:
     """Load and parse MLPerf Inference Datacenter results CSV.
 
@@ -1269,6 +1285,7 @@ def create_normalized_comparison_chart(
     return fig, baseline_info
 
 
+@st.cache_data(ttl=600)
 def load_dataset_for_model(model_name: str) -> Optional[pd.DataFrame]:
     """Load the dataset file (pickle or JSON) for a specific MLPerf model.
 
@@ -1893,7 +1910,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                             filtered_df, benchmark, scenario, filter_selections
                         )
                         if fig:
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, theme=None)
                         else:
                             st.info(f"No data available for {benchmark} - {scenario}")
 
@@ -1965,7 +1982,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                                     f"{baseline_info['accelerator']} - "
                                     f"Normalized Value: {baseline_info['value']:,.2f}"
                                 )
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, use_container_width=True, theme=None)
                         else:
                             st.info(f"No data available for {benchmark} - {scenario}")
 
@@ -2083,7 +2100,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                 },
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, theme=None)
 
             # Display detailed table
             with st.expander("📊 Detailed Comparison Table", expanded=False):
@@ -2200,10 +2217,12 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        st.plotly_chart(fig_input, use_container_width=True)
+                        st.plotly_chart(fig_input, use_container_width=True, theme=None)
 
                     with col2:
-                        st.plotly_chart(fig_output, use_container_width=True)
+                        st.plotly_chart(
+                            fig_output, use_container_width=True, theme=None
+                        )
 
                     # Show additional statistics
                     with st.expander("📊 Detailed Statistics", expanded=False):
@@ -2305,7 +2324,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                         comparison_df, model_name, scenarios
                     )
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, use_container_width=True, theme=None)
 
                     # Display detailed comparison table
                     with st.expander(
@@ -2329,3 +2348,73 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                     st.info(
                         "No common systems found across the selected versions and scenarios."
                     )
+
+    # Bottom scroll space
+    st.markdown('<div style="height: 150px;"></div>', unsafe_allow_html=True)
+
+    # Click anywhere on main area to collapse sidebar + hamburger icon replacement
+    import streamlit.components.v1 as _stc
+
+    _stc.html(
+        """
+<script>
+(function() {
+    var doc = parent.document;
+
+    // --- Click-to-close sidebar ---
+    if (doc._sidebarClickClose) {
+        doc.removeEventListener('click', doc._sidebarClickClose);
+    }
+    if (doc._clickCloseTimeout) {
+        clearTimeout(doc._clickCloseTimeout);
+    }
+
+    doc._sidebarClickClose = function(e) {
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (!sb || sb.getAttribute('aria-expanded') !== 'true') return;
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (!main || !main.contains(e.target)) return;
+        setTimeout(function() {
+            var sb2 = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb2 || sb2.getAttribute('aria-expanded') !== 'true') return;
+            var closeBtn = sb2.querySelector('[data-testid="stSidebarHeader"] button')
+                        || sb2.querySelector('button[kind="headerNoPadding"]')
+                        || sb2.querySelector('button[kind="header"]');
+            if (closeBtn) closeBtn.click();
+        }, 0);
+    };
+
+    var clickDelay = doc._clickCloseInitialized ? 0 : 1500;
+    doc._clickCloseInitialized = true;
+    doc._clickCloseTimeout = setTimeout(function() {
+        doc.addEventListener('click', doc._sidebarClickClose);
+    }, clickDelay);
+
+    // --- Hamburger icon replacement ---
+    if (doc._hamburgerInterval) clearInterval(doc._hamburgerInterval);
+
+    function scan() {
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (sb) {
+            var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                   || sb.querySelector('button[kind="headerNoPadding"]')
+                   || sb.querySelector('button[kind="header"]');
+            if (hdr) hdr.classList.add('hamburger-btn');
+        }
+        var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
+        if (!sidebarOpen) {
+            var header = doc.querySelector('[data-testid="stHeader"]');
+            if (header) {
+                var firstBtn = header.querySelector('button');
+                if (firstBtn) firstBtn.classList.add('hamburger-btn');
+            }
+        }
+    }
+
+    scan();
+    doc._hamburgerInterval = setInterval(scan, 500);
+})();
+</script>
+""",
+        height=0,
+    )

@@ -144,6 +144,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+uv.lock
 
 # Spyder project settings
 .spyderproject
@@ -164,8 +165,8 @@ dmypy.json
 .pyre/
 
 # Streamlit
+!.streamlit/config.toml
 .streamlit/
-
 # IDE files
 .vscode/
 .idea/

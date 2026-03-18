@@ -1,4 +1,4 @@
-"""LLM Inference Performance Dashboard.
+"""Staging Performance Dashboard.
 
 A comprehensive dashboard for analyzing and comparing LLM inference performance
 across different models, versions, and hardware configurations.
@@ -17,16 +17,32 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
+import streamlit.components.v1 as _stc
 from plotly.subplots import make_subplots
 
-# Import styling functions
 from dashboard_styles import (
     apply_theme_css,
     get_app_css,
     initialize_session_state,
     initialize_streamlit_config,
 )
+from intelliconfig import render_intelliconfig_section
+
+# Set global Plotly template: white background with white hover labels
+_light_hover = go.layout.Template(
+    layout=go.Layout(
+        hoverlabel={
+            "bgcolor": "white",
+            "font_color": "#262730",
+            "bordercolor": "#d1d5db",
+        },
+    ),
+)
+pio.templates["plotly_white_light"] = pio.templates["plotly_white"]
+pio.templates["plotly_white_light"].layout.update(_light_hover.layout)
+pio.templates.default = "plotly_white_light"
 
 # Import MLPerf dashboard
 try:
@@ -483,6 +499,1187 @@ def create_rhaiis_dataset_histograms(data):
     return fig_input, fig_output
 
 
+def _short_model_name(full_name):
+    """Extract a short display name from a full model path."""
+    name = full_name.split("/")[-1] if "/" in full_name else full_name
+    for suffix in ["-Instruct", "-instruct", "-dynamic"]:
+        name = name.replace(suffix, "")
+    return name
+
+
+_FAMILY_PATTERNS = [
+    ("Llama", ["llama"]),
+    ("Granite", ["granite"]),
+    ("Mixtral", ["mixtral"]),
+    ("Mistral", ["mistral", "ministral"]),
+    ("Falcon", ["falcon"]),
+    ("Qwen", ["qwen"]),
+    ("DeepSeek", ["deepseek"]),
+    ("Nemotron", ["nemotron"]),
+    ("BART", ["bart"]),
+]
+
+
+def _model_family(model_name):
+    """Map a full model name to its model family."""
+    lower = model_name.lower()
+    for family, keywords in _FAMILY_PATTERNS:
+        if any(kw in lower for kw in keywords):
+            return family
+    if "/" in model_name:
+        return model_name.split("/")[0]
+    return model_name
+
+
+def _compute_overview_data(df):
+    """Compute overview metrics: RHAIIS-3.3 vs RHAIIS-3.2.5 and vs vLLM-0.13.0."""
+    CURRENT = "RHAIIS-3.3"
+    PREVIOUS = "RHAIIS-3.2.5"
+    VLLM = "vLLM-0.13.0"
+
+    metrics_cfg = {
+        "Throughput": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "TTFT P95": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P95": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
+    df_curr = df[df["version"] == CURRENT].copy()
+    df_prev = df[df["version"] == PREVIOUS].copy()
+    df_vllm = df[df["version"] == VLLM].copy()
+
+    def _combos(d):
+        return set(zip(d["model"], d["TP"], d["accelerator"], d["profile"]))
+
+    common_combos = sorted(_combos(df_curr) & _combos(df_prev))
+
+    # Per-combo metric deltas (current vs previous)
+    combo_results = []
+    for model, tp, accel, profile in common_combos:
+        mask_c = (
+            (df_curr["model"] == model)
+            & (df_curr["TP"] == tp)
+            & (df_curr["accelerator"] == accel)
+            & (df_curr["profile"] == profile)
+        )
+        mask_p = (
+            (df_prev["model"] == model)
+            & (df_prev["TP"] == tp)
+            & (df_prev["accelerator"] == accel)
+            & (df_prev["profile"] == profile)
+        )
+        cd, pd_ = df_curr[mask_c], df_prev[mask_p]
+        all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
+            pd_["intended concurrency"].dropna().unique()
+        )
+        row = {
+            "model": model,
+            "short_name": _short_model_name(model),
+            "tp": tp,
+            "accelerator": accel,
+            "profile": profile,
+        }
+        for mname, mc in metrics_cfg.items():
+            pct, better, _, _, similar = compare_two_datasets(cd, pd_, mc, all_conc)
+            row[f"{mname}_pct"] = pct
+            row[f"{mname}_better"] = better
+            row[f"{mname}_similar"] = similar
+        combo_results.append(row)
+
+    # --- Aggregate KPIs ---
+    tput_pcts = [
+        r["Throughput_pct"] for r in combo_results if r["Throughput_pct"] is not None
+    ]
+    best_gain = max(tput_pcts) if tput_pcts else 0.0
+
+    # Normalise so positive = good, negative = bad for every metric
+    all_normalised = []
+    for r in combo_results:
+        for mname, mc in metrics_cfg.items():
+            pct = r.get(f"{mname}_pct")
+            if pct is not None:
+                all_normalised.append(pct if mc["higher_is_better"] else -pct)
+    worst_regression = min(all_normalised) if all_normalised else 0.0
+
+    wins = sum(1 for r in combo_results if r.get("Throughput_better") is True)
+    total_cmp = sum(1 for r in combo_results if r.get("Throughput_pct") is not None)
+    win_rate = (wins / total_cmp * 100) if total_cmp > 0 else 0.0
+
+    models_tested = df_curr["model"].nunique()
+    models_list = sorted(df_curr["model"].unique())
+    accels_covered = df_curr["accelerator"].nunique()
+    accels_list = sorted(df_curr["accelerator"].unique())
+    health = (
+        "Healthy" if win_rate >= 80 else ("Warning" if win_rate >= 60 else "Regression")
+    )
+
+    # Identify which combo produced the best gain / worst regression
+    best_gain_combo = None
+    for r in combo_results:
+        if r.get("Throughput_pct") == best_gain and best_gain > 0:
+            best_gain_combo = r
+            break
+
+    worst_reg_combo = None
+    worst_reg_metric = None
+    for r in combo_results:
+        for mname, mc in metrics_cfg.items():
+            pct = r.get(f"{mname}_pct")
+            if pct is not None:
+                norm = pct if mc["higher_is_better"] else -pct
+                if abs(norm - worst_regression) < 0.01:
+                    worst_reg_combo = r
+                    worst_reg_metric = mname
+
+    # Win/loss breakdown per combo
+    win_combos = [r for r in combo_results if r.get("Throughput_better") is True]
+    loss_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_pct") is not None and not r.get("Throughput_better")
+    ]
+
+    # --- Per-accelerator rollup ---
+    accel_rollup = {}
+    for accel in sorted({r["accelerator"] for r in combo_results}):
+        ar = [r for r in combo_results if r["accelerator"] == accel]
+        tv = [r["Throughput_pct"] for r in ar if r["Throughput_pct"] is not None]
+        avg_tput = float(np.mean(tv)) if tv else 0.0
+        aw = sum(1 for r in ar if r.get("Throughput_better") is True)
+        at = sum(1 for r in ar if r.get("Throughput_pct") is not None)
+        awr = (aw / at * 100) if at > 0 else 0.0
+
+        worst_m, worst_v = None, 0.0
+        for r in ar:
+            for mname, mc in metrics_cfg.items():
+                pct = r.get(f"{mname}_pct")
+                if pct is not None:
+                    norm = pct if mc["higher_is_better"] else -pct
+                    if norm < worst_v:
+                        worst_v, worst_m = norm, mname
+
+        ah = "Healthy" if awr >= 80 else ("Warning" if awr >= 60 else "Regression")
+        accel_rollup[accel] = {
+            "n_models": len({r["model"] for r in ar}),
+            "avg_tput_pct": avg_tput,
+            "win_rate": awr,
+            "health": ah,
+            "worst_metric": worst_m,
+            "worst_val": worst_v,
+            "results": ar,
+        }
+
+    # --- Per-model-family rollup ---
+    family_buckets = {}
+    for r in combo_results:
+        fam = _model_family(r["model"])
+        family_buckets.setdefault(fam, []).append(r)
+
+    family_rollup = {}
+    for fam, results in sorted(family_buckets.items()):
+        tv = [r["Throughput_pct"] for r in results if r["Throughput_pct"] is not None]
+        avg_tput = float(np.mean(tv)) if tv else 0.0
+        fw = sum(1 for r in results if r.get("Throughput_better") is True)
+        ft = sum(1 for r in results if r.get("Throughput_pct") is not None)
+        fwr = (fw / ft * 100) if ft > 0 else 0.0
+
+        worst_m, worst_v, worst_raw = None, 0.0, 0.0
+        for r in results:
+            for mname, mc in metrics_cfg.items():
+                pct = r.get(f"{mname}_pct")
+                if pct is not None:
+                    norm = pct if mc["higher_is_better"] else -pct
+                    if norm < worst_v:
+                        worst_v, worst_m, worst_raw = norm, mname, pct
+
+        fh = "Healthy" if fwr >= 80 else ("Warning" if fwr >= 60 else "Regression")
+        family_rollup[fam] = {
+            "n_models": len({r["model"] for r in results}),
+            "avg_tput_pct": avg_tput,
+            "win_rate": fwr,
+            "health": fh,
+            "worst_metric": worst_m,
+            "worst_val": worst_v,
+            "worst_raw_pct": worst_raw,
+            "results": results,
+        }
+
+    # --- vLLM comparison (H200 only) ---
+    common_vllm = sorted(_combos(df_curr) & _combos(df_vllm))
+    vllm_results = []
+    tput_cfg = metrics_cfg["Throughput"]
+    for model, tp, accel, profile in common_vllm:
+        if accel != "H200":
+            continue
+        mask_c = (
+            (df_curr["model"] == model)
+            & (df_curr["TP"] == tp)
+            & (df_curr["accelerator"] == accel)
+            & (df_curr["profile"] == profile)
+        )
+        mask_v = (
+            (df_vllm["model"] == model)
+            & (df_vllm["TP"] == tp)
+            & (df_vllm["accelerator"] == accel)
+            & (df_vllm["profile"] == profile)
+        )
+        cd, vd = df_curr[mask_c], df_vllm[mask_v]
+        all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
+            vd["intended concurrency"].dropna().unique()
+        )
+        pct, better, _, _, similar = compare_two_datasets(cd, vd, tput_cfg, all_conc)
+        vllm_results.append(
+            {
+                "model": model,
+                "short_name": _short_model_name(model),
+                "profile": clean_profile_name(profile),
+                "tp": tp,
+                "pct": pct,
+                "better": better,
+                "similar": similar,
+            }
+        )
+
+    vllm_with_data = [r for r in vllm_results if r.get("pct") is not None]
+    vllm_wins = sum(1 for r in vllm_with_data if r["better"] and not r["similar"])
+    vllm_ties = sum(1 for r in vllm_with_data if r["similar"])
+    vllm_losses = sum(1 for r in vllm_with_data if not r["better"] and not r["similar"])
+    vllm_pcts = [r["pct"] for r in vllm_with_data]
+    vllm_avg = float(np.mean(vllm_pcts)) if vllm_pcts else 0.0
+    vllm_n_models = len({r["model"] for r in vllm_with_data})
+
+    # --- New in this release ---
+    new_models = sorted(set(df_curr["model"].unique()) - set(df_prev["model"].unique()))
+    new_accels = sorted(
+        set(df_curr["accelerator"].unique()) - set(df_prev["accelerator"].unique())
+    )
+
+    return {
+        "best_gain": best_gain,
+        "best_gain_combo": best_gain_combo,
+        "worst_regression": worst_regression,
+        "worst_reg_combo": worst_reg_combo,
+        "worst_reg_metric": worst_reg_metric,
+        "win_rate": win_rate,
+        "win_combos": win_combos,
+        "loss_combos": loss_combos,
+        "total_cmp": total_cmp,
+        "models_tested": models_tested,
+        "models_list": models_list,
+        "accels_covered": accels_covered,
+        "accels_list": accels_list,
+        "health": health,
+        "accel_rollup": accel_rollup,
+        "family_rollup": family_rollup,
+        "combo_results": combo_results,
+        "vllm_avg": vllm_avg,
+        "vllm_wins": vllm_wins,
+        "vllm_ties": vllm_ties,
+        "vllm_losses": vllm_losses,
+        "vllm_n_models": vllm_n_models,
+        "vllm_results": vllm_with_data,
+        "new_models": new_models,
+        "new_accels": new_accels,
+    }
+
+
+def _health_dots_html(health):
+    """Return traffic-light dot HTML for a health status string."""
+    if health == "Healthy":
+        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-green"></span>'
+    elif health == "Warning":
+        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-amber"></span><span class="health-dot dot-grey"></span>'
+    else:
+        dots = '<span class="health-dot dot-red"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span>'
+    return f'<span class="health-dots">{dots}</span>'
+
+
+def _hm_cell(pct, higher_is_better):
+    """Return styled heatmap cell HTML for a % delta."""
+    if pct is None:
+        return '<span class="hm-cell hm-neutral">N/A</span>'
+    # Normalise: positive = good
+    norm = pct if higher_is_better else -pct
+    sign = "+" if pct > 0 else ""
+    label = f"{sign}{pct:.1f} %"
+    if norm > 5:
+        cls = "hm-improve-strong"
+    elif norm >= -5:
+        cls = "hm-similar"
+    else:
+        cls = "hm-regress-strong"
+    return f'<span class="hm-cell {cls}">{label}</span>'
+
+
+def render_competitive_analysis_section(df):
+    """Render the Competitive Analysis page.
+
+    Pre-computed comparison tables showing RHAIIS/vLLM performance
+    against sglang and TRT-LLM on H200.
+    """
+    st.header("Competitive Analysis")
+    st.markdown(
+        "Performance comparison of **RHAIIS-3.3** and optimized competitive configurations "
+        "against **sglang** and **TRT-LLM** on **H200**."
+    )
+    st.caption(
+        "Each comparison below shows a per-model summary: "
+        "a model is a **Win** if it has more metric wins than losses (baseline outperforms by ≥5%), "
+        "a **Loss** if it has more metric losses than wins (baseline underperforms by ≥5%), "
+        "and **Similar** otherwise. "
+        "Metrics evaluated: Output Throughput, Total Throughput, End-to-End Latency, TTFT P95, and ITL P95 geometric means."
+    )
+
+    st.markdown(
+        """<style>
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button {
+            font-size: 1.3rem;
+            padding: 0.8rem 1.5rem;
+            font-weight: 600;
+            min-height: 50px;
+        }
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
+            font-size: 1.4rem;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+    ACCELERATOR = "H200"
+    PROFILES = [
+        ("Profile A: Balanced (1k/1k)", "1k/1k"),
+        ("Profile D: Prefill Heavy (8k/1k)", "8k/1k"),
+    ]
+
+    COMPARISON_GROUPS = [
+        {
+            "title": "Default Configuration",
+            "description": (
+                "How **RHAIIS-3.3** (default serving config) compares to competing engines."
+            ),
+            "baselines": ["RHAIIS-3.3"],
+            "competitors": ["sglang-0.5.8", "TRT-LLM-1.0.0rc5", "TRT-LLM-1.2.0rc2"],
+        },
+        {
+            "title": "Optimized (Competitive) Configuration",
+            "description": (
+                "How **optimized / competitive** configurations compare to the same competitors, "
+                "demonstrating that tuned configs deliver better performance."
+            ),
+            "baselines": ["vLLM-0.13.0-competitive", "RHAIIS-3.3-competitive"],
+            "competitors": ["sglang-0.5.8", "TRT-LLM-1.0.0rc5", "TRT-LLM-1.2.0rc2"],
+        },
+    ]
+
+    metrics_config = {
+        "Output Throughput (Geometric Mean)": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+            "show_concurrency": False,
+        },
+        "Total Throughput (Geometric Mean)": {
+            "column": "total_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+            "show_concurrency": False,
+        },
+        "End-to-End Latency (Geometric Mean)": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+            "show_concurrency": False,
+        },
+        "TTFT P95 (Geometric Mean)": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+            "show_concurrency": False,
+        },
+        "ITL P95 (Geometric Mean)": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+            "show_concurrency": False,
+        },
+    }
+
+    column_config = {
+        "Model": st.column_config.TextColumn(
+            "Model",
+            help="Model name with tensor parallelism (TP) configuration",
+        ),
+        "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
+            "Output Throughput (Geometric Mean)",
+            help="Geometric mean of output tok/sec across all common concurrency levels",
+        ),
+        "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
+            "Total Throughput (Geometric Mean)",
+            help="Geometric mean of total (input + output) tok/sec across all common concurrency levels",
+        ),
+        "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
+            "End-to-End Latency (Geometric Mean)",
+            help="Geometric mean of request latency median across all common concurrency levels",
+        ),
+        "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
+            "TTFT P95 (Geometric Mean)",
+            help="Geometric mean of Time-to-First-Token (P95) across all common concurrency levels",
+        ),
+        "ITL P95 (Geometric Mean)": st.column_config.TextColumn(
+            "ITL P95 (Geometric Mean)",
+            help="Geometric mean of Inter-Token Latency (P95) across all common concurrency levels",
+        ),
+    }
+
+    h200_df = df[df["accelerator"] == ACCELERATOR]
+    if h200_df.empty:
+        st.warning("⚠️ No H200 data available.")
+        return
+
+    ca_container = st.container(key="ca_section")
+    with ca_container:
+        for group in COMPARISON_GROUPS:
+            st.subheader(group["title"])
+            st.markdown(group["description"])
+
+            group_has_data = False
+            group_scores = {}
+            score_placeholder = st.container()
+
+            for baseline in group["baselines"]:
+                for competitor in group["competitors"]:
+                    profile_tabs_data = {}
+
+                    for profile_full, profile_short in PROFILES:
+                        df_base = h200_df[
+                            (h200_df["version"] == baseline)
+                            & (h200_df["profile"] == profile_full)
+                        ].copy()
+                        df_comp = h200_df[
+                            (h200_df["version"] == competitor)
+                            & (h200_df["profile"] == profile_full)
+                        ].copy()
+
+                        if df_base.empty or df_comp.empty:
+                            continue
+
+                        base_model_tp = set(
+                            zip(df_base["model"].tolist(), df_base["TP"].tolist())
+                        )
+                        comp_model_tp = set(
+                            zip(df_comp["model"].tolist(), df_comp["TP"].tolist())
+                        )
+                        common_model_tp = sorted(
+                            base_model_tp.intersection(comp_model_tp)
+                        )
+
+                        if not common_model_tp:
+                            continue
+
+                        all_common_conc: set = set()
+                        for model, tp in common_model_tp:
+                            base_conc = set(
+                                df_base[
+                                    (df_base["model"] == model) & (df_base["TP"] == tp)
+                                ]["intended concurrency"]
+                                .dropna()
+                                .unique()
+                            )
+                            comp_conc = set(
+                                df_comp[
+                                    (df_comp["model"] == model) & (df_comp["TP"] == tp)
+                                ]["intended concurrency"]
+                                .dropna()
+                                .unique()
+                            )
+                            all_common_conc.update(base_conc.intersection(comp_conc))
+
+                        conc_set = all_common_conc
+
+                        summary_data = []
+                        for model, tp in common_model_tp:
+                            model_short_name = (
+                                model.split("/")[-1] if "/" in model else model
+                            )
+                            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+                            row = {"Model": f"{model_short_name} {tp_str}"}
+
+                            base_data = df_base[
+                                (df_base["model"] == model) & (df_base["TP"] == tp)
+                            ]
+                            comp_data = df_comp[
+                                (df_comp["model"] == model) & (df_comp["TP"] == tp)
+                            ]
+
+                            for metric_name, mcfg in metrics_config.items():
+                                pct_diff, base_better, b_peak, c_peak, is_similar = (
+                                    compare_two_datasets(
+                                        base_data, comp_data, mcfg, conc_set
+                                    )
+                                )
+                                if pct_diff is None:
+                                    row[metric_name] = "N/A"
+                                else:
+                                    sign = "+" if pct_diff > 0 else ""
+                                    if mcfg["show_concurrency"] and b_peak is not None:
+                                        cell = (
+                                            f"{baseline} ({sign}{pct_diff:.1f}%) "
+                                            f"peak@{b_peak} vs {c_peak}"
+                                        )
+                                    else:
+                                        cell = f"{baseline} ({sign}{pct_diff:.1f}%)"
+                                    if is_similar:
+                                        color = "🟡"
+                                    elif base_better:
+                                        color = "🟢"
+                                    else:
+                                        color = "🔴"
+                                    row[metric_name] = f"{color} {cell}"
+
+                            summary_data.append(row)
+
+                        if summary_data:
+                            conc_list = sorted(int(c) for c in conc_set)
+                            profile_tabs_data[profile_short] = (
+                                summary_data,
+                                conc_list,
+                            )
+
+                    if not profile_tabs_data:
+                        continue
+
+                    group_has_data = True
+                    pair_key = f"{baseline}_vs_{competitor}".replace(" ", "_")
+
+                    summary_metrics = {
+                        "Output Throughput (Geometric Mean)",
+                        "Total Throughput (Geometric Mean)",
+                        "End-to-End Latency (Geometric Mean)",
+                        "TTFT P95 (Geometric Mean)",
+                        "ITL P95 (Geometric Mean)",
+                    }
+
+                    per_profile_verdicts = []
+                    for prof_label, (prof_data, _conc) in profile_tabs_data.items():
+                        model_wins, model_losses, model_similar = 0, 0, 0
+                        for row in prof_data:
+                            mw, ml, ms = 0, 0, 0
+                            for m in summary_metrics:
+                                cell = row.get(m, "")
+                                if cell.startswith("🟢"):
+                                    mw += 1
+                                elif cell.startswith("🔴"):
+                                    ml += 1
+                                elif cell.startswith("🟡"):
+                                    ms += 1
+                            if mw > ml:
+                                model_wins += 1
+                            elif ml > mw:
+                                model_losses += 1
+                            else:
+                                model_similar += 1
+                        total = model_wins + model_losses + model_similar
+                        if total == 0:
+                            icon = "🟡"
+                        elif model_wins > model_losses:
+                            icon = "🟢"
+                        elif model_losses > model_wins:
+                            icon = "🔴"
+                        else:
+                            icon = "🟡"
+                        per_profile_verdicts.append(
+                            f"{icon} {prof_label}: {model_wins} model wins, {model_losses} model losses, {model_similar} similar"
+                        )
+                        if baseline not in group_scores:
+                            group_scores[baseline] = {}
+                        if competitor not in group_scores[baseline]:
+                            group_scores[baseline][competitor] = [0, 0, 0]
+                        group_scores[baseline][competitor][0] += model_wins
+                        group_scores[baseline][competitor][1] += model_losses
+                        group_scores[baseline][competitor][2] += model_similar
+
+                    verdict_str = "  |  ".join(per_profile_verdicts)
+                    expander_label = f"{baseline} vs {competitor}  —  {verdict_str}"
+
+                    with st.expander(expander_label, expanded=False):
+                        tab_labels = list(profile_tabs_data.keys())
+                        tabs = st.tabs(tab_labels)
+                        for tab, label in zip(tabs, tab_labels):
+                            with tab:
+                                summary_data, conc_list = profile_tabs_data[label]
+                                st.markdown(f"**H200 GPU, ISL/OSL: {label}**")
+                                st.caption(
+                                    f"ℹ️ Geometric mean metrics use concurrency levels: "
+                                    f"{', '.join(str(c) for c in conc_list)}. "
+                                    f"Peak throughput uses all common concurrency levels."
+                                )
+                                summary_df = pd.DataFrame(summary_data)
+                                df_key = f"ca_{pair_key}_{label}"
+                                st.dataframe(
+                                    summary_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config=column_config,
+                                    key=df_key,
+                                )
+                                st.markdown(
+                                    f"**Legend:** "
+                                    f"🟢 {baseline} performs better than {competitor} | "
+                                    f"🔴 {baseline} performs worse than {competitor} | "
+                                    f"🟡 Similar Performance (< 5% difference)"
+                                )
+
+            if group_scores:
+                with score_placeholder:
+                    cols = st.columns(len(group_scores))
+                    for col, (bl, comp_dict) in zip(cols, group_scores.items()):
+                        all_w = sum(v[0] for v in comp_dict.values())
+                        all_l = sum(v[1] for v in comp_dict.values())
+                        all_s = sum(v[2] for v in comp_dict.values())
+                        all_decisive = all_w + all_l
+                        overall_wr = (
+                            (all_w / all_decisive * 100) if all_decisive > 0 else None
+                        )
+                        hue = (
+                            "green"
+                            if all_l == 0
+                            else ("yellow" if all_w > all_l else "red")
+                        )
+
+                        competitor_rows = ""
+                        for comp, (cw, cl, cs) in comp_dict.items():
+                            c_decisive = cw + cl
+                            cwr = (cw / c_decisive * 100) if c_decisive > 0 else None
+                            if cwr is None:
+                                wr_cls = "val-amber"
+                                wr_text = "—"
+                            else:
+                                wr_cls = (
+                                    "val-green"
+                                    if cwr >= 60
+                                    else ("val-amber" if cwr >= 40 else "val-red")
+                                )
+                                wr_text = f"{cwr:.0f}%"
+                            competitor_rows += f"""<div class="vllm-stat-row" style="margin-top:0.5rem;">
+<div class="vllm-stat" style="flex:2;"><div class="vllm-stat-label">vs {comp}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Win Rate</div><div class="vllm-stat-value {wr_cls}">{wr_text}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Wins</div><div class="vllm-stat-value val-green">{cw}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Losses</div><div class="vllm-stat-value val-red">{cl}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Similar</div><div class="vllm-stat-value val-amber">{cs}</div></div>
+</div>"""
+
+                        with col:
+                            st.markdown(
+                                f"""<div class="vllm-scorecard vllm-hue-{hue}">
+<div class="vllm-scorecard-title">{bl} — Competitive Score</div>
+<div class="vllm-stat-row">
+<div class="vllm-stat">
+<div class="vllm-stat-label">Overall Win Rate</div>
+<div class="vllm-stat-value {"val-amber" if overall_wr is None else ("val-green" if overall_wr >= 60 else "val-red")}">{"—" if overall_wr is None else f"{overall_wr:.0f}%"}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Model Wins</div>
+<div class="vllm-stat-value val-green">{all_w}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Model Losses</div>
+<div class="vllm-stat-value val-red">{all_l}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Similar</div>
+<div class="vllm-stat-value val-amber">{all_s}</div>
+</div>
+</div>
+<hr style="margin:0.6rem 0;border:none;border-top:1px solid rgba(0,0,0,0.1);">
+{competitor_rows}
+</div>""",
+                                unsafe_allow_html=True,
+                            )
+
+            if not group_has_data:
+                st.info("No overlapping data found for this comparison group.")
+
+            st.markdown("---")
+
+
+def render_overview_section(df):
+    """Render the Overview page — executive summary of the latest release."""
+    st.header("Overview")
+    st.markdown(
+        "Executive summary comparing **RHAIIS-3.3** against **RHAIIS-3.2.5** (previous release)."
+    )
+
+    data = _compute_overview_data(df)
+
+    # ── Row 1: Top-level KPI cards ──────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+
+    # Best Throughput Gain
+    with c1:
+        color_cls = "val-green" if data["best_gain"] > 0 else "val-red"
+        bg = data.get("best_gain_combo")
+        bg_detail = ""
+        if bg:
+            bg_detail = (
+                f"<b>{bg['short_name']}</b> on {bg['accelerator']} "
+                f"(TP{bg['tp']}, {clean_profile_name(bg['profile'])})"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Best Throughput Gain</div>
+<div class="overview-card-value {color_cls}">
+<span class="icon">↑</span> +{data["best_gain"]:.1f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+Largest throughput improvement (geometric mean of
+<code>output_tok/sec</code>) across {data["total_cmp"]} compared
+combinations.<br><br>
+<b>Where:</b> {bg_detail}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Worst Regression
+    with c2:
+        wr_val = data["worst_regression"]
+        if wr_val < -5:
+            wr_cls = "val-red"
+        elif wr_val < 0:
+            wr_cls = "val-amber"
+        else:
+            wr_cls = "val-green"
+        wr_icon = "⊖" if wr_val < 0 else "✓"
+        wc = data.get("worst_reg_combo")
+        wm = data.get("worst_reg_metric", "")
+        wr_detail = ""
+        if wc:
+            wr_detail = (
+                f"<b>{wc['short_name']}</b> on {wc['accelerator']} "
+                f"(TP{wc['tp']}, {clean_profile_name(wc['profile'])})"
+                f" — metric: <b>{wm}</b>"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Worst Regression</div>
+<div class="overview-card-value {wr_cls}">
+<span class="icon">{wr_icon}</span> {wr_val:+.1f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+Single largest degradation across Throughput, P95 TTFT, or
+P95 ITL (normalised: negative = regression).<br><br>
+<b>Where:</b> {wr_detail}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Win Rate
+    with c3:
+        n_wins = len(data["win_combos"])
+        n_losses = len(data["loss_combos"])
+        loss_lines = ""
+        for r in data["loss_combos"]:
+            pct = r.get("Throughput_pct")
+            loss_lines += (
+                f"• {r['short_name']} on {r['accelerator']} "
+                f"(TP{r['tp']}, {clean_profile_name(r['profile'])}): "
+                f"<span class='val-red'>{pct:+.1f} %</span><br>"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Release Win Rate (Throughput)</div>
+<div class="overview-card-value val-blue">
+<span class="icon">🏆</span> {data["win_rate"]:.0f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+{n_wins} wins / {n_losses} losses out of {data["total_cmp"]}
+compared combinations (geometric mean throughput).<br><br>
+{"<b>Losses:</b><br>" + loss_lines if loss_lines else "<b>No losses.</b>"}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── Row 2: Coverage + Health ─────────────────────────────────────
+    c4, c5, c6 = st.columns(3)
+
+    # Models Tested
+    with c4:
+        model_items = "".join(
+            f"• {_short_model_name(m)}<br>" for m in data["models_list"]
+        )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+                <div class="overview-card-title">Models Tested</div>
+                <div class="overview-card-value">
+                    <span class="icon">🔬</span> {data["models_tested"]}
+                </div>
+            </summary>
+            <div class="overview-card-detail">
+                {model_items}
+            </div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Accelerators Covered
+    with c5:
+        accel_items = "".join(f"• {a}<br>" for a in data["accels_list"])
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+                <div class="overview-card-title">Accelerators Covered</div>
+                <div class="overview-card-value">
+                    <span class="icon">▦</span> {data["accels_covered"]}
+                </div>
+            </summary>
+            <div class="overview-card-detail">
+                {accel_items}
+            </div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Release Health Score
+    with c6:
+        h = data["health"]
+        h_cls = {
+            "Healthy": "val-green",
+            "Warning": "val-amber",
+            "Regression": "val-red",
+        }[h]
+        dots = _health_dots_html(h)
+        n_wins = len(data["win_combos"])
+        n_losses = len(data["loss_combos"])
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Release Health Score</div>
+<div class="overview-card-value {h_cls}">
+{h} {dots}
+</div>
+</summary>
+<div class="overview-card-detail">
+Based on throughput win rate ({data["win_rate"]:.0f} %
+= {n_wins} / {data["total_cmp"]}):<br>
+• <b>Healthy</b> — ≥ 80 %<br>
+• <b>Warning</b> — ≥ 60 %<br>
+• <b>Regression</b> — &lt; 60 %
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ── vLLM Parity Scorecard ───────────────────────────────────────
+    st.markdown("### Upstream vLLM Parity")
+    st.caption(
+        "RHAIIS-3.3 builds on vLLM v0.13.0 — the goal is matching or exceeding upstream "
+        "throughput. Compared on H200 across common models. "
+        '"At parity" means within 5 %.'
+    )
+    vllm_avg_cls = "val-green" if data["vllm_avg"] >= 0 else "val-red"
+    parity_count = data["vllm_ties"] + data["vllm_wins"]
+    total_compared = data["vllm_wins"] + data["vllm_ties"] + data["vllm_losses"]
+    parity_pct = (parity_count / total_compared * 100) if total_compared else 0
+    parity_cls = (
+        "val-green"
+        if parity_pct >= 80
+        else ("val-amber" if parity_pct >= 60 else "val-red")
+    )
+    hue = (
+        "green"
+        if data["vllm_losses"] == 0
+        else ("yellow" if data["vllm_losses"] <= data["vllm_wins"] else "red")
+    )
+    st.markdown(
+        f"""<div class="vllm-scorecard vllm-hue-{hue}"><details><summary>
+<div class="vllm-scorecard-title">RHAIIS-3.3 vs vLLM v0.13.0 (H200)</div>
+<div class="vllm-stat-row">
+<div class="vllm-stat">
+<div class="vllm-stat-label">At or Above Parity</div>
+<div class="vllm-stat-value {parity_cls}">{parity_pct:.0f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg Throughput Δ</div>
+<div class="vllm-stat-value {vllm_avg_cls}">{data["vllm_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Ahead</div>
+<div class="vllm-stat-value val-green">{data["vllm_wins"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">At Parity</div>
+<div class="vllm-stat-value val-amber">{data["vllm_ties"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Behind</div>
+<div class="vllm-stat-value val-red">{data["vllm_losses"]}</div>
+</div>
+                <div class="vllm-stat">
+                    <div class="vllm-stat-label">Models Compared</div>
+                    <div class="vllm-stat-value">{data["vllm_n_models"]}</div>
+                </div>
+            </div>
+        </summary>
+        <div class="overview-card-detail">
+            Per-model throughput delta (geometric mean, H200):<br><br>
+            {
+            "".join(
+                f"• {'🟢' if r.get('better') and not r.get('similar') else '🟡' if r.get('similar') else '🔴'} "
+                f"<b>{r['short_name']}</b> {r['profile']}: {r['pct']:+.1f} %<br>"
+                for r in sorted(
+                    data["vllm_results"], key=lambda x: x["pct"] or 0, reverse=True
+                )
+            )
+        }
+            <br>
+            • <b>Ahead</b> (🟢) — RHAIIS throughput &gt; 5 % higher<br>
+            • <b>At Parity</b> (🟡) — within ± 5 %<br>
+            • <b>Behind</b> (🔴) — RHAIIS throughput &gt; 5 % lower
+        </div></details></div>""",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("---")
+
+    # ── Release Health by Model Family ──────────────────────────────
+    st.markdown("### Release Health by Model Family")
+    st.caption(
+        "Per-family rollup comparing the current release to the previous one. "
+        "**Avg Tput** is the mean throughput change across all combinations "
+        "(model × accelerator × profile). "
+        "**Win Rate** is the percentage of combinations where throughput improved. "
+        "Click any family card to drill down into per-combo details."
+    )
+
+    _METRIC_SHORT = {"TTFT P95": "TTFT", "ITL P95": "ITL", "Throughput": "Tput"}
+    families = list(data["family_rollup"].items())
+    for row_start in range(0, len(families), 3):
+        row = families[row_start : row_start + 3]
+        cols = st.columns(3)
+        for idx, (family, info) in enumerate(row):
+            with cols[idx]:
+                status_cls = {
+                    "Healthy": "status-healthy",
+                    "Warning": "status-warning",
+                    "Regression": "status-regression",
+                }[info["health"]]
+                badge_cls = {
+                    "Healthy": "badge-healthy",
+                    "Warning": "badge-warning",
+                    "Regression": "badge-regression",
+                }[info["health"]]
+                dots = _health_dots_html(info["health"])
+
+                worst_label = _METRIC_SHORT.get(
+                    info["worst_metric"], info["worst_metric"] or ""
+                )
+                worst_line = (
+                    (
+                        f'<div class="family-card-stat">'
+                        f"Worst: <b>{worst_label}</b> {info['worst_raw_pct']:+.1f} %"
+                        f"</div>"
+                    )
+                    if info["worst_metric"]
+                    else ""
+                )
+
+                wr_cls = (
+                    "val-green"
+                    if info["win_rate"] >= 80
+                    else ("val-red" if info["win_rate"] < 60 else "")
+                )
+                tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
+
+                fam_accels = sorted({r["accelerator"] for r in info["results"]})
+                fam_profiles = sorted(
+                    {clean_profile_name(r["profile"]) for r in info["results"]}
+                )
+                n_combos = len(info["results"])
+
+                detail_lines = ""
+                for r in sorted(
+                    info["results"], key=lambda x: (x["short_name"], x["accelerator"])
+                ):
+                    pct = r.get("Throughput_pct")
+                    if pct is None:
+                        continue
+                    icon = "🟢" if pct > 5 else ("🟡" if pct > -5 else "🔴")
+                    prof = clean_profile_name(r["profile"])
+                    detail_lines += (
+                        f"• {icon} <b>{r['short_name']}</b> "
+                        f"TP{r['tp']} · {r['accelerator']} · {prof}: "
+                        f"{pct:+.1f} %<br>"
+                    )
+
+                st.markdown(
+                    f"""<div class="overview-family-card {status_cls}"><details><summary>
+<div class="family-card-header">
+<span class="family-card-name">{family}</span>
+<span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
+</div>
+<div class="family-card-stat">{info["n_models"]} model{"s" if info["n_models"] != 1 else ""} &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
+{worst_line}
+<div class="family-card-stat">Competitive Win Rate: <b class="{wr_cls}">{info["win_rate"]:.0f} %</b></div>
+</summary>
+<div class="overview-card-detail">
+<b>Coverage:</b> {", ".join(fam_accels)} &mdash; {n_combos} combo{"s" if n_combos != 1 else ""} across {", ".join(fam_profiles)}<br><br>
+<b>Per-combo throughput delta (geom-mean):</b><br><br>
+{detail_lines}
+</div></details></div>""",
+                    unsafe_allow_html=True,
+                )
+
+    st.caption(
+        "**Worst** shows the single largest regression across Throughput, TTFT, and ITL "
+        "(the specific metric varies by family). "
+        "**Status** is derived from win rate: "
+        "Healthy ≥ 80 %, Warning ≥ 60 %, Regression < 60 %."
+    )
+
+    st.markdown("---")
+
+    # ── Per-Accelerator Health Cards ────────────────────────────────
+    st.markdown("### Performance by Accelerator")
+    st.caption(
+        "Per-accelerator rollup averaged across all models and profiles — "
+        "status is determined by worst regression across all models."
+    )
+    accel_cols = st.columns(len(data["accel_rollup"]) or 1)
+    for idx, (accel, info) in enumerate(data["accel_rollup"].items()):
+        with accel_cols[idx]:
+            status_cls = {
+                "Healthy": "status-healthy",
+                "Warning": "status-warning",
+                "Regression": "status-regression",
+            }[info["health"]]
+            badge_cls = {
+                "Healthy": "badge-healthy",
+                "Warning": "badge-warning",
+                "Regression": "badge-regression",
+            }[info["health"]]
+            dots = _health_dots_html(info["health"])
+
+            worst_line = ""
+            if info["worst_metric"] and info["worst_val"] < 0:
+                worst_line = (
+                    f'<div class="family-card-stat">'
+                    f"Worst: <b>{info['worst_metric']}</b> {info['worst_val']:+.1f} %"
+                    f"</div>"
+                )
+
+            # Per-model throughput breakdown for this accelerator
+            seen_models = {}
+            for r in info["results"]:
+                key = r["short_name"]
+                if key not in seen_models:
+                    seen_models[key] = []
+                pct = r.get("Throughput_pct")
+                if pct is not None:
+                    seen_models[key].append(pct)
+            model_lines = ""
+            for mname, pcts in sorted(seen_models.items()):
+                avg = float(np.mean(pcts)) if pcts else 0
+                icon = "🟢" if avg > 5 else ("🟡" if avg > -5 else "🔴")
+                model_lines += f"• {icon} <b>{mname}</b>: {avg:+.1f} % throughput<br>"
+
+            tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
+            st.markdown(
+                f"""<div class="overview-family-card {status_cls}"><details><summary>
+<div class="family-card-header">
+<span class="family-card-name">{accel}</span>
+<span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
+</div>
+<div class="family-card-stat">{info["n_models"]} model(s) &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
+                    {worst_line}
+                    <div class="family-card-stat">Win Rate: <b>{info["win_rate"]:.0f} %</b></div>
+                </summary>
+                <div class="overview-card-detail">
+                    Per-model throughput delta:<br><br>
+                    {model_lines}
+                </div></details></div>""",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("---")
+
+    # ── Regression Heatmap ──────────────────────────────────────────
+    st.markdown(
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap">'
+        '<div><h3 style="margin:0">Regression Heatmap</h3></div>'
+        '<div style="font-size:0.8rem;color:#6b7280">'
+        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement (&gt;5 %)</span> &nbsp; '
+        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (±5 %)</span> &nbsp; '
+        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression (&gt;5 %)</span>'
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("% delta vs. previous release (geom-mean across concurrency levels).")
+
+    heatmap_cols = [
+        ("TTFT P95", False, "P95 TTFT (ms)"),
+        ("ITL P95", False, "P95 ITL (ms)"),
+        ("Throughput", True, "Mean Output Throughput (tok/s)"),
+    ]
+
+    for accel, info in data["accel_rollup"].items():
+        st.markdown(f"**{accel}**")
+        seen = {}
+        for r in info["results"]:
+            key = (r["short_name"], r["tp"], r["profile"])
+            if key not in seen:
+                seen[key] = r
+
+        rows_html = ""
+        for (sname, tp, profile), r in seen.items():
+            profile_short = clean_profile_name(profile)
+            cells = ""
+            for mname, hib, _ in heatmap_cols:
+                cells += f"<td>{_hm_cell(r.get(f'{mname}_pct'), hib)}</td>"
+            rows_html += f"<tr><td>{sname} (TP{tp}) {profile_short}</td>{cells}</tr>"
+
+        col_headers = "".join(f"<th>{label}</th>" for _, _, label in heatmap_cols)
+        st.markdown(
+            f"""<div style="overflow-x:auto">
+            <table class="heatmap-table">
+                <thead><tr>
+                    <th style="min-width:200px">Model</th>
+                    {col_headers}
+                </tr></thead>
+                <tbody>{rows_html}</tbody>
+            </table></div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ── New in This Release ─────────────────────────────────────────
+    st.markdown("### New in This Release")
+    items = ""
+    for m in data["new_models"]:
+        items += f'<div class="new-release-item">• {_short_model_name(m)}</div>'
+    for a in data["new_accels"]:
+        items += f'<div class="new-release-item">• Accelerator: <b>{a}</b></div>'
+    if not items:
+        items = '<div class="new-release-item">No new models or accelerators.</div>'
+    st.markdown(
+        f"""<div class="new-release-callout">
+            <div class="new-release-callout-title">Added since RHAIIS-3.2.5</div>
+            {items}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_dataset_representation_section(selected_profile, use_expander=True):
     """Render the Dataset Representation section (visible only for Custom ISL/OSL).
 
@@ -555,11 +1752,15 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
                     if fig_output:
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.plotly_chart(fig_input, use_container_width=True)
+                            st.plotly_chart(
+                                fig_input, use_container_width=True, theme=None
+                            )
                         with col2:
-                            st.plotly_chart(fig_output, use_container_width=True)
+                            st.plotly_chart(
+                                fig_output, use_container_width=True, theme=None
+                            )
                     else:
-                        st.plotly_chart(fig_input, use_container_width=True)
+                        st.plotly_chart(fig_input, use_container_width=True, theme=None)
 
                     # Detailed statistics expander
                     with st.expander("Detailed Statistics", expanded=False):
@@ -720,7 +1921,7 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 y_axis: y_axis_display_label,
                 "run_identifier": "Run",
             },
-            template="plotly_white",
+            template="plotly_white_light",
             category_orders={
                 "run_identifier": filtered_df_sorted["run_identifier"].unique().tolist()
             },
@@ -729,7 +1930,7 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             legend_title_text="Run Details (Accelerator | Model | Version | TP)",
             legend={"font": {"size": 14}},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, theme=None)
 
         # Right-align the legend caption
         caption_col1, caption_col2 = st.columns([3, 1])
@@ -786,6 +1987,9 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
             output_throughput = row.get("output_tok/sec", 0)
             output_tput_per_gpu = output_throughput / tp if tp > 0 else 0
 
+            input_throughput = total_throughput - output_throughput
+            input_tput_per_gpu = input_throughput / tp if tp > 0 else 0
+
             # Calculate interactivity from tpot_median (tokens per output token)
             # tpot is in milliseconds, interactivity is tok/s/user
             tpot_median = row.get("tpot_median", None)
@@ -818,6 +2022,7 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
                 "version": version,
                 "tput_per_gpu": tput_per_gpu,
                 "output_tput_per_gpu": output_tput_per_gpu,
+                "input_tput_per_gpu": input_tput_per_gpu,
                 "median_e2el": row.get("request_latency_median", 0),
                 "median_intvty": median_intvty,
                 "output_tok_per_sec": row.get("output_tok/sec", 0),
@@ -983,6 +2188,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
             throughput_options = {
                 "Total Tokens/sec/GPU": "tput_per_gpu",
                 "Output Tokens/sec/GPU": "output_tput_per_gpu",
+                "Input Tokens/sec/GPU": "input_tput_per_gpu",
             }
             selected_throughput_label = st.selectbox(
                 "Throughput Metric",
@@ -990,7 +2196,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 key="pareto_throughput_metric",
                 on_change=keep_expander_open,
                 args=("pareto_expanded",),
-                help="Total = prompt + output tokens, Output = output tokens only",
+                help="Total = prompt + output tokens, Output = output tokens only, Input = prompt tokens only",
             )
             selected_throughput_key = throughput_options[selected_throughput_label]
 
@@ -1137,11 +2343,13 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     hw_tp_version_key, "#999999"
                                 )
 
-                                # Determine metric label for hover text
-                                metric_hover_label = (
-                                    "Total Throughput"
-                                    if selected_throughput_key == "tput_per_gpu"
-                                    else "Output Throughput"
+                                metric_hover_labels = {
+                                    "tput_per_gpu": "Total Throughput",
+                                    "output_tput_per_gpu": "Output Throughput",
+                                    "input_tput_per_gpu": "Input Throughput",
+                                }
+                                metric_hover_label = metric_hover_labels.get(
+                                    selected_throughput_key, "Throughput"
                                 )
 
                                 hover_text = [
@@ -1170,23 +2378,30 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                         line={"color": color, "width": 2},
                                         hovertext=hover_text,
                                         hoverinfo="text",
-                                        legendgroup=version,  # Group by version in legend
                                     )
                                 )
 
-                # Dynamic title and y-axis label based on selected metric
-                if selected_throughput_key == "tput_per_gpu":
-                    plot_title = "Note: Throughput is Total Tokens per second (prompt + output tokens combined)"
-                    y_axis_label = "Total Token Throughput per GPU (tok/s/gpu)"
-                else:
-                    plot_title = "Note: Throughput is Output Tokens per second only"
-                    y_axis_label = "Output Token Throughput per GPU (tok/s/gpu)"
+                metric_titles = {
+                    "tput_per_gpu": (
+                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Total Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                    "output_tput_per_gpu": (
+                        "Note: Throughput is Output Tokens per second only",
+                        "Output Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                    "input_tput_per_gpu": (
+                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Input Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                }
+                plot_title, y_axis_label = metric_titles[selected_throughput_key]
 
                 fig.update_layout(
                     title=plot_title,
                     xaxis_title="End-to-end Latency (s)",
                     yaxis_title=y_axis_label,
-                    template="plotly_dark",
+                    template="plotly_white_light",
                     hovermode="closest",
                     showlegend=True,
                     legend={
@@ -1196,7 +2411,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     height=600,
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, theme=None)
 
         with tab2:
             st.markdown("### Token Throughput per GPU vs. Interactivity")
@@ -1264,11 +2479,13 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     hw_tp_version_key, "#999999"
                                 )
 
-                                # Determine metric label for hover text
-                                metric_hover_label = (
-                                    "Total Throughput"
-                                    if selected_throughput_key == "tput_per_gpu"
-                                    else "Output Throughput"
+                                metric_hover_labels = {
+                                    "tput_per_gpu": "Total Throughput",
+                                    "output_tput_per_gpu": "Output Throughput",
+                                    "input_tput_per_gpu": "Input Throughput",
+                                }
+                                metric_hover_label = metric_hover_labels.get(
+                                    selected_throughput_key, "Throughput"
                                 )
 
                                 hover_text = [
@@ -1297,23 +2514,30 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                         line={"color": color, "width": 2},
                                         hovertext=hover_text,
                                         hoverinfo="text",
-                                        legendgroup=version,  # Group by version in legend
                                     )
                                 )
 
-                # Dynamic title and y-axis label based on selected metric
-                if selected_throughput_key == "tput_per_gpu":
-                    plot_title = "Note: Throughput is Total Tokens per second (prompt + output tokens combined)"
-                    y_axis_label = "Total Token Throughput per GPU (tok/s/gpu)"
-                else:
-                    plot_title = "Note: Throughput is Output Tokens per second only"
-                    y_axis_label = "Output Token Throughput per GPU (tok/s/gpu)"
+                metric_titles = {
+                    "tput_per_gpu": (
+                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Total Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                    "output_tput_per_gpu": (
+                        "Note: Throughput is Output Tokens per second only",
+                        "Output Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                    "input_tput_per_gpu": (
+                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Input Token Throughput per GPU (tok/s/gpu)",
+                    ),
+                }
+                plot_title, y_axis_label = metric_titles[selected_throughput_key]
 
                 fig.update_layout(
                     title=plot_title,
                     xaxis_title="Interactivity (tok/s/user)",
                     yaxis_title=y_axis_label,
-                    template="plotly_dark",
+                    template="plotly_white_light",
                     hovermode="closest",
                     showlegend=True,
                     legend={
@@ -1323,7 +2547,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     height=600,
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, theme=None)
 
         # Summary statistics
         with st.expander("📋 Summary Statistics"):
@@ -1341,6 +2565,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     "conc",
                     "tput_per_gpu",
                     "output_tput_per_gpu",
+                    "input_tput_per_gpu",
                     "median_e2el",
                     "median_intvty",
                 ]
@@ -1355,6 +2580,10 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 if "output_tput_per_gpu" in df_display.columns:
                     df_display["output_tput_per_gpu"] = df_display[
                         "output_tput_per_gpu"
+                    ].round(2)
+                if "input_tput_per_gpu" in df_display.columns:
+                    df_display["input_tput_per_gpu"] = df_display[
+                        "input_tput_per_gpu"
                     ].round(2)
                 if "median_e2el" in df_display.columns:
                     df_display["median_e2el"] = df_display["median_e2el"].round(3)
@@ -1372,12 +2601,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     }
                 )
 
-                # Sort by the selected throughput metric
-                sort_col = (
-                    "tput_per_gpu"
-                    if selected_throughput_key == "tput_per_gpu"
-                    else "output_tput_per_gpu"
-                )
+                sort_col = selected_throughput_key
 
                 st.dataframe(
                     df_display.sort_values(by=sort_col, ascending=False).reset_index(
@@ -1413,6 +2637,10 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "output_tput_per_gpu": st.column_config.NumberColumn(
                             "output_tput_per_gpu",
                             help="Output Throughput per GPU: Output tokens/second divided by TP size. Higher is better.",
+                        ),
+                        "input_tput_per_gpu": st.column_config.NumberColumn(
+                            "input_tput_per_gpu",
+                            help="Input Throughput per GPU: Input (prompt) tokens/second divided by TP size. Derived as total - output. Higher is better.",
                         ),
                         "median_e2el": st.column_config.NumberColumn(
                             "median_e2el",
@@ -1488,6 +2716,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             throughput_options = {
                 "Total Tokens/sec/GPU": "total",
                 "Output Tokens/sec/GPU": "output",
+                "Input Tokens/sec/GPU": "input",
             }
             selected_tput_label = st.selectbox(
                 "Throughput Metric",
@@ -1495,7 +2724,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 key="custom_pareto_tput",
                 on_change=keep_expander_open,
                 args=("custom_pareto_expanded",),
-                help="Total = prompt + output tokens, Output = output tokens only",
+                help="Total = prompt + output tokens, Output = output tokens only, Input = prompt tokens only",
             )
             tput_mode = throughput_options[selected_tput_label]
 
@@ -1515,6 +2744,15 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 "Total Token Throughput per GPU (tok/s/gpu)",
             )
             metric_hover = "Total Throughput"
+        elif tput_mode == "input":
+            vdf["tput_per_gpu"] = (vdf["total_tok/sec"] - vdf["output_tok/sec"]) / vdf[
+                "tp_safe"
+            ]
+            y_col, y_label = (
+                "tput_per_gpu",
+                "Input Token Throughput per GPU (tok/s/gpu)",
+            )
+            metric_hover = "Input Throughput"
         else:
             vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["tp_safe"]
             y_col, y_label = (
@@ -1619,7 +2857,6 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                         line={"color": color, "width": 2},
                         hovertext=hover_text,
                         hoverinfo="text",
-                        legendgroup=model_short,
                     )
                 )
 
@@ -1629,43 +2866,38 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             st.markdown("### Token Throughput per GPU vs. End-to-end Latency")
             fig1 = go.Figure()
             _build_traces(fig1, "request_latency_median", "Latency", ".2f")
+            tput_title_map = {
+                "total": "Total Tokens per second (prompt + output tokens combined)",
+                "output": "Output Tokens per second only",
+                "input": "Input Tokens per second (prompt tokens only)",
+            }
             fig1.update_layout(
-                title="Note: Throughput is "
-                + (
-                    "Total Tokens per second"
-                    if tput_mode == "total"
-                    else "Output Tokens per second only"
-                ),
+                title="Note: Throughput is " + tput_title_map[tput_mode],
                 xaxis_title="End-to-end Latency (s)",
                 yaxis_title=y_label,
-                template="plotly_dark",
+                template="plotly_white_light",
                 hovermode="closest",
                 showlegend=True,
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
             )
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, use_container_width=True, theme=None)
 
         with tab2:
             st.markdown("### Token Throughput per GPU vs. Interactivity")
             fig2 = go.Figure()
             _build_traces(fig2, "median_intvty", "Interactivity", ".2f")
             fig2.update_layout(
-                title="Note: Throughput is "
-                + (
-                    "Total Tokens per second"
-                    if tput_mode == "total"
-                    else "Output Tokens per second only"
-                ),
+                title="Note: Throughput is " + tput_title_map[tput_mode],
                 xaxis_title="Interactivity (tok/s/user)",
                 yaxis_title=y_label,
-                template="plotly_dark",
+                template="plotly_white_light",
                 hovermode="closest",
                 showlegend=True,
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, use_container_width=True, theme=None)
 
         with st.expander("📋 Summary Statistics"):
             display_df = vdf[
@@ -1734,7 +2966,6 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
         st.info(
             "📊 **Note**: Values shown are **geometric means** across **common concurrency levels** shared by all selected versions, "
             "ensuring fair apples-to-apples comparison even when different versions were benchmarked at different concurrency ranges. "
-            "This section has its own independent filters."
         )
 
         if df.empty:
@@ -2177,7 +3408,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
             title=f"{selected_metric_label} Across {selected_prefix} Releases (Geometric Mean — Common Concurrency Levels)",
             xaxis_title="Release Version",
             yaxis_title=f"{selected_metric_label} (Geometric Mean)",
-            template="plotly_white",
+            template="plotly_white_light",
             height=500,
             hovermode="x unified",
             xaxis={
@@ -2193,7 +3424,9 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
             },
         )
 
-        st.plotly_chart(fig, use_container_width=True, key="trends_main_chart")
+        st.plotly_chart(
+            fig, use_container_width=True, key="trends_main_chart", theme=None
+        )
 
         # Show summary table for each TP
         st.markdown("### 📋 Version-by-Version Comparison")
@@ -2367,7 +3600,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                     fig_multi.update_layout(
                         height=300 * n_rows,
                         showlegend=False,
-                        template="plotly_white",
+                        template="plotly_white_light",
                     )
                     # Set x-axis category order for each subplot
                     for i in range(n_metrics):
@@ -2385,6 +3618,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                         fig_multi,
                         use_container_width=True,
                         key=f"trends_multi_metric_tp_{tp}",
+                        theme=None,
                     )
 
         # Show raw data
@@ -2996,6 +4230,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     fig,
                     use_container_width=True,
                     key=f"dlg_line_{metric_name}",
+                    theme=None,
                 )
 
                 st.caption(
@@ -3028,7 +4263,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             for i, m_name in enumerate(btn_metrics):
                 with btn_cols[i]:
                     short = m_name.replace(" (Geometric Mean)", "").replace(
-                        "Throughput", "Tput"
+                        "Throughput", "Throughput"
                     )
                     if st.button(
                         f"📊 {short}",
@@ -3747,6 +4982,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     fig,
                     use_container_width=True,
                     key=f"cmp_models_dlg_line_{metric_name}",
+                    theme=None,
                 )
 
                 st.caption(
@@ -3777,7 +5013,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
             for i, m_name in enumerate(btn_metrics):
                 with btn_cols[i]:
                     short = m_name.replace(" (Geometric Mean)", "").replace(
-                        "Throughput", "Tput"
+                        "Throughput", "Throughput"
                     )
                     if st.button(
                         f"📊 {short}",
@@ -4009,29 +5245,23 @@ def render_model_performance_comparison_section(
     else:
         ctx = contextlib.nullcontext()
     with ctx:
-        if not use_expander:
-            st.subheader("🏆 Model Performance Comparison")
-        st.markdown(
-            "💡 **Tip:** Click on the full screen view (⛶) of any graph to get a detailed view."
-        )
-        st.markdown("")
-
         # Get available concurrency levels from the data
         available_concurrencies = sorted(
             filtered_df["intended concurrency"].dropna().unique().tolist()
         )
 
         if not available_concurrencies:
+            if not use_expander:
+                st.subheader("🏆 Model Performance Comparison")
             st.warning("⚠️ No concurrency data available in the selected filters.")
             return
 
-        # Let user select concurrency level
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.markdown(
-                "**Select Concurrency Level**: Compare models at the same concurrency for fair comparison."
-            )
-        with col2:
+        # Header row with concurrency dropdown inline
+        header_col, spacer, dropdown_col = st.columns([3, 2, 1.5])
+        with header_col:
+            if not use_expander:
+                st.subheader("🏆 Model Performance Comparison")
+        with dropdown_col:
             selected_concurrency = st.selectbox(
                 "Concurrency",
                 options=available_concurrencies,
@@ -4044,8 +5274,11 @@ def render_model_performance_comparison_section(
                 on_change=keep_expander_open,
                 args=("model_comparison_expanded",),
             )
-
-        st.markdown("")
+        st.caption(
+            "💡 Click on the full screen view (⛶) of any graph to get a detailed view. "
+            f"Comparing at **Concurrency Level {selected_concurrency}** for fair comparison. "
+            "Use the dropdown above to select a different concurrency level."
+        )
 
         def get_performance_at_fixed_concurrency(group, target_concurrency):
             """Get performance metrics at a fixed concurrency level for fair comparison."""
@@ -4383,11 +5616,11 @@ def render_model_performance_comparison_section(
                     "output_tok/sec": "Peak Output Tokens/sec",
                     "model_accelerator_version": "Model (Accelerator) [Version]",
                 },
-                template="plotly_white",
+                template="plotly_white_light",
                 hover_data={"throughput_version": True},
             )
             fig_throughput.update_layout(height=400, showlegend=True)
-            st.plotly_chart(fig_throughput, use_container_width=True)
+            st.plotly_chart(fig_throughput, use_container_width=True, theme=None)
 
         with chart_col2:
             # Best TTFT Latency comparison at fixed concurrency
@@ -4403,11 +5636,11 @@ def render_model_performance_comparison_section(
                     "ttft_p95_s": "Best TTFT P95 (s)",
                     "model_accelerator": "Model (Accelerator)",
                 },
-                template="plotly_white",
+                template="plotly_white_light",
                 hover_data={"ttft_version": True},
             )
             fig_latency.update_layout(height=400, showlegend=True)
-            st.plotly_chart(fig_latency, use_container_width=True)
+            st.plotly_chart(fig_latency, use_container_width=True, theme=None)
 
         chart_col3, chart_col4 = st.columns(2)
 
@@ -4425,11 +5658,11 @@ def render_model_performance_comparison_section(
                     "efficiency_ratio": "Peak Efficiency (Tokens/sec per TP)",
                     "model_accelerator": "Model (Accelerator)",
                 },
-                template="plotly_white",
+                template="plotly_white_light",
                 hover_data={"efficiency_version": True},
             )
             fig_efficiency.update_layout(height=400, showlegend=True)
-            st.plotly_chart(fig_efficiency, use_container_width=True)
+            st.plotly_chart(fig_efficiency, use_container_width=True, theme=None)
 
         with chart_col4:
             # Best Inter-token latency comparison at fixed concurrency
@@ -4445,11 +5678,11 @@ def render_model_performance_comparison_section(
                     "itl_p95": "Best Inter-Token Latency P95 (ms)",
                     "model_accelerator": "Model (Accelerator)",
                 },
-                template="plotly_white",
+                template="plotly_white_light",
                 hover_data={"itl_version": True},
             )
             fig_itl.update_layout(height=400, showlegend=True)
-            st.plotly_chart(fig_itl, use_container_width=True)
+            st.plotly_chart(fig_itl, use_container_width=True, theme=None)
 
 
 def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expander=True):
@@ -4500,7 +5733,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         )
 
         with st.expander(
-            "💰 Cloud Instance Pricing (as of October 20th, 2025)", expanded=False
+            "💰 Cloud Instance Pricing (as of March 9th, 2026)", expanded=False
         ):
             price_col1, price_col2, price_col3 = st.columns(3)
 
@@ -4516,7 +5749,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     margin-bottom: 5px;
                 ">
                     <h5 style="margin: 0; color: white; font-size: 18px;">🔷 H200 (NVIDIA)</h5>
-                    <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$63.30/hour</div>
+                    <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$41.62/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p5en.48xlarge</div>
                     <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-H200-144GB</div>
                 </div>
@@ -4616,9 +5849,9 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
         accelerator_pricing = {
             "H200": {
-                "instance_cost_per_hour": 63.30,
+                "instance_cost_per_hour": 41.62,
                 "total_gpus": 8,
-                "description": "H200 - AWS p5en.48xlarge ($63.30/hour)",
+                "description": "H200 - AWS p5en.48xlarge ($41.62/hour)",
                 "instance_details": "AWS p5en.48xlarge - ondemand (8xNVIDIA-H200-144GB)",
             },
             "MI300X": {
@@ -5042,7 +6275,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "ttmt_minutes": "Time to Million Tokens (minutes)",
                                 "model_tp_label": "Model (TP Configuration)",
                             },
-                            template="plotly_white",
+                            template="plotly_white_light",
                             hover_data={
                                 "version": True,
                                 "throughput": ":.1f",
@@ -5051,7 +6284,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                             },
                         )
                         fig_time.update_layout(height=400, showlegend=True)
-                        st.plotly_chart(fig_time, use_container_width=True)
+                        st.plotly_chart(fig_time, use_container_width=True, theme=None)
                         st.caption(
                             "📊 Multiple accelerator types used for results, see 'Formulas' for calculation details. Click legend items to show/hide accelerator types."
                         )
@@ -5070,7 +6303,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "cpmt_total": "Cost per Million Tokens (USD)",
                                 "model_tp_label": "Model (TP Configuration)",
                             },
-                            template="plotly_white",
+                            template="plotly_white_light",
                             hover_data={
                                 "version": True,
                                 "throughput": ":.1f",
@@ -5079,7 +6312,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                             },
                         )
                         fig_cost.update_layout(height=400, showlegend=True)
-                        st.plotly_chart(fig_cost, use_container_width=True)
+                        st.plotly_chart(fig_cost, use_container_width=True, theme=None)
 
                     # Cost efficiency ranking table
                     st.info(
@@ -5404,7 +6637,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
 
 def render_energy_carbon_methodology_section(full_df, use_expander=True):
-    """🌱 Energy / Carbon Computation  Section for GPU Services.
+    """🌱 Energy Computation  Section for GPU Services.
 
     Args:
         full_df: Full DataFrame with all benchmark data (filters are applied independently in this section)
@@ -5548,13 +6781,13 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
     if use_expander:
         ctx = st.expander(
-            "🌱 Energy / Carbon Computation", expanded=st.session_state.energy_expanded
+            "🌱 Energy Computation", expanded=st.session_state.energy_expanded
         )
     else:
         ctx = contextlib.nullcontext()
     with ctx:
         if not use_expander:
-            st.subheader("🌱 Energy / Carbon Computation")
+            st.subheader("🌱 Energy Computation")
         st.markdown(
             """
             <p style="font-size: 1.3rem;">
@@ -6599,116 +7832,59 @@ def render_filtered_data_section(filtered_df, use_expander=True):
         )
 
 
-def render_header_with_theme_toggle():
-    """Render the main header with theme toggle button and view selector."""
-    col1, col2, col3 = st.columns([1, 6, 1])
+def render_sidebar_header():
+    """Render the sidebar header with logo, title, and view selector."""
+    with st.sidebar:
+        logo_base64 = get_logo_base64()
+        if logo_base64:
+            st.markdown(
+                f'<div class="sidebar-logo">'
+                f'<img src="data:image/png;base64,{logo_base64}">'
+                f'<span class="sidebar-title">Performance Dashboard</span>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("**Performance Dashboard**")
 
-    with col1:
-        # View selector
         view_options = ["RHAIIS Dashboard"]
         if MLPERF_AVAILABLE:
             view_options.append("MLPerf Dashboard")
         if LLMD_AVAILABLE:
             view_options.append("LLM-D Dashboard")
 
-        # Determine default index based on current session state
-        # This persists the view selection across refreshes
-        current_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
-        try:
-            default_index = view_options.index(current_view)
-        except ValueError:
-            default_index = 0
+        if len(view_options) > 1:
+            current_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
+            try:
+                default_index = view_options.index(current_view)
+            except ValueError:
+                default_index = 0
 
-        selected_view = st.radio(
-            "  Select View:",
-            options=view_options,
-            index=default_index,
-            key="dashboard_view_selector",
-            horizontal=False,
-        )
-
-        # Store in session state for access outside this function
-        st.session_state.selected_view = selected_view
-
-        # Update URL to persist view selection across page refreshes
-        st.query_params["view"] = selected_view
-
-    with col2:
-        # Load Red Hat logo
-        logo_base64 = get_logo_base64()
-        if logo_base64:
-            logo_html = f'<img src="data:image/png;base64,{logo_base64}" style="height: 40px; vertical-align: middle; margin-right: 10px;">'
-        else:
-            logo_html = "📊"
-
-        st.markdown(
-            f"""
-            <h1 style='text-align: center; margin-bottom: 0.5rem;' class='main-title'>
-                {logo_html} Staging Performance Dashboard
-            </h1>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            """
-            <p style='text-align: center; font-size: 1.2rem; margin-bottom: 1.5rem;' class='main-subtitle'>
-                Compare benchmark runs across different models, versions, and hardware configurations with advanced analytics.
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    with col3:
-        st.markdown("<div style='margin-top: 0.5rem;'>", unsafe_allow_html=True)
-
-        # Create two columns for theme toggle and share button
-        theme_col1, theme_col2 = st.columns(2)
-
-        with theme_col1:
-            current_mode = st.session_state.get("theme_mode", "auto")
-
-            if current_mode == "auto":
-                theme_button_text = "🌓 Auto"
-                help_text = "Currently: Auto (follows browser preference). Click to switch to Light mode."
-            elif current_mode == "light":
-                theme_button_text = "☀️ Light"
-                help_text = "Currently: Light mode. Click to switch to Dark mode."
-            else:
-                theme_button_text = "🌙 Dark"
-                help_text = "Currently: Dark mode. Click to switch to Auto mode."
-
-            if st.button(theme_button_text, help=help_text, key="theme_toggle"):
-                # Set flag to indicate this is just a theme change, not a filter reset
-                st.session_state.theme_change_only = True
-                if current_mode == "auto":
-                    st.session_state.theme_mode = "light"
-                elif current_mode == "light":
-                    st.session_state.theme_mode = "dark"
-                else:
-                    st.session_state.theme_mode = "auto"
-                st.rerun()
-
-        with theme_col2:
-            st.button(
-                "🔗 Share",
-                help="Copy the URL from your browser's address bar to share your current view",
-                key="share_view_header",
+            selected_view = st.radio(
+                "Select View:",
+                options=view_options,
+                index=default_index,
+                key="dashboard_view_selector",
+                horizontal=False,
+                label_visibility="collapsed",
             )
-
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.session_state.selected_view = selected_view
+            st.query_params["view"] = selected_view
+            st.markdown("---")
+        else:
+            st.session_state.selected_view = view_options[0]
 
 
 def render_confidentiality_notice():
     """Render the confidentiality notice."""
     st.markdown(
-        '<div style="background-color: rgba(255,165,0,0.12); border-left: 4px solid #ffa500; '
-        'padding: 8px 12px; border-radius: 4px; font-size: 0.90rem; line-height: 1.4;">'
-        "⚠️ <b>Performance Data Disclaimer</b> — Red Hat Confidential.<br>"
-        "<b>Sharing Policy:</b> Disclosure to third parties is permitted only under a signed NDA. "
-        "Public referencing, blogging, or external publication requires prior consultation and "
-        "approval from the PSAP Inference Team (Contact: @psap-inference on #forum-psap). "
-        "Users are encouraged to leverage these insights for internal analysis and guided "
-        "customer-facing support."
+        '<div style="background-color: rgba(245,158,11,0.08); border-left: 3px solid #f59e0b; '
+        "padding: 6px 12px; border-radius: 8px; font-size: 0.82rem; line-height: 1.5; "
+        'color: #78716c;">'
+        '<b style="color: #92400e;">Performance Data Disclaimer</b> — '
+        "Red Hat Confidential. Disclosure requires signed NDA. "
+        "External publication needs PSAP Inference Team approval "
+        '(<span style="color:#92400e;">@psap-inference</span> on #forum-psap).'
         "</div>",
         unsafe_allow_html=True,
     )
@@ -6727,7 +7903,23 @@ if "view" in st.query_params:
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
 
-render_header_with_theme_toggle()
+render_sidebar_header()
+
+# Top title bar in main content area
+logo_b64 = get_logo_base64()
+_logo_tag = (
+    f'<div class="dashboard-title-logo"><img src="data:image/png;base64,{logo_b64}" alt="Red Hat logo"></div>'
+    if logo_b64
+    else ""
+)
+st.markdown(
+    f'<div class="dashboard-titlebar">'
+    f"{_logo_tag}"
+    f'<span class="dashboard-title-text">Staging Performance Dashboard</span>'
+    f"</div>",
+    unsafe_allow_html=True,
+)
+
 render_confidentiality_notice()
 
 # Get selected view from session state (set in render_header_with_theme_toggle)
@@ -6781,6 +7973,7 @@ def main():
 
     if df is not None:
         SECTION_TO_SLUG = {
+            "🏠 Overview": "overview",
             "📊 Performance Plots": "performance_plots",
             "📈 Dataset Representation": "dataset_representation",
             "🔄 Pareto Tradeoff Analysis": "pareto",
@@ -6790,9 +7983,11 @@ def main():
             "⚖️ Compare Models": "compare_models",
             "📈 Performance Trends": "performance_trends",
             "💰 Cost Analysis": "cost_analysis",
-            "🌱 Energy / Carbon Computation": "energy_carbon",
+            "🌱 Energy Computation": "energy_carbon",
             "⚙️ Runtime Server Configs": "runtime_configs",
             "📄 Filtered Data": "filtered_data",
+            "💡 IntelliConfig": "intelliconfig",
+            "🔍 Competitive Analysis": "competitive_analysis",
         }
         SLUG_TO_SECTION = {v: k for k, v in SECTION_TO_SLUG.items()}
 
@@ -7031,7 +8226,6 @@ def main():
         if url_section:
             st.session_state.active_section = url_section
             st.session_state.selected_section = url_section
-            st.session_state.nav_collapsed = False
         if url_section_filters:
             for ss_key, val in url_section_filters.items():
                 st.session_state[ss_key] = val
@@ -7101,35 +8295,154 @@ def main():
         )
         st.session_state.use_url_filters = has_url_filters
 
-    st.header("Filter Your Data")
+    SECTIONS_WITHOUT_GLOBAL_FILTERS = {
+        "🏠 Overview",
+        "🔍 Competitive Analysis",
+        "⚖️ Compare Versions",
+        "📈 Performance Trends",
+        "🔄 Pareto Tradeoff Analysis",
+        "🌱 Energy Computation",
+        "💡 IntelliConfig",
+    }
+    _active = st.session_state.get("active_section", "🏠 Overview")
+    _show_global_filters = _active not in SECTIONS_WITHOUT_GLOBAL_FILTERS
 
     if "filters_initialized" not in st.session_state:
         st.session_state.filters_initialized = True
         st.session_state.filter_change_key = 0
         st.session_state.filters_were_cleared = False
 
-    if "nav_collapsed" not in st.session_state:
-        st.session_state.nav_collapsed = False
+    if not _show_global_filters:
+        selected_profile = st.session_state.get(
+            "_persisted_profile",
+            st.session_state.get("baseline_profile", "Profile A: Balanced (1k/1k)"),
+        )
+        selected_profiles = [selected_profile] if selected_profile else []
+        selected_accelerators = st.session_state.get("_persisted_accelerators", [])
+        selected_models = st.session_state.get("_persisted_models", [])
+        selected_versions = st.session_state.get("_persisted_versions", [])
+        selected_tp = st.session_state.get("_persisted_tp", [])
+        filtered_df = df.copy()
 
-    filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(
-        [1.5, 1.5, 1.5, 3, 1]
-    )
+    if _show_global_filters:
+        st.subheader("Filter Your Data")
 
-    with filter_col1:
-        # Accelerators filter - filtered by currently selected profile
-        temp_df = df.copy()
-
-        # Determine what the current/default profile is by checking session state
-        current_profile = st.session_state.get(
-            f"profile_filter_{st.session_state.filter_change_key}", None
+        filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(
+            [1.5, 1.5, 1.5, 3, 1]
         )
 
-        # If no profile selected yet, determine the default that will be selected
-        if not current_profile:
-            available_profiles_raw = sorted(df["profile"].unique().tolist())
-            available_profiles = [
-                p for p in available_profiles_raw if p != "Custom"
-            ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+        with filter_col1:
+            # Accelerators filter - filtered by currently selected profile
+            temp_df = df.copy()
+
+            # Determine what the current/default profile is by checking session state
+            current_profile = st.session_state.get(
+                f"profile_filter_{st.session_state.filter_change_key}", None
+            )
+
+            # If no profile selected yet, determine the default that will be selected
+            if not current_profile:
+                available_profiles_raw = sorted(df["profile"].unique().tolist())
+                available_profiles = [
+                    p for p in available_profiles_raw if p != "Custom"
+                ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+
+                # Default to Profile A (1k/1k) when clearing or as fallback
+                default_profile = "Profile A: Balanced (1k/1k)"
+
+                if st.session_state.get(
+                    "clear_all_filters", False
+                ) or st.session_state.get("filters_were_cleared", False):
+                    current_profile = (
+                        default_profile
+                        if default_profile in available_profiles
+                        else (available_profiles[0] if available_profiles else None)
+                    )
+                elif st.session_state.get("reset_to_defaults", False):
+                    baseline_profile = st.session_state.get(
+                        "baseline_profile", default_profile
+                    )
+                    current_profile = (
+                        baseline_profile
+                        if baseline_profile in available_profiles
+                        else (
+                            default_profile
+                            if default_profile in available_profiles
+                            else (available_profiles[0] if available_profiles else None)
+                        )
+                    )
+                else:
+                    baseline_profile = st.session_state.get(
+                        "baseline_profile", default_profile
+                    )
+                    current_profile = (
+                        baseline_profile
+                        if baseline_profile in available_profiles
+                        else (
+                            default_profile
+                            if default_profile in available_profiles
+                            else (available_profiles[0] if available_profiles else None)
+                        )
+                    )
+
+            # Filter accelerators by the current/default profile
+            if current_profile:
+                temp_df = temp_df[temp_df["profile"] == current_profile]
+
+            accelerators = (
+                sorted(temp_df["accelerator"].unique().tolist())
+                if not temp_df.empty
+                else []
+            )
+
+            default_accelerators = ["B200", "B300", "H200", "MI300X"]
+
+            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+                "filters_were_cleared", False
+            ):
+                acc_default = []
+            elif st.session_state.get("reset_to_defaults", False):
+                acc_default = [a for a in default_accelerators if a in accelerators]
+            else:
+                baseline_accelerators = st.session_state.get(
+                    "baseline_accelerators",
+                    [a for a in default_accelerators if a in accelerators],
+                )
+                acc_default = [a for a in baseline_accelerators if a in accelerators]
+
+            # Get previously selected accelerators from session state
+            prev_accel_key = f"accelerators_filter_{st.session_state.filter_change_key}"
+            prev_selected = st.session_state.get(prev_accel_key, None)
+
+            # Keep previously selected accelerators that are still available in current profile
+            # Use 'is not None' to allow empty list selection
+            if prev_selected is not None:
+                preserved_selections = [a for a in prev_selected if a in accelerators]
+            else:
+                preserved_selections = acc_default
+
+            selected_accelerators = st.multiselect(
+                "1️⃣ Select Accelerator(s)",
+                accelerators,
+                default=preserved_selections,
+                key=prev_accel_key,
+            )
+
+        with filter_col2:
+            # ISL/OSL Profile filter - filtered by selected accelerators
+            temp_df = df.copy()
+            if selected_accelerators:
+                temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+
+            profiles_raw = (
+                sorted(temp_df["profile"].unique().tolist())
+                if not temp_df.empty
+                else []
+            )
+            # Sort so "Custom" always comes last to avoid it being picked as profiles[0] fallback
+            profiles = [p for p in profiles_raw if p != "Custom"] + (
+                ["Custom"] if "Custom" in profiles_raw else []
+            )
 
             # Default to Profile A (1k/1k) when clearing or as fallback
             default_profile = "Profile A: Balanced (1k/1k)"
@@ -7137,515 +8450,425 @@ def main():
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
             ):
-                current_profile = (
+                profiles_default = (
                     default_profile
-                    if default_profile in available_profiles
-                    else (available_profiles[0] if available_profiles else None)
+                    if default_profile in profiles
+                    else (profiles[0] if profiles else None)
                 )
             elif st.session_state.get("reset_to_defaults", False):
                 baseline_profile = st.session_state.get(
                     "baseline_profile", default_profile
                 )
-                current_profile = (
+                profiles_default = (
                     baseline_profile
-                    if baseline_profile in available_profiles
+                    if baseline_profile in profiles
                     else (
                         default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
+                        if default_profile in profiles
+                        else (profiles[0] if profiles else None)
                     )
                 )
             else:
                 baseline_profile = st.session_state.get(
                     "baseline_profile", default_profile
                 )
-                current_profile = (
+                profiles_default = (
                     baseline_profile
-                    if baseline_profile in available_profiles
+                    if baseline_profile in profiles
                     else (
                         default_profile
-                        if default_profile in available_profiles
-                        else (available_profiles[0] if available_profiles else None)
+                        if default_profile in profiles
+                        else (profiles[0] if profiles else None)
                     )
                 )
 
-        # Filter accelerators by the current/default profile
-        if current_profile:
-            temp_df = temp_df[temp_df["profile"] == current_profile]
-
-        accelerators = (
-            sorted(temp_df["accelerator"].unique().tolist())
-            if not temp_df.empty
-            else []
-        )
-
-        default_accelerators = ["B200", "B300", "H200", "MI300X"]
-
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            acc_default = []
-        elif st.session_state.get("reset_to_defaults", False):
-            acc_default = [a for a in default_accelerators if a in accelerators]
-        else:
-            baseline_accelerators = st.session_state.get(
-                "baseline_accelerators",
-                [a for a in default_accelerators if a in accelerators],
-            )
-            acc_default = [a for a in baseline_accelerators if a in accelerators]
-
-        # Get previously selected accelerators from session state
-        prev_accel_key = f"accelerators_filter_{st.session_state.filter_change_key}"
-        prev_selected = st.session_state.get(prev_accel_key, None)
-
-        # Keep previously selected accelerators that are still available in current profile
-        # Use 'is not None' to allow empty list selection
-        if prev_selected is not None:
-            preserved_selections = [a for a in prev_selected if a in accelerators]
-        else:
-            preserved_selections = acc_default
-
-        selected_accelerators = st.multiselect(
-            "1️⃣ Select Accelerator(s)",
-            accelerators,
-            default=preserved_selections,
-            key=prev_accel_key,
-        )
-
-        st.markdown('<div style="margin-top: -1rem;"></div>', unsafe_allow_html=True)
-        if st.session_state.nav_collapsed:
-            if st.button(
-                "☰ Sections",
-                help="Expand section navigation",
-                key="expand_nav",
-                use_container_width=True,
-            ):
-                st.session_state.nav_collapsed = False
-                st.rerun()
-        else:
-            if st.button(
-                "« Collapse",
-                help="Collapse section navigation",
-                key="collapse_nav",
-                use_container_width=True,
-            ):
-                st.session_state.nav_collapsed = True
-                st.rerun()
-
-    with filter_col2:
-        # ISL/OSL Profile filter - filtered by selected accelerators
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-
-        profiles_raw = (
-            sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
-        )
-        # Sort so "Custom" always comes last to avoid it being picked as profiles[0] fallback
-        profiles = [p for p in profiles_raw if p != "Custom"] + (
-            ["Custom"] if "Custom" in profiles_raw else []
-        )
-
-        # Default to Profile A (1k/1k) when clearing or as fallback
-        default_profile = "Profile A: Balanced (1k/1k)"
-
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            profiles_default = (
-                default_profile
-                if default_profile in profiles
-                else (profiles[0] if profiles else None)
-            )
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_profile = st.session_state.get("baseline_profile", default_profile)
-            profiles_default = (
-                baseline_profile
-                if baseline_profile in profiles
-                else (
-                    default_profile
-                    if default_profile in profiles
-                    else (profiles[0] if profiles else None)
-                )
-            )
-        else:
-            baseline_profile = st.session_state.get("baseline_profile", default_profile)
-            profiles_default = (
-                baseline_profile
-                if baseline_profile in profiles
-                else (
-                    default_profile
-                    if default_profile in profiles
-                    else (profiles[0] if profiles else None)
-                )
-            )
-
-        # Initialize session state for profile key BEFORE the widget renders.
-        # This avoids the "double-click" issue caused by conflicting `index`
-        # and session state values — when both are sent to the frontend,
-        # a stale `index` (computed from baseline_profile which lags one
-        # render behind) can override the user's selection.
-        profile_key = f"profile_filter_{st.session_state.filter_change_key}"
-        if profile_key not in st.session_state:
-            # First render with this key — set the computed default
-            if profiles_default and profiles_default in profiles:
-                st.session_state[profile_key] = profiles_default
-            elif profiles:
+            # Initialize session state for profile key BEFORE the widget renders.
+            # This avoids the "double-click" issue caused by conflicting `index`
+            # and session state values — when both are sent to the frontend,
+            # a stale `index` (computed from baseline_profile which lags one
+            # render behind) can override the user's selection.
+            profile_key = f"profile_filter_{st.session_state.filter_change_key}"
+            if profile_key not in st.session_state:
+                # First render with this key — set the computed default
+                if profiles_default and profiles_default in profiles:
+                    st.session_state[profile_key] = profiles_default
+                elif profiles:
+                    st.session_state[profile_key] = (
+                        default_profile if default_profile in profiles else profiles[0]
+                    )
+            elif st.session_state.get(profile_key) not in profiles and profiles:
+                # Stored value is no longer in the options (e.g. accelerators
+                # changed and the profile is no longer available) — reset
                 st.session_state[profile_key] = (
-                    default_profile if default_profile in profiles else profiles[0]
-                )
-        elif st.session_state.get(profile_key) not in profiles and profiles:
-            # Stored value is no longer in the options (e.g. accelerators
-            # changed and the profile is no longer available) — reset
-            st.session_state[profile_key] = (
-                profiles_default
-                if profiles_default and profiles_default in profiles
-                else (default_profile if default_profile in profiles else profiles[0])
-            )
-
-        selected_profile = (
-            st.selectbox(
-                "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
-                profiles,
-                format_func=clean_profile_name,
-                key=profile_key,
-            )
-            if profiles
-            else None
-        )
-
-        selected_profiles = [selected_profile] if selected_profile is not None else []
-
-        # Update baseline_profile to remember user's current selection
-        # This ensures the selected profile is retained when other filters change
-        if selected_profile is not None:
-            st.session_state.baseline_profile = selected_profile
-            # Clear the "filters_were_cleared" flag so the new selection is preserved
-            if st.session_state.get("filters_were_cleared", False):
-                st.session_state.filters_were_cleared = False
-
-    with filter_col3:
-        # Versions filter - filtered by selected accelerators AND currently selected profile
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-
-        # Filter versions by the currently selected profile
-        if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
-
-        versions = (
-            sorted(temp_df["version"].unique().tolist()) if not temp_df.empty else []
-        )
-
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            versions_default = []
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_versions = st.session_state.get("baseline_versions", versions)
-            versions_default = [v for v in baseline_versions if v in versions]
-        else:
-            baseline_versions = st.session_state.get("baseline_versions", versions)
-            versions_default = [v for v in baseline_versions if v in versions]
-
-        # Get previously selected versions from session state
-        prev_versions_key = f"versions_filter_{st.session_state.filter_change_key}"
-        prev_selected = st.session_state.get(prev_versions_key, None)
-
-        # Keep previously selected versions that are still available in current profile
-        # Use 'is not None' to allow empty list selection
-        if prev_selected is not None:
-            preserved_selections = [v for v in prev_selected if v in versions]
-        else:
-            preserved_selections = versions_default
-
-        selected_versions = st.multiselect(
-            "3️⃣ Select Version(s)",
-            versions,
-            default=preserved_selections,
-            key=prev_versions_key,
-        )
-
-        with st.popover("❓ Filters Help", use_container_width=True):
-            st.markdown("### ✅ Valid Filter Combinations")
-            st.markdown("View all valid combinations of filters:")
-
-            # Exclude models that only appear under the Custom ISL/OSL profile
-            _fh_non_custom_models = set(df[df["profile"] != "Custom"]["model"].unique())
-            _fh_df = df[df["model"].isin(_fh_non_custom_models)]
-
-            tree_view = st.radio(
-                "Group by:",
-                options=["Model", "Version"],
-                horizontal=True,
-                key="filter_help_tree_view",
-            )
-
-            if tree_view == "Model":
-                _fh_models = sorted(_fh_df["model"].unique())
-                for _fh_model in _fh_models:
-                    _fh_short = (
-                        _fh_model.split("/")[-1] if "/" in _fh_model else _fh_model
+                    profiles_default
+                    if profiles_default and profiles_default in profiles
+                    else (
+                        default_profile if default_profile in profiles else profiles[0]
                     )
-                    _fh_data = _fh_df[_fh_df["model"] == _fh_model]
-                    with st.expander(f"🤖 {_fh_short}", expanded=False):
-                        combo_dict = {}
-                        for _, row in _fh_data.iterrows():
-                            acc = row["accelerator"]
-                            version = row["version"]
-                            profile = row["profile"]
-                            tp = row["TP"]
-                            if acc not in combo_dict:
-                                combo_dict[acc] = {}
-                            if version not in combo_dict[acc]:
-                                combo_dict[acc][version] = {}
-                            if profile not in combo_dict[acc][version]:
-                                combo_dict[acc][version][profile] = []
-                            if tp not in combo_dict[acc][version][profile]:
-                                combo_dict[acc][version][profile].append(tp)
-                        tree_text = ""
-                        for acc in sorted(combo_dict.keys()):
-                            tree_text += f"🔧 {acc}\n"
-                            for version in sorted(combo_dict[acc].keys()):
-                                tree_text += f"    📦 {version}\n"
-                                for profile in sorted(combo_dict[acc][version].keys()):
-                                    tp_list = ", ".join(
-                                        map(
-                                            str,
-                                            sorted(combo_dict[acc][version][profile]),
-                                        )
-                                    )
-                                    profile_display = clean_profile_name(profile)
-                                    tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
-                            tree_text += "\n"
-                        st.code(tree_text, language=None)
+                )
+
+            selected_profile = (
+                st.selectbox(
+                    "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
+                    profiles,
+                    format_func=clean_profile_name,
+                    key=profile_key,
+                )
+                if profiles
+                else None
+            )
+
+            selected_profiles = (
+                [selected_profile] if selected_profile is not None else []
+            )
+
+            # Update baseline_profile to remember user's current selection
+            # This ensures the selected profile is retained when other filters change
+            if selected_profile is not None:
+                st.session_state.baseline_profile = selected_profile
+                # Clear the "filters_were_cleared" flag so the new selection is preserved
+                if st.session_state.get("filters_were_cleared", False):
+                    st.session_state.filters_were_cleared = False
+
+        with filter_col3:
+            # Versions filter - filtered by selected accelerators AND currently selected profile
+            temp_df = df.copy()
+            if selected_accelerators:
+                temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+
+            # Filter versions by the currently selected profile
+            if selected_profiles:
+                temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+
+            versions = (
+                sorted(temp_df["version"].unique().tolist())
+                if not temp_df.empty
+                else []
+            )
+
+            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+                "filters_were_cleared", False
+            ):
+                versions_default = []
+            elif st.session_state.get("reset_to_defaults", False):
+                baseline_versions = st.session_state.get("baseline_versions", versions)
+                versions_default = [v for v in baseline_versions if v in versions]
             else:
-                _fh_versions = sorted(_fh_df["version"].unique())
-                for _fh_ver in _fh_versions:
-                    _fh_vdata = _fh_df[_fh_df["version"] == _fh_ver]
-                    with st.expander(f"📦 {_fh_ver}", expanded=False):
-                        combo_dict = {}
-                        for _, row in _fh_vdata.iterrows():
-                            acc = row["accelerator"]
-                            model = row["model"]
-                            model_short = (
-                                model.split("/")[-1] if "/" in model else model
-                            )
-                            profile = row["profile"]
-                            tp = row["TP"]
-                            if acc not in combo_dict:
-                                combo_dict[acc] = {}
-                            if model_short not in combo_dict[acc]:
-                                combo_dict[acc][model_short] = {}
-                            if profile not in combo_dict[acc][model_short]:
-                                combo_dict[acc][model_short][profile] = []
-                            if tp not in combo_dict[acc][model_short][profile]:
-                                combo_dict[acc][model_short][profile].append(tp)
-                        tree_text = ""
-                        for acc in sorted(combo_dict.keys()):
-                            tree_text += f"🔧 {acc}\n"
-                            for model_short in sorted(combo_dict[acc].keys()):
-                                tree_text += f"    🤖 {model_short}\n"
-                                for profile in sorted(
-                                    combo_dict[acc][model_short].keys()
-                                ):
-                                    tp_list = ", ".join(
-                                        map(
-                                            str,
-                                            sorted(
-                                                combo_dict[acc][model_short][profile]
-                                            ),
+                baseline_versions = st.session_state.get("baseline_versions", versions)
+                versions_default = [v for v in baseline_versions if v in versions]
+
+            # Get previously selected versions from session state
+            prev_versions_key = f"versions_filter_{st.session_state.filter_change_key}"
+            prev_selected = st.session_state.get(prev_versions_key, None)
+
+            # Keep previously selected versions that are still available in current profile
+            # Use 'is not None' to allow empty list selection
+            if prev_selected is not None:
+                preserved_selections = [v for v in prev_selected if v in versions]
+            else:
+                preserved_selections = versions_default
+
+            selected_versions = st.multiselect(
+                "3️⃣ Select Version(s)",
+                versions,
+                default=preserved_selections,
+                key=prev_versions_key,
+            )
+
+            with st.popover("❓ Filters Help", use_container_width=True):
+                st.markdown("### ✅ Valid Filter Combinations")
+                st.markdown("View all valid combinations of filters:")
+
+                # Exclude models that only appear under the Custom ISL/OSL profile
+                _fh_non_custom_models = set(
+                    df[df["profile"] != "Custom"]["model"].unique()
+                )
+                _fh_df = df[df["model"].isin(_fh_non_custom_models)]
+
+                tree_view = st.radio(
+                    "Group by:",
+                    options=["Model", "Version"],
+                    horizontal=True,
+                    key="filter_help_tree_view",
+                )
+
+                if tree_view == "Model":
+                    _fh_models = sorted(_fh_df["model"].unique())
+                    for _fh_model in _fh_models:
+                        _fh_short = (
+                            _fh_model.split("/")[-1] if "/" in _fh_model else _fh_model
+                        )
+                        _fh_data = _fh_df[_fh_df["model"] == _fh_model]
+                        with st.expander(f"🤖 {_fh_short}", expanded=False):
+                            combo_dict = {}
+                            for _, row in _fh_data.iterrows():
+                                acc = row["accelerator"]
+                                version = row["version"]
+                                profile = row["profile"]
+                                tp = row["TP"]
+                                if acc not in combo_dict:
+                                    combo_dict[acc] = {}
+                                if version not in combo_dict[acc]:
+                                    combo_dict[acc][version] = {}
+                                if profile not in combo_dict[acc][version]:
+                                    combo_dict[acc][version][profile] = []
+                                if tp not in combo_dict[acc][version][profile]:
+                                    combo_dict[acc][version][profile].append(tp)
+                            tree_text = ""
+                            for acc in sorted(combo_dict.keys()):
+                                tree_text += f"🔧 {acc}\n"
+                                for version in sorted(combo_dict[acc].keys()):
+                                    tree_text += f"    📦 {version}\n"
+                                    for profile in sorted(
+                                        combo_dict[acc][version].keys()
+                                    ):
+                                        tp_list = ", ".join(
+                                            map(
+                                                str,
+                                                sorted(
+                                                    combo_dict[acc][version][profile]
+                                                ),
+                                            )
                                         )
-                                    )
-                                    profile_display = clean_profile_name(profile)
-                                    tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
-                            tree_text += "\n"
-                        st.code(tree_text, language=None)
+                                        profile_display = clean_profile_name(profile)
+                                        tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
+                                tree_text += "\n"
+                            st.code(tree_text, language=None)
+                else:
+                    _fh_versions = sorted(_fh_df["version"].unique())
+                    for _fh_ver in _fh_versions:
+                        _fh_vdata = _fh_df[_fh_df["version"] == _fh_ver]
+                        with st.expander(f"📦 {_fh_ver}", expanded=False):
+                            combo_dict = {}
+                            for _, row in _fh_vdata.iterrows():
+                                acc = row["accelerator"]
+                                model = row["model"]
+                                model_short = (
+                                    model.split("/")[-1] if "/" in model else model
+                                )
+                                profile = row["profile"]
+                                tp = row["TP"]
+                                if acc not in combo_dict:
+                                    combo_dict[acc] = {}
+                                if model_short not in combo_dict[acc]:
+                                    combo_dict[acc][model_short] = {}
+                                if profile not in combo_dict[acc][model_short]:
+                                    combo_dict[acc][model_short][profile] = []
+                                if tp not in combo_dict[acc][model_short][profile]:
+                                    combo_dict[acc][model_short][profile].append(tp)
+                            tree_text = ""
+                            for acc in sorted(combo_dict.keys()):
+                                tree_text += f"🔧 {acc}\n"
+                                for model_short in sorted(combo_dict[acc].keys()):
+                                    tree_text += f"    🤖 {model_short}\n"
+                                    for profile in sorted(
+                                        combo_dict[acc][model_short].keys()
+                                    ):
+                                        tp_list = ", ".join(
+                                            map(
+                                                str,
+                                                sorted(
+                                                    combo_dict[acc][model_short][
+                                                        profile
+                                                    ]
+                                                ),
+                                            )
+                                        )
+                                        profile_display = clean_profile_name(profile)
+                                        tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
+                                tree_text += "\n"
+                            st.code(tree_text, language=None)
 
-    with filter_col4:
-        # Models filter - filtered by selected accelerators, versions, AND currently selected profile
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-        if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+        with filter_col4:
+            # Models filter - filtered by selected accelerators, versions, AND currently selected profile
+            temp_df = df.copy()
+            if selected_accelerators:
+                temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            if selected_versions:
+                temp_df = temp_df[temp_df["version"].isin(selected_versions)]
 
-        # Filter models by the currently selected profile
-        if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            # Filter models by the currently selected profile
+            if selected_profiles:
+                temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
 
-        models = sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
+            models = (
+                sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
+            )
 
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            models_default = []
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_models = st.session_state.get("baseline_models", models)
-            models_default = [m for m in baseline_models if m in models]
-        else:
-            baseline_models = st.session_state.get("baseline_models", models)
-            models_default = [m for m in baseline_models if m in models]
+            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+                "filters_were_cleared", False
+            ):
+                models_default = []
+            elif st.session_state.get("reset_to_defaults", False):
+                baseline_models = st.session_state.get("baseline_models", models)
+                models_default = [m for m in baseline_models if m in models]
+            else:
+                baseline_models = st.session_state.get("baseline_models", models)
+                models_default = [m for m in baseline_models if m in models]
 
-        # Check if "Select All Models" is checked (from previous render)
-        select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
-        select_all_checked = st.session_state.get(select_all_key, False)
+            # Check if "Select All Models" is checked (from previous render)
+            select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
+            select_all_checked = st.session_state.get(select_all_key, False)
 
-        # If "Select All" is checked, set default to all models
-        models_to_select = models if select_all_checked else models_default
+            # If "Select All" is checked, set default to all models
+            models_to_select = models if select_all_checked else models_default
 
-        # Get previously selected models from session state
-        prev_models_key = f"models_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
-        prev_selected = st.session_state.get(prev_models_key, None)
+            # Get previously selected models from session state
+            prev_models_key = f"models_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
+            prev_selected = st.session_state.get(prev_models_key, None)
 
-        # Keep previously selected models that are still available in current profile
-        # Use 'is not None' to allow empty list selection
-        if prev_selected is not None:
-            preserved_selections = [m for m in prev_selected if m in models]
-        else:
-            preserved_selections = models_to_select
+            # Keep previously selected models that are still available in current profile
+            # Use 'is not None' to allow empty list selection
+            if prev_selected is not None:
+                preserved_selections = [m for m in prev_selected if m in models]
+            else:
+                preserved_selections = models_to_select
 
-        selected_models = st.multiselect(
-            "4️⃣ Select Model(s)",
-            models,
-            default=preserved_selections,
-            key=prev_models_key,
-        )
+            selected_models = st.multiselect(
+                "4️⃣ Select Model(s)",
+                models,
+                default=preserved_selections,
+                key=prev_models_key,
+            )
 
-        # Checkbox for selecting all models below the dropdown
-        st.checkbox(
-            "Select All Models",
-            value=select_all_checked,
-            key=select_all_key,
-        )
+            # Checkbox for selecting all models below the dropdown
+            st.checkbox(
+                "Select All Models",
+                value=select_all_checked,
+                key=select_all_key,
+            )
 
-    with filter_col5:
-        # TP sizes filter - filtered by accelerators, versions, models, and profiles
-        temp_df = df.copy()
-        if selected_accelerators:
-            temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-        if selected_versions:
-            temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-        if selected_profiles:
-            temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
-        if selected_models:
-            temp_df = temp_df[temp_df["model"].isin(selected_models)]
+        with filter_col5:
+            # TP sizes filter - filtered by accelerators, versions, models, and profiles
+            temp_df = df.copy()
+            if selected_accelerators:
+                temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
+            if selected_versions:
+                temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            if selected_profiles:
+                temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+            if selected_models:
+                temp_df = temp_df[temp_df["model"].isin(selected_models)]
 
-        tp_sizes = (
-            sorted(temp_df["TP"].dropna().unique().tolist())
-            if not temp_df.empty
-            else []
-        )
+            tp_sizes = (
+                sorted(temp_df["TP"].dropna().unique().tolist())
+                if not temp_df.empty
+                else []
+            )
 
-        # Check if "Select All Models" is checked
-        select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
-        select_all_checked = st.session_state.get(select_all_key, False)
+            # Check if "Select All Models" is checked
+            select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
+            select_all_checked = st.session_state.get(select_all_key, False)
 
-        # Track previous model selection for detecting changes
-        tracking_key = "previous_models_for_tp_tracking"
-        prev_selected_models = st.session_state.get(tracking_key, None)
+            # Track previous model selection for detecting changes
+            tracking_key = "previous_models_for_tp_tracking"
+            prev_selected_models = st.session_state.get(tracking_key, None)
 
-        # Get previous TP selection
-        prev_tp_key = (
-            f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
-        )
-        prev_selected_tp = st.session_state.get(prev_tp_key, None)
+            # Get previous TP selection
+            prev_tp_key = f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
+            prev_selected_tp = st.session_state.get(prev_tp_key, None)
 
-        # Check if models selection changed
-        models_changed = (
-            (prev_selected_models != selected_models)
-            if prev_selected_models is not None
-            else (bool(selected_models))
-        )
+            # Check if models selection changed
+            models_changed = (
+                (prev_selected_models != selected_models)
+                if prev_selected_models is not None
+                else (bool(selected_models))
+            )
 
-        if st.session_state.get("clear_all_filters", False) or st.session_state.get(
-            "filters_were_cleared", False
-        ):
-            tp_default = []
-        elif models_changed and selected_models:
-            # Models changed and some are selected - auto-select all TP sizes for selected models
-            tp_default = tp_sizes
-        elif select_all_checked:
-            # If "Select All Models" is checked, also select all TP sizes
-            tp_default = tp_sizes
-        elif prev_selected_tp is not None:
-            # Models didn't change - preserve user's manual TP selections (filtered to available)
-            tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
-        elif st.session_state.get("reset_to_defaults", False):
-            baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
-            tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
-        else:
-            baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
-            tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
+            if st.session_state.get("clear_all_filters", False) or st.session_state.get(
+                "filters_were_cleared", False
+            ):
+                tp_default = []
+            elif models_changed and selected_models:
+                # Models changed and some are selected - auto-select all TP sizes for selected models
+                tp_default = tp_sizes
+            elif select_all_checked:
+                # If "Select All Models" is checked, also select all TP sizes
+                tp_default = tp_sizes
+            elif prev_selected_tp is not None:
+                # Models didn't change - preserve user's manual TP selections (filtered to available)
+                tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
+            elif st.session_state.get("reset_to_defaults", False):
+                baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
+                tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
+            else:
+                baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
+                tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
 
-        selected_tp = st.multiselect(
-            "5️⃣ Select TP Size(s)",
-            tp_sizes,
-            default=tp_default,
-            key=prev_tp_key,
-        )
+            selected_tp = st.multiselect(
+                "5️⃣ Select TP Size(s)",
+                tp_sizes,
+                default=tp_default,
+                key=prev_tp_key,
+            )
 
-        if st.button(
-            "↩ Reset to Defaults",
-            help="Reset filters to system/URL defaults",
-            use_container_width=True,
-        ):
+            if st.button(
+                "↩ Reset to Defaults",
+                help="Reset filters to system/URL defaults",
+                use_container_width=True,
+            ):
+                st.session_state.clear_all_filters = False
+                st.session_state.filters_were_cleared = False
+                st.session_state.reset_to_defaults = True
+                st.session_state.filter_change_key += 1
+                st.session_state.previous_models_for_tp_tracking = None
+                st.session_state.performance_plots_expanded = False
+                st.session_state.model_comparison_expanded = False
+                st.session_state.runtime_configs_expanded = False
+                st.session_state.energy_expanded = False
+                if "previous_filter_state" in st.session_state:
+                    del st.session_state.previous_filter_state
+                st.rerun()
+
+            # Update the tracking variable with current selection
+            st.session_state[tracking_key] = selected_models
+
+        if st.session_state.get("clear_all_filters", False):
             st.session_state.clear_all_filters = False
-            st.session_state.filters_were_cleared = False
-            st.session_state.reset_to_defaults = True
-            st.session_state.filter_change_key += 1
-            st.session_state.previous_models_for_tp_tracking = None
+        if st.session_state.get("reset_to_defaults", False):
+            st.session_state.reset_to_defaults = False
+
+        # URL sync is now handled after section rendering (single atomic from_dict call)
+
+        filtered_df = df[
+            df["accelerator"].isin(selected_accelerators)
+            & df["model"].isin(selected_models)
+            & df["version"].isin(selected_versions)
+            & (df["profile"].isin(selected_profiles) if selected_profiles else True)
+            & df["TP"].isin(selected_tp)
+        ].copy()
+
+        # Detect if filters have changed and close expanders
+        current_filter_state = {
+            "accelerators": tuple(sorted(selected_accelerators)),
+            "models": tuple(sorted(selected_models)),
+            "versions": tuple(sorted(selected_versions)),
+            "profile": selected_profile,
+            "tp": tuple(sorted(selected_tp)),
+        }
+
+        previous_filter_state = st.session_state.get("previous_filter_state", None)
+
+        # If filters have changed (and not first run), close all expanders
+        if (
+            previous_filter_state is not None
+            and previous_filter_state != current_filter_state
+        ):
             st.session_state.performance_plots_expanded = False
             st.session_state.model_comparison_expanded = False
+            st.session_state.compare_models_expanded = False
             st.session_state.runtime_configs_expanded = False
             st.session_state.energy_expanded = False
-            if "previous_filter_state" in st.session_state:
-                del st.session_state.previous_filter_state
-            st.rerun()
 
-        # Update the tracking variable with current selection
-        st.session_state[tracking_key] = selected_models
+        # Store current filter state for next comparison
+        st.session_state.previous_filter_state = current_filter_state
 
-    if st.session_state.get("clear_all_filters", False):
-        st.session_state.clear_all_filters = False
-    if st.session_state.get("reset_to_defaults", False):
-        st.session_state.reset_to_defaults = False
-
-    # URL sync is now handled after section rendering (single atomic from_dict call)
-
-    filtered_df = df[
-        df["accelerator"].isin(selected_accelerators)
-        & df["model"].isin(selected_models)
-        & df["version"].isin(selected_versions)
-        & (df["profile"].isin(selected_profiles) if selected_profiles else True)
-        & df["TP"].isin(selected_tp)
-    ].copy()
-
-    # Detect if filters have changed and close expanders
-    current_filter_state = {
-        "accelerators": tuple(sorted(selected_accelerators)),
-        "models": tuple(sorted(selected_models)),
-        "versions": tuple(sorted(selected_versions)),
-        "profile": selected_profile,
-        "tp": tuple(sorted(selected_tp)),
-    }
-
-    previous_filter_state = st.session_state.get("previous_filter_state", None)
-
-    # If filters have changed (and not first run), close all expanders
-    if (
-        previous_filter_state is not None
-        and previous_filter_state != current_filter_state
-    ):
-        st.session_state.performance_plots_expanded = False
-        st.session_state.model_comparison_expanded = False
-        st.session_state.compare_models_expanded = False
-        st.session_state.runtime_configs_expanded = False
-        st.session_state.energy_expanded = False
-
-    # Store current filter state for next comparison
-    st.session_state.previous_filter_state = current_filter_state
+        # Persist filter selections so they survive section switches
+        st.session_state._persisted_profile = selected_profile
+        st.session_state._persisted_accelerators = list(selected_accelerators)
+        st.session_state._persisted_models = list(selected_models)
+        st.session_state._persisted_versions = list(selected_versions)
+        st.session_state._persisted_tp = list(selected_tp)
 
     if not filtered_df.empty:
         accelerator_color_map = {
@@ -7660,7 +8883,11 @@ def main():
         )
 
         # Build dynamic section list based on selected profile
-        section_list = ["📊 Performance Plots"]
+        section_list = [
+            "🏠 Overview",
+            "🔍 Competitive Analysis",
+            "📊 Performance Plots",
+        ]
         if selected_profile == "Custom":
             section_list.append("📈 Dataset Representation")
             section_list.append("🔄 Pareto Tradeoff Graphs")
@@ -7674,20 +8901,84 @@ def main():
             section_list.append("📈 Performance Trends")
             section_list.append("💰 Cost Analysis")
         if selected_profile != "Custom":
-            section_list.append("🌱 Energy / Carbon Computation")
+            section_list.append("🌱 Energy Computation")
+        section_list.append("💡 IntelliConfig")
         section_list.append("⚙️ Runtime Server Configs")
         section_list.append("📄 Filtered Data")
 
+        SECTION_GROUPS = [
+            (
+                "Dashboard",
+                [
+                    "🏠 Overview",
+                    "🔍 Competitive Analysis",
+                ],
+            ),
+            (
+                "Performance Analysis",
+                [
+                    "📊 Performance Plots",
+                    "📈 Dataset Representation",
+                    "⚖️ Compare Versions",
+                    "⚖️ Compare Models",
+                ],
+            ),
+            (
+                "Insights",
+                [
+                    "📈 Performance Trends",
+                    "💰 Cost Analysis",
+                    "🏆 Model Performance Comparison",
+                    "🌱 Energy Computation",
+                ],
+            ),
+            (
+                "Tools",
+                [
+                    "💡 IntelliConfig",
+                    "🔄 Pareto Tradeoff Analysis",
+                    "🔄 Pareto Tradeoff Graphs",
+                    "⚙️ Runtime Server Configs",
+                    "📄 Filtered Data",
+                ],
+            ),
+        ]
+
         # Ensure selected section is valid for current profile
-        # Use a persistent key separate from the radio widget key
         current_section = st.session_state.get("active_section", section_list[0])
         if current_section not in section_list:
             current_section = section_list[0]
         st.session_state.active_section = current_section
 
+        # Render grouped sidebar navigation
+        with st.sidebar:
+            for group_name, group_sections in SECTION_GROUPS:
+                visible = [s for s in group_sections if s in section_list]
+                if not visible:
+                    continue
+                st.markdown(
+                    f'<p class="nav-group-header">{group_name}</p>',
+                    unsafe_allow_html=True,
+                )
+                for section_name in visible:
+                    is_active = section_name == current_section
+                    btn_type = "primary" if is_active else "secondary"
+                    if st.button(
+                        section_name,
+                        key=f"nav_{section_name}",
+                        use_container_width=True,
+                        type=btn_type,
+                    ):
+                        st.session_state.active_section = section_name
+                        st.rerun()
+
         def _render_selected_section(sel):
             """Render the currently selected section content."""
-            if sel == "📊 Performance Plots":
+            if sel == "🏠 Overview":
+                render_overview_section(df)
+            elif sel == "🔍 Competitive Analysis":
+                render_competitive_analysis_section(df)
+            elif sel == "📊 Performance Plots":
                 render_performance_plots_section(filtered_df, use_expander=False)
             elif sel == "📈 Dataset Representation":
                 render_dataset_representation_section(
@@ -7713,37 +9004,16 @@ def main():
                 render_cost_analysis_section(
                     filtered_df, accelerator_color_map, use_expander=False
                 )
-            elif sel == "🌱 Energy / Carbon Computation":
+            elif sel == "🌱 Energy Computation":
                 render_energy_carbon_methodology_section(df, use_expander=False)
+            elif sel == "💡 IntelliConfig":
+                render_intelliconfig_section(df)
             elif sel == "⚙️ Runtime Server Configs":
                 render_runtime_configs_section(filtered_df, use_expander=False)
             elif sel == "📄 Filtered Data":
                 render_filtered_data_section(filtered_df, use_expander=False)
 
-        if st.session_state.nav_collapsed:
-            # Collapsed nav: full-width content only
-            _render_selected_section(current_section)
-        else:
-            # Expanded nav: nav column + content column
-            nav_col, content_col = st.columns([1, 4.5])
-            with nav_col:
-                st.markdown(
-                    '<div class="section-nav-marker"></div>', unsafe_allow_html=True
-                )
-                if (
-                    "selected_section" not in st.session_state
-                    or st.session_state.selected_section not in section_list
-                ):
-                    st.session_state.selected_section = current_section
-                selected_section = st.radio(
-                    "Navigate to section",
-                    section_list,
-                    key="selected_section",
-                    label_visibility="collapsed",
-                )
-                st.session_state.active_section = selected_section
-            with content_col:
-                _render_selected_section(selected_section)
+        _render_selected_section(current_section)
 
         # Sync full URL state (main filters + section + section filters) in one atomic call
         with contextlib.suppress(Exception):
@@ -7789,12 +9059,6 @@ def main():
                         if conc_val is not None and isinstance(conc_val, list):
                             desired_params["cv_conc"] = ",".join(map(str, conc_val))
             st.query_params.from_dict(desired_params)
-
-        if st.session_state.get("share_view_header"):
-            st.toast(
-                "🔗 Your browser's address bar has the full shareable URL — just copy it!",
-                icon="✅",
-            )
 
     else:
         if selected_models:
@@ -7899,3 +9163,94 @@ def main():
 
 
 main()
+
+# Click anywhere on main area to collapse sidebar + hamburger icon replacement
+_active_section = st.session_state.get("active_section", "🏠 Overview")
+_stc.html(
+    f"""
+<script>
+(function() {{
+    var doc = parent.document;
+
+    // --- Scroll to top on section change ---
+    var currentSection = "{_active_section}";
+    if (doc._lastSection && doc._lastSection !== currentSection) {{
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (main) main.scrollTop = 0;
+        var sc = doc.querySelector('.main');
+        if (sc) sc.scrollTop = 0;
+        parent.window.scrollTo(0, 0);
+    }}
+    doc._lastSection = currentSection;
+
+    // --- Click-to-close sidebar ---
+    // Re-attach on every Streamlit rerun: the old iframe (and its JS context
+    // including the previous handler function) is destroyed on navigation,
+    // so the handler must be recreated from the current iframe's context.
+    var NO_COLLAPSE_SECTIONS = [
+        "\U0001f3e0 Overview",
+        "\U0001f50d Competitive Analysis",
+        "\U0001f4c8 Performance Trends",
+        "\U0001f4a1 IntelliConfig"
+    ];
+    var collapseEnabled = NO_COLLAPSE_SECTIONS.indexOf(currentSection) === -1;
+
+    if (doc._sidebarClickClose) {{
+        doc.removeEventListener('click', doc._sidebarClickClose);
+    }}
+    if (doc._clickCloseTimeout) {{
+        clearTimeout(doc._clickCloseTimeout);
+    }}
+
+    doc._sidebarClickClose = function(e) {{
+        if (!collapseEnabled) return;
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (!sb || sb.getAttribute('aria-expanded') !== 'true') return;
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (!main || !main.contains(e.target)) return;
+        setTimeout(function() {{
+            var sb2 = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb2 || sb2.getAttribute('aria-expanded') !== 'true') return;
+            var closeBtn = sb2.querySelector('[data-testid="stSidebarHeader"] button')
+                        || sb2.querySelector('button[kind="headerNoPadding"]')
+                        || sb2.querySelector('button[kind="header"]');
+            if (closeBtn) closeBtn.click();
+        }}, 0);
+    }};
+
+    var clickDelay = doc._clickCloseInitialized ? 0 : 1500;
+    doc._clickCloseInitialized = true;
+    doc._clickCloseTimeout = setTimeout(function() {{
+        doc.addEventListener('click', doc._sidebarClickClose);
+    }}, clickDelay);
+
+    // --- Hamburger icon replacement ---
+    if (doc._hamburgerInterval) clearInterval(doc._hamburgerInterval);
+
+    function scan() {{
+        // Sidebar close button (when sidebar is open)
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (sb) {{
+            var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                   || sb.querySelector('button[kind="headerNoPadding"]')
+                   || sb.querySelector('button[kind="header"]');
+            if (hdr) hdr.classList.add('hamburger-btn');
+        }}
+        // Sidebar expand button (only when sidebar is collapsed)
+        var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
+        if (!sidebarOpen) {{
+            var header = doc.querySelector('[data-testid="stHeader"]');
+            if (header) {{
+                var firstBtn = header.querySelector('button');
+                if (firstBtn) firstBtn.classList.add('hamburger-btn');
+            }}
+        }}
+    }}
+
+    scan();
+    doc._hamburgerInterval = setInterval(scan, 500);
+}})();
+</script>
+""",
+    height=0,
+)
