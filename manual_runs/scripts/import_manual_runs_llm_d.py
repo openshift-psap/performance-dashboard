@@ -25,6 +25,13 @@ def process_benchmark_section(
     guidellm_version,
     guidellm_start_time_ms,
     guidellm_end_time_ms,
+    dp=None,
+    ep=None,
+    replicas=None,
+    prefill_pod_count=None,
+    decode_pod_count=None,
+    router_config=None,
+    notes=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -47,10 +54,14 @@ def process_benchmark_section(
     full_model_name = f"{accelerator}-{model_name}-{tp_size}"
 
     config = benchmark.get("config", {})
-    uuid = config.get("run_id")
+    # Format A (0.5.x): run_id in config; Format B (older): run_id at benchmark level
+    uuid = config.get("run_id") or benchmark.get("run_id")
 
     # Get strategy info (streams/concurrency)
-    strategy = config.get("strategy", {})
+    # Format A: config.strategy; Format B: scheduler.strategy
+    strategy = config.get("strategy", {}) or benchmark.get("scheduler", {}).get(
+        "strategy", {}
+    )
     intended_concurrency = strategy.get("streams") or strategy.get("max_concurrency", 0)
 
     # Parse data config for prompt/output tokens
@@ -78,9 +89,15 @@ def process_benchmark_section(
         config_prompt_tokens = 0
         config_output_tokens = 0
 
-    # Get request stats from scheduler_metrics
+    # Get request stats
+    # Format A (0.5.x): scheduler_metrics.requests_made
+    # Format B (older): request_totals or run_stats.requests_made
     scheduler_metrics = benchmark.get("scheduler_metrics", {})
-    requests_made = scheduler_metrics.get("requests_made", {})
+    requests_made = (
+        scheduler_metrics.get("requests_made", {})
+        or benchmark.get("request_totals", {})
+        or benchmark.get("run_stats", {}).get("requests_made", {})
+    )
     successful_reqs = requests_made.get("successful", 0)
     errored_reqs = requests_made.get("errored", 0)
 
@@ -126,6 +143,12 @@ def process_benchmark_section(
         "prompt toks": config_prompt_tokens,
         "output toks": config_output_tokens,
         "TP": tp_size,
+        "DP": dp,
+        "EP": ep,
+        "replicas": replicas,
+        "prefill_pod_count": prefill_pod_count,
+        "decode_pod_count": decode_pod_count,
+        "router_config": router_config,
         "measured concurrency": measured_concurrency,
         "intended concurrency": intended_concurrency,
         "measured rps": measured_rps,
@@ -163,6 +186,7 @@ def process_benchmark_section(
         "guidellm_end_time_ms": guidellm_end_time_ms,
         "image_tag": image_tag,
         "guidellm_version": guidellm_version,
+        "notes": notes,
     }
 
     return row
@@ -177,6 +201,13 @@ def parse_guidellm_json(
     runtime_args,
     image_tag,
     guidellm_version,
+    dp=None,
+    ep=None,
+    replicas=None,
+    prefill_pod_count=None,
+    decode_pod_count=None,
+    router_config=None,
+    notes=None,
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -217,18 +248,37 @@ def parse_guidellm_json(
     benchmarks = data["benchmarks"]
 
     # Get global data config (prompt_tokens, output_tokens)
+    # Format A (0.5.x): top-level args.data
+    # Format B (older): per-benchmark benchmarker.requests.attributes.data
     global_args = data.get("args", {})
     global_data_config = global_args.get("data", [])
 
-    # Extract aggregated guidellm start and end times from scheduler_metrics
+    if not global_data_config and benchmarks:
+        # Fallback: extract from first benchmark's benchmarker config
+        bm_data = (
+            benchmarks[0]
+            .get("benchmarker", {})
+            .get("requests", {})
+            .get("attributes", {})
+            .get("data")
+        )
+        if bm_data:
+            global_data_config = [bm_data]
+
+    # Extract aggregated guidellm start and end times
     start_times = []
     end_times = []
     for benchmark in benchmarks:
+        # Format A: scheduler_metrics; Format B: benchmark-level start_time/end_time
         scheduler_metrics = benchmark.get("scheduler_metrics", {})
         if "start_time" in scheduler_metrics:
             start_times.append(scheduler_metrics["start_time"])
+        elif "start_time" in benchmark:
+            start_times.append(benchmark["start_time"])
         if "end_time" in scheduler_metrics:
             end_times.append(scheduler_metrics["end_time"])
+        elif "end_time" in benchmark:
+            end_times.append(benchmark["end_time"])
 
     # Get min start_time and max end_time, convert to milliseconds
     guidellm_start_time_ms = int(min(start_times) * 1000) if start_times else ""
@@ -249,12 +299,20 @@ def parse_guidellm_json(
             guidellm_version,
             guidellm_start_time_ms,
             guidellm_end_time_ms,
+            dp=dp,
+            ep=ep,
+            replicas=replicas,
+            prefill_pod_count=prefill_pod_count,
+            decode_pod_count=decode_pod_count,
+            router_config=router_config,
+            notes=notes,
         )
         if row_data:
             all_run_data.append(row_data)
-            streams = (
-                benchmark.get("config", {}).get("strategy", {}).get("streams", "?")
-            )
+            strategy = benchmark.get("config", {}).get(
+                "strategy", {}
+            ) or benchmark.get("scheduler", {}).get("strategy", {})
+            streams = strategy.get("streams", "?")
             print(
                 f"  Processed benchmark {i + 1}/{len(benchmarks)} (streams={streams})"
             )
@@ -300,20 +358,77 @@ def main():
     )
     parser.add_argument(
         "--image-tag",
-        required=True,
-        help="Container image tag used for the run (e.g., 'vllm/vllm-openai:v0.13.0')",
+        default=None,
+        help="Container image tag used for the run (e.g., 'vllm/vllm-openai:v0.13.0'). Required unless --llm-d is set.",
     )
     parser.add_argument(
         "--guidellm-version",
-        required=True,
-        help="Version of guidellm used to run the benchmark (e.g., 'v0.5.x', 'v0.3.0')",
+        default=None,
+        help="Version of guidellm used to run the benchmark (e.g., 'v0.5.x', 'v0.3.0'). Required unless --llm-d is set.",
     )
     parser.add_argument(
         "--csv-file",
         default="new_benchmarks.csv",
         help="Path to the output CSV file (default: new_benchmarks.csv)",
     )
+
+    # LLM-D mode flags
+    parser.add_argument(
+        "--llm-d",
+        action="store_true",
+        help="Enable llm-d mode with additional deployment metadata columns (DP, EP, replicas, router_config, etc.)",
+    )
+    parser.add_argument(
+        "--dp", type=int, default=None, help="[llm-d] Data parallelism size"
+    )
+    parser.add_argument(
+        "--ep", type=int, default=None, help="[llm-d] Expert parallelism size"
+    )
+    parser.add_argument(
+        "--replicas", type=int, default=None, help="[llm-d] Number of replicas"
+    )
+    parser.add_argument(
+        "--prefill-pod-count",
+        type=int,
+        default=0,
+        help="[llm-d] Number of prefill pods (default: 0)",
+    )
+    parser.add_argument(
+        "--decode-pod-count",
+        type=int,
+        default=0,
+        help="[llm-d] Number of decode pods (default: 0)",
+    )
+    parser.add_argument(
+        "--router-config",
+        default=None,
+        help="[llm-d] Router/endpoint picker configuration (YAML or JSON string)",
+    )
+    parser.add_argument(
+        "--notes",
+        default=None,
+        help="[llm-d] Free-form note applied to every row (e.g., 'baseline run')",
+    )
+
     args = parser.parse_args()
+
+    # Validate mode-specific required flags
+    if args.llm_d:
+        missing = []
+        for flag in ("dp", "ep", "replicas", "router_config"):
+            if getattr(args, flag) is None:
+                missing.append(f"--{flag.replace('_', '-')}")
+        if missing:
+            parser.error(
+                f"--llm-d mode requires the following flags: {', '.join(missing)}"
+            )
+    else:
+        missing = []
+        for flag in ("image_tag", "guidellm_version"):
+            if getattr(args, flag) is None:
+                missing.append(f"--{flag.replace('_', '-')}")
+        if missing:
+            parser.error(f"The following flags are required: {', '.join(missing)}")
 
     print(f"Processing {args.json_file}...")
 
@@ -326,6 +441,13 @@ def main():
         args.runtime_args,
         args.image_tag,
         args.guidellm_version,
+        dp=args.dp,
+        ep=args.ep,
+        replicas=args.replicas,
+        prefill_pod_count=args.prefill_pod_count,
+        decode_pod_count=args.decode_pod_count,
+        router_config=args.router_config,
+        notes=args.notes,
     )
 
     if new_data_df is not None and not new_data_df.empty:
@@ -339,52 +461,107 @@ def main():
             )
             combined_df = new_data_df
 
-        fieldnames = [
-            "run",
-            "accelerator",
-            "model",
-            "version",
-            "prompt toks",
-            "output toks",
-            "TP",
-            "measured concurrency",
-            "intended concurrency",
-            "measured rps",
-            "output_tok/sec",
-            "total_tok/sec",
-            "prompt_token_count_mean",
-            "prompt_token_count_p99",
-            "output_token_count_mean",
-            "output_token_count_p99",
-            "ttft_median",
-            "ttft_p95",
-            "ttft_p1",
-            "ttft_p999",
-            "tpot_median",
-            "tpot_p95",
-            "tpot_p99",
-            "tpot_p999",
-            "tpot_p1",
-            "itl_median",
-            "itl_p95",
-            "itl_p999",
-            "itl_p1",
-            "request_latency_median",
-            "request_latency_min",
-            "request_latency_max",
-            "successful_requests",
-            "errored_requests",
-            "uuid",
-            "ttft_mean",
-            "ttft_p99",
-            "itl_mean",
-            "itl_p99",
-            "runtime_args",
-            "guidellm_start_time_ms",
-            "guidellm_end_time_ms",
-            "image_tag",
-            "guidellm_version",
-        ]
+        if args.llm_d:
+            fieldnames = [
+                "run",
+                "accelerator",
+                "model",
+                "version",
+                "prompt toks",
+                "output toks",
+                "TP",
+                "DP",
+                "EP",
+                "replicas",
+                "prefill_pod_count",
+                "decode_pod_count",
+                "router_config",
+                "measured concurrency",
+                "intended concurrency",
+                "measured rps",
+                "output_tok/sec",
+                "total_tok/sec",
+                "prompt_token_count_mean",
+                "prompt_token_count_p99",
+                "output_token_count_mean",
+                "output_token_count_p99",
+                "ttft_median",
+                "ttft_p95",
+                "ttft_p1",
+                "ttft_p999",
+                "tpot_median",
+                "tpot_p95",
+                "tpot_p99",
+                "tpot_p999",
+                "tpot_p1",
+                "itl_median",
+                "itl_p95",
+                "itl_p999",
+                "itl_p1",
+                "request_latency_median",
+                "request_latency_min",
+                "request_latency_max",
+                "successful_requests",
+                "errored_requests",
+                "uuid",
+                "ttft_mean",
+                "ttft_p99",
+                "itl_mean",
+                "itl_p99",
+                "runtime_args",
+                "guidellm_start_time_ms",
+                "guidellm_end_time_ms",
+                "image_tag",
+                "guidellm_version",
+                "notes",
+            ]
+        else:
+            fieldnames = [
+                "run",
+                "accelerator",
+                "model",
+                "version",
+                "prompt toks",
+                "output toks",
+                "TP",
+                "measured concurrency",
+                "intended concurrency",
+                "measured rps",
+                "output_tok/sec",
+                "total_tok/sec",
+                "prompt_token_count_mean",
+                "prompt_token_count_p99",
+                "output_token_count_mean",
+                "output_token_count_p99",
+                "ttft_median",
+                "ttft_p95",
+                "ttft_p1",
+                "ttft_p999",
+                "tpot_median",
+                "tpot_p95",
+                "tpot_p99",
+                "tpot_p999",
+                "tpot_p1",
+                "itl_median",
+                "itl_p95",
+                "itl_p999",
+                "itl_p1",
+                "request_latency_median",
+                "request_latency_min",
+                "request_latency_max",
+                "successful_requests",
+                "errored_requests",
+                "uuid",
+                "ttft_mean",
+                "ttft_p99",
+                "itl_mean",
+                "itl_p99",
+                "runtime_args",
+                "guidellm_start_time_ms",
+                "guidellm_end_time_ms",
+                "image_tag",
+                "guidellm_version",
+            ]
 
         for col in fieldnames:
             if col not in combined_df.columns:
