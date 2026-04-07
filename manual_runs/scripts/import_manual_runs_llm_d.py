@@ -309,9 +309,9 @@ def parse_guidellm_json(
         )
         if row_data:
             all_run_data.append(row_data)
-            strategy = benchmark.get("config", {}).get(
-                "strategy", {}
-            ) or benchmark.get("scheduler", {}).get("strategy", {})
+            strategy = benchmark.get("config", {}).get("strategy", {}) or benchmark.get(
+                "scheduler", {}
+            ).get("strategy", {})
             streams = strategy.get("streams", "?")
             print(
                 f"  Processed benchmark {i + 1}/{len(benchmarks)} (streams={streams})"
