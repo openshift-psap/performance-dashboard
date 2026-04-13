@@ -180,7 +180,20 @@ def clean_profile_name(profile_name):
         end_idx = profile_name.find(")", start_idx)
         if start_idx != -1 and end_idx != -1:
             return profile_name[start_idx : end_idx + 1]
-    return profile_name
+    return _CUSTOM_ISL_OSL_LABELS.get(profile_name, profile_name)
+
+
+_CUSTOM_ISL_OSL_LABELS = {
+    "0/0": "Real Dataset (0/0)",
+    "1000/1000": "1000/1000 - Balanced",
+    "8000/800": "8000/800 - Heterogeneous",
+    "128/128": "128/128 - Multi-turn",
+}
+
+
+def format_custom_isl_osl(pair):
+    """Human-readable label for a custom ISL/OSL pair."""
+    return _CUSTOM_ISL_OSL_LABELS.get(pair, pair)
 
 
 @st.cache_data(ttl=300)
@@ -238,6 +251,13 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
         # Assign profile based on prompt/output tokens
         if "prompt toks" in df.columns and "output toks" in df.columns:
             df["profile"] = df.apply(assign_profile, axis=1)
+            df["custom_isl_osl"] = np.where(
+                df["profile"] == "Custom",
+                df["prompt toks"].astype(int).astype(str)
+                + "/"
+                + df["output toks"].astype(int).astype(str),
+                "",
+            )
 
         # Calculate efficiency ratio (output tokens/sec per TP unit)
         if "output_tok/sec" in df.columns and "TP" in df.columns:
@@ -421,8 +441,37 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             if profiles
             else None
         )
+        st.caption(
+            "Please refer to the notes column in the filtered data to understand more about the workload profile."
+        )
 
         selected_profiles = [selected_profile] if selected_profile is not None else []
+
+        # Secondary filter: specific ISL/OSL pair when Custom is selected
+        selected_custom_isl_osl = None
+        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+            custom_temp = df.copy()
+            if selected_accelerators:
+                custom_temp = custom_temp[
+                    custom_temp["accelerator"].isin(selected_accelerators)
+                ]
+            custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+            custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
+            custom_pairs = [p for p in custom_pairs if p]
+            if custom_pairs:
+                custom_key = f"llmd_custom_isl_osl_filter_{st.session_state.llmd_filter_change_key}"
+                if (
+                    custom_key not in st.session_state
+                    or st.session_state.get(custom_key) not in custom_pairs
+                ):
+                    st.session_state[custom_key] = custom_pairs[0]
+                selected_custom_isl_osl = st.selectbox(
+                    "Select Custom ISL/OSL Pair",
+                    custom_pairs,
+                    format_func=format_custom_isl_osl,
+                    key=custom_key,
+                )
+                st.session_state.llmd_selected_custom_isl_osl = selected_custom_isl_osl
 
         if selected_profile is not None:
             st.session_state.llmd_baseline_profile = selected_profile
@@ -771,29 +820,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         )
 
     # Filter action buttons
-    if "llmd_nav_collapsed" not in st.session_state:
-        st.session_state.llmd_nav_collapsed = False
-    btn_col1, _, btn_col2, btn_col3 = st.columns([1, 2.5, 1, 1])
-
-    with btn_col1:
-        if st.session_state.llmd_nav_collapsed:
-            if st.button(
-                "☰ Sections",
-                help="Expand section navigation",
-                key="llmd_expand_nav",
-                use_container_width=True,
-            ):
-                st.session_state.llmd_nav_collapsed = False
-                st.rerun()
-        else:
-            if st.button(
-                "« Collapse",
-                help="Collapse section navigation",
-                key="llmd_collapse_nav",
-                use_container_width=True,
-            ):
-                st.session_state.llmd_nav_collapsed = True
-                st.rerun()
+    _, btn_col2, btn_col3 = st.columns([3.5, 1, 1])
 
     with btn_col2:
         with st.popover("❓ Filters Help", use_container_width=True):
@@ -996,37 +1023,41 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     if st.session_state.get("llmd_reset_to_defaults", False):
         st.session_state.llmd_reset_to_defaults = False
 
-    # Apply all filters
-    filtered_df = df.copy()
+    # Apply all filters unconditionally (empty selection → empty result, not "show all")
+    custom_mask = (
+        (df["custom_isl_osl"] == selected_custom_isl_osl)
+        if selected_custom_isl_osl and "custom_isl_osl" in df.columns
+        else True
+    )
 
-    if selected_accelerators:
-        filtered_df = filtered_df[  # type: ignore[assignment]
-            filtered_df["accelerator"].isin(selected_accelerators)
-        ]
-    if selected_profiles:
-        filtered_df = filtered_df[filtered_df["profile"].isin(selected_profiles)]  # type: ignore[assignment]
-    if selected_versions:
-        filtered_df = filtered_df[filtered_df["version"].isin(selected_versions)]  # type: ignore[assignment]
-    if selected_models:
-        filtered_df = filtered_df[filtered_df["model"].isin(selected_models)]  # type: ignore[assignment]
-    if selected_tp:
-        filtered_df = filtered_df[filtered_df["TP"].isin(selected_tp)]  # type: ignore[assignment]
-    if selected_replicas:
-        filtered_df = filtered_df[filtered_df["replicas"].isin(selected_replicas)]  # type: ignore[assignment]
-    if selected_prefill_pods:
-        _pf_nums = [v for v in selected_prefill_pods if v != "N/A"]
-        _pf_na = "N/A" in selected_prefill_pods
-        filtered_df = filtered_df[  # type: ignore[assignment]
-            filtered_df["prefill_pod_count"].isin(_pf_nums)
-            | (_pf_na & filtered_df["prefill_pod_count"].isna())
-        ]
-    if selected_decode_pods:
-        _dc_nums = [v for v in selected_decode_pods if v != "N/A"]
-        _dc_na = "N/A" in selected_decode_pods
-        filtered_df = filtered_df[  # type: ignore[assignment]
-            filtered_df["decode_pod_count"].isin(_dc_nums)
-            | (_dc_na & filtered_df["decode_pod_count"].isna())
-        ]
+    _pf_nums = [v for v in selected_prefill_pods if v != "N/A"]
+    _pf_na = "N/A" in selected_prefill_pods
+    prefill_mask = (
+        df["prefill_pod_count"].isin(_pf_nums)
+        | (_pf_na & df["prefill_pod_count"].isna())
+        if selected_prefill_pods
+        else True
+    )
+
+    _dc_nums = [v for v in selected_decode_pods if v != "N/A"]
+    _dc_na = "N/A" in selected_decode_pods
+    decode_mask = (
+        df["decode_pod_count"].isin(_dc_nums) | (_dc_na & df["decode_pod_count"].isna())
+        if selected_decode_pods
+        else True
+    )
+
+    filtered_df: pd.DataFrame = df[  # type: ignore[assignment]
+        df["accelerator"].isin(selected_accelerators)
+        & df["model"].isin(selected_models)
+        & df["version"].isin(selected_versions)
+        & (df["profile"].isin(selected_profiles) if selected_profiles else True)
+        & df["TP"].isin(selected_tp)
+        & df["replicas"].isin(selected_replicas)
+        & custom_mask
+        & prefill_mask
+        & decode_mask
+    ].copy()
 
     filter_selections = {
         "accelerators": selected_accelerators,
@@ -1687,21 +1718,41 @@ def render_compare_versions_section(df, use_expander=True):
                 args=("llmd_compare_versions_expanded",),
             )
 
+        # Secondary custom ISL/OSL pair filter
+        selected_custom_pair = None
+        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+            custom_temp = df[df["profile"] == "Custom"]
+            custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
+            custom_pairs = [p for p in custom_pairs if p]
+            if custom_pairs:
+                selected_custom_pair = st.selectbox(
+                    "Select Custom ISL/OSL Pair",
+                    options=custom_pairs,
+                    format_func=format_custom_isl_osl,
+                    key="llmd_compare_custom_isl_osl",
+                    on_change=_keep_expander_open,
+                    args=("llmd_compare_versions_expanded",),
+                )
+
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
 
-        df_v1 = df[
+        base_mask_v1 = (
             (df["version"] == version_1)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
-        ].copy()
-
-        df_v2 = df[
+        )
+        base_mask_v2 = (
             (df["version"] == version_2)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
-        ].copy()
+        )
+        if selected_custom_pair:
+            base_mask_v1 = base_mask_v1 & (df["custom_isl_osl"] == selected_custom_pair)
+            base_mask_v2 = base_mask_v2 & (df["custom_isl_osl"] == selected_custom_pair)
+        df_v1 = df[base_mask_v1].copy()
+        df_v2 = df[base_mask_v2].copy()
 
         if df_v1.empty or df_v2.empty:
             st.warning(
@@ -1769,7 +1820,10 @@ def render_compare_versions_section(df, use_expander=True):
         else:
             selected_conc_set = set()
 
-        profile_short = clean_profile_name(selected_profile)
+        if selected_custom_pair:
+            profile_short = format_custom_isl_osl(selected_custom_pair)
+        else:
+            profile_short = clean_profile_name(selected_profile)
 
         title_col, popover_col = st.columns([5, 1])
         with title_col:
@@ -2809,6 +2863,76 @@ def render_filtered_data_section(filtered_df, use_expander=True):
         )
 
 
+def _decode_llmd_url_filters(df: pd.DataFrame) -> dict:
+    """Decode LLM-D filter state from URL query parameters.
+
+    Returns a dict with keys matching baseline session-state names.
+    Values are validated against the actual data.
+    """
+    qp = st.query_params
+
+    all_accelerators = sorted(df["accelerator"].unique().tolist())
+    all_models = sorted(df["model"].unique().tolist())
+    all_versions = sorted(df["version"].unique().tolist())
+    all_profiles = sorted(df["profile"].unique().tolist())
+    all_tp = sorted(df["TP"].dropna().unique().tolist())
+    all_replicas = sorted(df["replicas"].dropna().unique().tolist())
+
+    result: dict = {}
+
+    if "accelerators" in qp:
+        result["accelerators"] = [
+            a.strip()
+            for a in qp["accelerators"].split(",")
+            if a.strip() in all_accelerators
+        ]
+    if "models" in qp:
+        result["models"] = [
+            m.strip() for m in qp["models"].split(",") if m.strip() in all_models
+        ]
+    if "versions" in qp:
+        result["versions"] = [
+            v.strip() for v in qp["versions"].split(",") if v.strip() in all_versions
+        ]
+    if "profile" in qp:
+        p = qp["profile"].strip()
+        if p in all_profiles:
+            result["profile"] = p
+    if "custom_isl_osl" in qp:
+        result["custom_isl_osl"] = qp["custom_isl_osl"].strip()
+    if "tp_sizes" in qp:
+        with contextlib.suppress(Exception):
+            result["tp"] = [
+                int(t.strip())
+                for t in qp["tp_sizes"].split(",")
+                if t.strip().isdigit() and int(t.strip()) in all_tp
+            ]
+    if "replicas" in qp:
+        with contextlib.suppress(Exception):
+            result["replicas"] = [
+                int(r.strip())
+                for r in qp["replicas"].split(",")
+                if r.strip().isdigit() and int(r.strip()) in all_replicas
+            ]
+    if "prefill_pods" in qp:
+        result["prefill_pods"] = [
+            v.strip() for v in qp["prefill_pods"].split(",") if v.strip()
+        ]
+    if "decode_pods" in qp:
+        result["decode_pods"] = [
+            v.strip() for v in qp["decode_pods"].split(",") if v.strip()
+        ]
+    if "section" in qp:
+        result["section"] = qp["section"].strip()
+
+    if "pp_x" in qp:
+        result["pp_x"] = qp["pp_x"].strip()
+    if "pp_y" in qp:
+        result["pp_y"] = qp["pp_y"].strip()
+
+    return result
+
+
 def render_llmd_dashboard(llmd_csv_path: str):
     """Render the LLM-D benchmark dashboard.
 
@@ -2821,6 +2945,57 @@ def render_llmd_dashboard(llmd_csv_path: str):
     if df is None or df.empty:
         st.error("No data available. Please check the data file.")
         return
+
+    # --- URL filter decoding (once per session) ---
+    LLMD_SECTION_SLUG_MAP = {
+        "📈 Performance Plots": "performance_plots",
+        "⚖️ Compare Versions": "compare_versions",
+        "🔄 Compare with RHAIIS": "rhaiis_comparison",
+        "⚙️ Runtime Server Configs": "runtime_configs",
+        "📄 Filtered Data": "filtered_data",
+    }
+    LLMD_SLUG_TO_SECTION = {v: k for k, v in LLMD_SECTION_SLUG_MAP.items()}
+
+    if "llmd_url_filters_loaded" not in st.session_state:
+        st.session_state.llmd_url_filters_loaded = True
+        url_filters = _decode_llmd_url_filters(df)
+
+        has_url_filters = bool(url_filters)
+
+        if "section" in url_filters:
+            slug = url_filters["section"]
+            if slug in LLMD_SLUG_TO_SECTION:
+                st.session_state.llmd_active_section = LLMD_SLUG_TO_SECTION[slug]
+
+        if has_url_filters:
+            if "accelerators" in url_filters:
+                st.session_state.llmd_baseline_accelerators = url_filters[
+                    "accelerators"
+                ]
+            if "models" in url_filters:
+                st.session_state.llmd_baseline_models = url_filters["models"]
+            if "versions" in url_filters:
+                st.session_state.llmd_baseline_versions = url_filters["versions"]
+            if "profile" in url_filters:
+                st.session_state.llmd_baseline_profile = url_filters["profile"]
+            if "custom_isl_osl" in url_filters:
+                st.session_state.llmd_selected_custom_isl_osl = url_filters[
+                    "custom_isl_osl"
+                ]
+            if "tp" in url_filters:
+                st.session_state.llmd_baseline_tp = url_filters["tp"]
+            if "replicas" in url_filters:
+                st.session_state.llmd_baseline_replicas = url_filters["replicas"]
+            if "prefill_pods" in url_filters:
+                st.session_state.llmd_baseline_prefill = url_filters["prefill_pods"]
+            if "decode_pods" in url_filters:
+                st.session_state.llmd_baseline_decode = url_filters["decode_pods"]
+            if "pp_x" in url_filters:
+                st.session_state["llmd_perf_plots_x_axis"] = url_filters["pp_x"]
+            if "pp_y" in url_filters:
+                st.session_state["llmd_perf_plots_y_axis"] = url_filters["pp_y"]
+
+        st.session_state.llmd_use_url_filters = has_url_filters
 
     # Section navigation via sidebar
     section_list = [
@@ -2862,14 +3037,10 @@ def render_llmd_dashboard(llmd_csv_path: str):
 
     if _show_global_filters:
         filtered_df, filter_selections = render_llmd_filters(df)
-
-        if filtered_df.empty:
-            st.warning("⚠️ No runs match the selected filters.")
-            return
-
         st.markdown("---")
     else:
         filtered_df = df.copy()
+        filter_selections = {}
 
     with st.sidebar:
         for group_name, group_sections in SECTION_GROUPS:
@@ -2894,19 +3065,172 @@ def render_llmd_dashboard(llmd_csv_path: str):
                     st.session_state.llmd_active_section = section_name
                     st.rerun()
 
-    def _render_selected_section(sel):
-        if sel == "📈 Performance Plots":
-            render_performance_plots_section(filtered_df, use_expander=False)
-        elif sel == "⚖️ Compare Versions":
-            render_compare_versions_section(df, use_expander=False)
-        elif sel == "🔄 Compare with RHAIIS":
-            render_rhaiis_comparison_section(df, use_expander=False)
-        elif sel == "⚙️ Runtime Server Configs":
-            render_runtime_configs_section(filtered_df, use_expander=False)
-        elif sel == "📄 Filtered Data":
-            render_filtered_data_section(filtered_df, use_expander=False)
+    if not filtered_df.empty:
 
-    _render_selected_section(current_section)
+        def _render_selected_section(sel):
+            if sel == "📈 Performance Plots":
+                render_performance_plots_section(filtered_df, use_expander=False)
+            elif sel == "⚖️ Compare Versions":
+                render_compare_versions_section(df, use_expander=False)
+            elif sel == "🔄 Compare with RHAIIS":
+                render_rhaiis_comparison_section(df, use_expander=False)
+            elif sel == "⚙️ Runtime Server Configs":
+                render_runtime_configs_section(filtered_df, use_expander=False)
+            elif sel == "📄 Filtered Data":
+                render_filtered_data_section(filtered_df, use_expander=False)
+
+        _render_selected_section(current_section)
+
+    else:
+        selected_models = filter_selections.get("models", [])
+        if selected_models:
+            available_data_info = []
+
+            for model in selected_models:
+                model_data = df[df["model"] == model]
+                if not model_data.empty:
+                    available_profiles = sorted(model_data["profile"].unique().tolist())
+                    available_accelerators = sorted(
+                        model_data["accelerator"].unique().tolist()
+                    )
+                    available_versions = sorted(model_data["version"].unique().tolist())
+                    available_tp = sorted(model_data["TP"].unique().tolist())
+
+                    model_short = model.split("/")[-1] if "/" in model else model
+
+                    available_data_info.append(
+                        {
+                            "model": model_short,
+                            "original_model_name": model,
+                            "profiles": available_profiles,
+                            "accelerators": available_accelerators,
+                            "versions": available_versions,
+                            "tp_sizes": available_tp,
+                        }
+                    )
+
+            if available_data_info:
+                with st.container():
+                    st.markdown(
+                        """
+                        <div class='no-data-error-banner' style='padding: 5px; border-radius: 2px; margin: 5px 0; text-align: center; box-shadow: 0 6px 12px rgba(0,0,0,0.1);'>
+                            <h2 style='margin: 0; font-size: 1.8em; font-weight: bold;'>
+                                 No Data Matches Your Current Filter Settings
+                            </h2>
+                            <h3 style='margin: 5px 0 0 0; font-size: 1.2em; opacity: 0.8;'>
+                                See available filter combinations for your selected model(s) below:
+                            </h3>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    for info in available_data_info:
+                        original_model_name = info["original_model_name"]
+                        model_data = df[df["model"] == original_model_name]
+
+                        with st.expander(
+                            f"📊 {info['model']} - Available Filter Combinations"
+                        ):
+                            combo_dict: dict[str, dict[str, dict[str, list]]] = {}
+                            for _, row in model_data.iterrows():
+                                acc = row["accelerator"]
+                                version = row["version"]
+                                profile = row["profile"]
+                                tp = row["TP"]
+
+                                if acc not in combo_dict:
+                                    combo_dict[acc] = {}
+                                if version not in combo_dict[acc]:
+                                    combo_dict[acc][version] = {}
+                                if profile not in combo_dict[acc][version]:
+                                    combo_dict[acc][version][profile] = []
+
+                                if tp not in combo_dict[acc][version][profile]:
+                                    combo_dict[acc][version][profile].append(tp)
+
+                            tree_text = ""
+                            for acc in sorted(combo_dict.keys()):
+                                tree_text += f"🔧 {acc}\n"
+
+                                versions = sorted(combo_dict[acc].keys())
+                                for version in versions:
+                                    tree_text += f"    📦 {version}\n"
+
+                                    profiles = sorted(combo_dict[acc][version].keys())
+                                    for profile in profiles:
+                                        tp_list = ", ".join(
+                                            map(
+                                                str,
+                                                sorted(
+                                                    combo_dict[acc][version][profile]
+                                                ),
+                                            )
+                                        )
+                                        profile_display = clean_profile_name(profile)
+                                        tree_text += f"        📋 {profile_display} → TP Sizes: {tp_list}\n"
+                                tree_text += "\n"
+
+                            st.code(tree_text, language=None)
+
+            else:
+                st.error(
+                    "❌ **No data found for the selected model(s).** Please select a different model."
+                )
+        else:
+            st.warning(
+                "❌ **No data matches your current filter settings.** Please adjust the filters."
+            )
+
+    # --- Sync filter state to URL query params ---
+    with contextlib.suppress(Exception):
+        desired_params: dict[str, str] = {}
+        if "view" in st.query_params:
+            desired_params["view"] = st.query_params["view"]
+
+        if _show_global_filters:
+            sel_acc = filter_selections.get("accelerators", [])
+            sel_mod = filter_selections.get("models", [])
+            sel_ver = filter_selections.get("versions", [])
+            sel_prof = filter_selections.get("profiles", [])
+            sel_tp = filter_selections.get("tp_sizes", [])
+            sel_rep = filter_selections.get("replicas", [])
+            sel_pf = filter_selections.get("prefill_pods", [])
+            sel_dc = filter_selections.get("decode_pods", [])
+
+            if sel_acc:
+                desired_params["accelerators"] = ",".join(sel_acc)
+            if sel_mod:
+                desired_params["models"] = ",".join(sel_mod)
+            if sel_ver:
+                desired_params["versions"] = ",".join(sel_ver)
+            if sel_prof:
+                desired_params["profile"] = sel_prof[0]
+            custom_val = st.session_state.get("llmd_selected_custom_isl_osl")
+            if custom_val:
+                desired_params["custom_isl_osl"] = custom_val
+            if sel_tp:
+                desired_params["tp_sizes"] = ",".join(map(str, sel_tp))
+            if sel_rep:
+                desired_params["replicas"] = ",".join(map(str, sel_rep))
+            if sel_pf:
+                desired_params["prefill_pods"] = ",".join(map(str, sel_pf))
+            if sel_dc:
+                desired_params["decode_pods"] = ",".join(map(str, sel_dc))
+
+        if current_section and current_section in LLMD_SECTION_SLUG_MAP:
+            slug = LLMD_SECTION_SLUG_MAP[current_section]
+            desired_params["section"] = slug
+            if slug == "performance_plots":
+                for url_key, ss_key in (
+                    ("pp_x", "llmd_perf_plots_x_axis"),
+                    ("pp_y", "llmd_perf_plots_y_axis"),
+                ):
+                    val = st.session_state.get(ss_key)
+                    if val is not None:
+                        desired_params[url_key] = str(val)
+
+        st.query_params.from_dict(desired_params)
 
     # Click anywhere on main area to collapse sidebar + scroll to top + hamburger icon
     import streamlit.components.v1 as _stc

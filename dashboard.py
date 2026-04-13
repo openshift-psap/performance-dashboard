@@ -78,6 +78,63 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
+# ── Overview version configuration (single source of truth) ──────
+OVERVIEW_CURRENT = "RHAIIS-3.4-EA1"
+OVERVIEW_PREVIOUS = "RHAIIS-3.3"
+OVERVIEW_UPSTREAM = "vLLM-0.14.1"
+OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
+
+# Ordered list of back-to-back release pairs for the Overview dropdown.
+# Most recent pair first. `upstream` / `additional` can be None / [] when
+# vLLM parity data isn't available for that release.
+OVERVIEW_RELEASE_PAIRS = [
+    {
+        "current": "RHAIIS-3.4-EA2",
+        "previous": "RHAIIS-3.4-EA1",
+        "upstream": "vLLM-0.16.0",
+        "additional": ["vLLM-0.17.1"],
+    },
+    {
+        "current": "RHAIIS-3.4-EA1",
+        "previous": "RHAIIS-3.3",
+        "upstream": "vLLM-0.14.1",
+        "additional": ["vLLM-0.17.1"],
+    },
+    {
+        "current": "RHAIIS-3.3",
+        "previous": "RHAIIS-3.2.5",
+        "upstream": "vLLM-0.13.0",
+        "additional": [],
+    },
+]
+
+# ±3 % dead-zone: changes within this range are "neutral" (neither win nor loss)
+NEUTRAL_THRESHOLD_PCT = 2.0
+
+ACCELERATOR_DISPLAY_NAMES = {
+    "H200": "NVIDIA H200",
+    "MI300X": "AMD MI300X",
+    "B200": "NVIDIA B200",
+    "B300": "NVIDIA B300",
+    "TPU": "Google TPU",
+    "Spyre": "IBM Spyre",
+}
+
+
+def _accel_display(name):
+    """Return the full display name for an accelerator, or the raw name if unmapped."""
+    return ACCELERATOR_DISPLAY_NAMES.get(name, name)
+
+
+def _available_overview_pairs(df):
+    """Return only release pairs where both current and previous exist in the data."""
+    available_versions = set(df["version"].unique())
+    return [
+        p
+        for p in OVERVIEW_RELEASE_PAIRS
+        if p["current"] in available_versions and p["previous"] in available_versions
+    ]
+
 
 def read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.DataFrame:
     """Read a CSV file from S3 bucket.
@@ -301,6 +358,20 @@ def clean_profile_name(profile_name):
         if start_idx != -1 and end_idx != -1:
             return profile_name[start_idx : end_idx + 1]
     return profile_name
+
+
+def format_custom_isl_osl(pair):
+    """Human-readable label for a custom ISL/OSL pair."""
+    if pair == "0/0":
+        return "Real Dataset (0/0)"
+    return pair
+
+
+def _display_profile(profile, custom_isl_osl=""):
+    """Return the display string for a profile, using the custom ISL/OSL pair when applicable."""
+    if custom_isl_osl:
+        return format_custom_isl_osl(custom_isl_osl)
+    return clean_profile_name(profile)
 
 
 def create_kpi_card(title, value, subtitle="", format_func=None):
@@ -531,11 +602,15 @@ def _model_family(model_name):
     return model_name
 
 
-def _compute_overview_data(df):
-    """Compute overview metrics: RHAIIS-3.3 vs RHAIIS-3.2.5 and vs vLLM-0.13.0."""
-    CURRENT = "RHAIIS-3.3"
-    PREVIOUS = "RHAIIS-3.2.5"
-    VLLM = "vLLM-0.13.0"
+def _compute_overview_data(
+    df, current=None, previous=None, upstream=None, additional=None
+):
+    """Compute overview metrics for a given release pair."""
+    CURRENT = current or OVERVIEW_CURRENT
+    PREVIOUS = previous or OVERVIEW_PREVIOUS
+    VLLM = upstream or OVERVIEW_UPSTREAM
+    if additional is None:
+        additional = OVERVIEW_ADDITIONAL
 
     metrics_cfg = {
         "Throughput": {
@@ -557,27 +632,33 @@ def _compute_overview_data(df):
 
     df_curr = df[df["version"] == CURRENT].copy()
     df_prev = df[df["version"] == PREVIOUS].copy()
-    df_vllm = df[df["version"] == VLLM].copy()
+    df_vllm = df[df["version"] == VLLM].copy() if VLLM else pd.DataFrame()
 
     def _combos(d):
-        return set(zip(d["model"], d["TP"], d["accelerator"], d["profile"]))
+        return set(
+            zip(
+                d["model"], d["TP"], d["accelerator"], d["profile"], d["custom_isl_osl"]
+            )
+        )
 
     common_combos = sorted(_combos(df_curr) & _combos(df_prev))
 
     # Per-combo metric deltas (current vs previous)
     combo_results = []
-    for model, tp, accel, profile in common_combos:
+    for model, tp, accel, profile, cisl_osl in common_combos:
         mask_c = (
             (df_curr["model"] == model)
             & (df_curr["TP"] == tp)
             & (df_curr["accelerator"] == accel)
             & (df_curr["profile"] == profile)
+            & (df_curr["custom_isl_osl"] == cisl_osl)
         )
         mask_p = (
             (df_prev["model"] == model)
             & (df_prev["TP"] == tp)
             & (df_prev["accelerator"] == accel)
             & (df_prev["profile"] == profile)
+            & (df_prev["custom_isl_osl"] == cisl_osl)
         )
         cd, pd_ = df_curr[mask_c], df_prev[mask_p]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
@@ -589,6 +670,7 @@ def _compute_overview_data(df):
             "tp": tp,
             "accelerator": accel,
             "profile": profile,
+            "custom_isl_osl": cisl_osl,
         }
         for mname, mc in metrics_cfg.items():
             pct, better, _, _, similar = compare_two_datasets(cd, pd_, mc, all_conc)
@@ -612,16 +694,22 @@ def _compute_overview_data(df):
                 all_normalised.append(pct if mc["higher_is_better"] else -pct)
     worst_regression = min(all_normalised) if all_normalised else 0.0
 
-    wins = sum(1 for r in combo_results if r.get("Throughput_better") is True)
     total_cmp = sum(1 for r in combo_results if r.get("Throughput_pct") is not None)
-    win_rate = (wins / total_cmp * 100) if total_cmp > 0 else 0.0
+    losses = sum(
+        1
+        for r in combo_results
+        if r.get("Throughput_pct") is not None
+        and not r.get("Throughput_better")
+        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+    )
+    win_rate = ((total_cmp - losses) / total_cmp * 100) if total_cmp > 0 else 100.0
 
     models_tested = df_curr["model"].nunique()
     models_list = sorted(df_curr["model"].unique())
     accels_covered = df_curr["accelerator"].nunique()
     accels_list = sorted(df_curr["accelerator"].unique())
     health = (
-        "Healthy" if win_rate >= 80 else ("Warning" if win_rate >= 60 else "Regression")
+        "Healthy" if win_rate >= 90 else ("Warning" if win_rate >= 70 else "Regression")
     )
 
     # Identify which combo produced the best gain / worst regression
@@ -642,12 +730,25 @@ def _compute_overview_data(df):
                     worst_reg_combo = r
                     worst_reg_metric = mname
 
-    # Win/loss breakdown per combo
-    win_combos = [r for r in combo_results if r.get("Throughput_better") is True]
+    # Win/loss/neutral breakdown per combo (±NEUTRAL_THRESHOLD_PCT dead-zone)
+    win_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_better") is True
+        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+    ]
     loss_combos = [
         r
         for r in combo_results
-        if r.get("Throughput_pct") is not None and not r.get("Throughput_better")
+        if r.get("Throughput_pct") is not None
+        and not r.get("Throughput_better")
+        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+    ]
+    neutral_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_pct") is not None
+        and abs(r.get("Throughput_pct", 0)) <= NEUTRAL_THRESHOLD_PCT
     ]
 
     # --- Per-accelerator rollup ---
@@ -656,9 +757,15 @@ def _compute_overview_data(df):
         ar = [r for r in combo_results if r["accelerator"] == accel]
         tv = [r["Throughput_pct"] for r in ar if r["Throughput_pct"] is not None]
         avg_tput = float(np.mean(tv)) if tv else 0.0
-        aw = sum(1 for r in ar if r.get("Throughput_better") is True)
         at = sum(1 for r in ar if r.get("Throughput_pct") is not None)
-        awr = (aw / at * 100) if at > 0 else 0.0
+        al = sum(
+            1
+            for r in ar
+            if r.get("Throughput_pct") is not None
+            and not r.get("Throughput_better")
+            and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+        )
+        awr = ((at - al) / at * 100) if at > 0 else 100.0
 
         worst_m, worst_v = None, 0.0
         for r in ar:
@@ -669,7 +776,7 @@ def _compute_overview_data(df):
                     if norm < worst_v:
                         worst_v, worst_m = norm, mname
 
-        ah = "Healthy" if awr >= 80 else ("Warning" if awr >= 60 else "Regression")
+        ah = "Healthy" if awr >= 90 else ("Warning" if awr >= 70 else "Regression")
         accel_rollup[accel] = {
             "n_models": len({r["model"] for r in ar}),
             "avg_tput_pct": avg_tput,
@@ -690,9 +797,15 @@ def _compute_overview_data(df):
     for fam, results in sorted(family_buckets.items()):
         tv = [r["Throughput_pct"] for r in results if r["Throughput_pct"] is not None]
         avg_tput = float(np.mean(tv)) if tv else 0.0
-        fw = sum(1 for r in results if r.get("Throughput_better") is True)
         ft = sum(1 for r in results if r.get("Throughput_pct") is not None)
-        fwr = (fw / ft * 100) if ft > 0 else 0.0
+        fl = sum(
+            1
+            for r in results
+            if r.get("Throughput_pct") is not None
+            and not r.get("Throughput_better")
+            and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+        )
+        fwr = ((ft - fl) / ft * 100) if ft > 0 else 100.0
 
         worst_m, worst_v, worst_raw = None, 0.0, 0.0
         for r in results:
@@ -703,7 +816,7 @@ def _compute_overview_data(df):
                     if norm < worst_v:
                         worst_v, worst_m, worst_raw = norm, mname, pct
 
-        fh = "Healthy" if fwr >= 80 else ("Warning" if fwr >= 60 else "Regression")
+        fh = "Healthy" if fwr >= 90 else ("Warning" if fwr >= 70 else "Regression")
         family_rollup[fam] = {
             "n_models": len({r["model"] for r in results}),
             "avg_tput_pct": avg_tput,
@@ -719,7 +832,9 @@ def _compute_overview_data(df):
     common_vllm = sorted(_combos(df_curr) & _combos(df_vllm))
     vllm_results = []
     tput_cfg = metrics_cfg["Throughput"]
-    for model, tp, accel, profile in common_vllm:
+    ttft_cfg = metrics_cfg["TTFT P95"]
+    itl_cfg = metrics_cfg["ITL P95"]
+    for model, tp, accel, profile, cisl_osl in common_vllm:
         if accel != "H200":
             continue
         mask_c = (
@@ -727,27 +842,44 @@ def _compute_overview_data(df):
             & (df_curr["TP"] == tp)
             & (df_curr["accelerator"] == accel)
             & (df_curr["profile"] == profile)
+            & (df_curr["custom_isl_osl"] == cisl_osl)
         )
         mask_v = (
             (df_vllm["model"] == model)
             & (df_vllm["TP"] == tp)
             & (df_vllm["accelerator"] == accel)
             & (df_vllm["profile"] == profile)
+            & (df_vllm["custom_isl_osl"] == cisl_osl)
         )
         cd, vd = df_curr[mask_c], df_vllm[mask_v]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             vd["intended concurrency"].dropna().unique()
         )
         pct, better, _, _, similar = compare_two_datasets(cd, vd, tput_cfg, all_conc)
+        ttft_pct, ttft_better, _, _, ttft_similar = compare_two_datasets(
+            cd, vd, ttft_cfg, all_conc
+        )
+        itl_pct, itl_better, _, _, itl_similar = compare_two_datasets(
+            cd, vd, itl_cfg, all_conc
+        )
+        profile_label = (
+            format_custom_isl_osl(cisl_osl) if cisl_osl else clean_profile_name(profile)
+        )
         vllm_results.append(
             {
                 "model": model,
                 "short_name": _short_model_name(model),
-                "profile": clean_profile_name(profile),
+                "profile": profile_label,
                 "tp": tp,
                 "pct": pct,
                 "better": better,
                 "similar": similar,
+                "ttft_pct": ttft_pct,
+                "ttft_better": ttft_better,
+                "ttft_similar": ttft_similar,
+                "itl_pct": itl_pct,
+                "itl_better": itl_better,
+                "itl_similar": itl_similar,
             }
         )
 
@@ -758,11 +890,57 @@ def _compute_overview_data(df):
     vllm_pcts = [r["pct"] for r in vllm_with_data]
     vllm_avg = float(np.mean(vllm_pcts)) if vllm_pcts else 0.0
     vllm_n_models = len({r["model"] for r in vllm_with_data})
+    vllm_n_profiles = len({r["profile"] for r in vllm_with_data})
 
-    # --- New in this release ---
-    new_models = sorted(set(df_curr["model"].unique()) - set(df_prev["model"].unique()))
+    vllm_ttft_data = [r for r in vllm_results if r.get("ttft_pct") is not None]
+    vllm_ttft_avg = (
+        float(np.mean([r["ttft_pct"] for r in vllm_ttft_data]))
+        if vllm_ttft_data
+        else 0.0
+    )
+    vllm_ttft_wins = sum(
+        1 for r in vllm_ttft_data if r["ttft_better"] and not r["ttft_similar"]
+    )
+    vllm_ttft_ties = sum(1 for r in vllm_ttft_data if r["ttft_similar"])
+    vllm_ttft_losses = sum(
+        1 for r in vllm_ttft_data if not r["ttft_better"] and not r["ttft_similar"]
+    )
+
+    vllm_itl_data = [r for r in vllm_results if r.get("itl_pct") is not None]
+    vllm_itl_avg = (
+        float(np.mean([r["itl_pct"] for r in vllm_itl_data])) if vllm_itl_data else 0.0
+    )
+    vllm_itl_wins = sum(
+        1 for r in vllm_itl_data if r["itl_better"] and not r["itl_similar"]
+    )
+    vllm_itl_ties = sum(1 for r in vllm_itl_data if r["itl_similar"])
+    vllm_itl_losses = sum(
+        1 for r in vllm_itl_data if not r["itl_better"] and not r["itl_similar"]
+    )
+
+    # --- New in this release (current + additional versions vs previous) ---
+    release_versions = [CURRENT] + additional
+    df_release = df[df["version"].isin(release_versions)]
+    new_model_names = sorted(
+        set(df_release["model"].unique()) - set(df_prev["model"].unique())
+    )
+    new_models = []
+    for m in new_model_names:
+        rows = df_release[df_release["model"] == m]
+        configs = sorted(
+            {
+                (
+                    r["version"],
+                    r["accelerator"],
+                    r["profile"],
+                    r.get("custom_isl_osl", ""),
+                )
+                for _, r in rows.iterrows()
+            }
+        )
+        new_models.append({"model": m, "configs": configs})
     new_accels = sorted(
-        set(df_curr["accelerator"].unique()) - set(df_prev["accelerator"].unique())
+        set(df_release["accelerator"].unique()) - set(df_prev["accelerator"].unique())
     )
 
     return {
@@ -774,6 +952,7 @@ def _compute_overview_data(df):
         "win_rate": win_rate,
         "win_combos": win_combos,
         "loss_combos": loss_combos,
+        "neutral_combos": neutral_combos,
         "total_cmp": total_cmp,
         "models_tested": models_tested,
         "models_list": models_list,
@@ -788,7 +967,18 @@ def _compute_overview_data(df):
         "vllm_ties": vllm_ties,
         "vllm_losses": vllm_losses,
         "vllm_n_models": vllm_n_models,
+        "vllm_n_profiles": vllm_n_profiles,
         "vllm_results": vllm_with_data,
+        "vllm_ttft_avg": vllm_ttft_avg,
+        "vllm_ttft_wins": vllm_ttft_wins,
+        "vllm_ttft_ties": vllm_ttft_ties,
+        "vllm_ttft_losses": vllm_ttft_losses,
+        "vllm_ttft_data": vllm_ttft_data,
+        "vllm_itl_avg": vllm_itl_avg,
+        "vllm_itl_wins": vllm_itl_wins,
+        "vllm_itl_ties": vllm_itl_ties,
+        "vllm_itl_losses": vllm_itl_losses,
+        "vllm_itl_data": vllm_itl_data,
         "new_models": new_models,
         "new_accels": new_accels,
     }
@@ -822,17 +1012,121 @@ def _hm_cell(pct, higher_is_better):
     return f'<span class="hm-cell {cls}">{label}</span>'
 
 
+CA_CONFIGURATIONS = [
+    {
+        "label": "RHAIIS-3.4-EA2",
+        "description": (
+            "Performance comparison of **RHAIIS-3.4-EA2** "
+            "against **sglang** and **TRT-LLM** (1.3.0rc9 - latest image, "
+            "gpt-oss-dev - optimized image for gpt-oss) on **NVIDIA H200**."
+        ),
+        "groups": [
+            {
+                "title": "RHAIIS vs SGLang",
+                "description": (
+                    "How **RHAIIS-3.4-EA2** compares to **sglang** on **NVIDIA H200**."
+                ),
+                "baselines": ["RHAIIS-3.4-EA2"],
+                "competitors": ["sglang-0.5.9"],
+            },
+            {
+                "title": "RHAIIS vs TRT-LLM",
+                "description": (
+                    "How **RHAIIS-3.4-EA2** and **vLLM-0.17.1** compare to "
+                    "**TRT-LLM** variants on **NVIDIA H200**."
+                ),
+                "baselines": ["RHAIIS-3.4-EA2", "vLLM-0.17.1"],
+                "competitors": ["TRT-LLM-1.3.0rc9", "TRT-LLM-gpt-oss-dev"],
+            },
+        ],
+    },
+    {
+        "label": "RHAIIS-3.3",
+        "description": (
+            "Performance comparison of **RHAIIS-3.3** and optimized competitive configurations "
+            "against **sglang** and **TRT-LLM** on **NVIDIA H200**."
+        ),
+        "groups": [
+            {
+                "title": "RHAIIS vs SGLang",
+                "description": (
+                    "How **RHAIIS-3.3** (default and competitive configs) compares to "
+                    "**sglang** on **NVIDIA H200**."
+                ),
+                "baselines": [
+                    "RHAIIS-3.3",
+                    "vLLM-0.13.0-competitive",
+                    "RHAIIS-3.3-competitive",
+                ],
+                "competitors": ["sglang-0.5.8"],
+            },
+            {
+                "title": "RHAIIS vs TRT-LLM",
+                "description": (
+                    "How **RHAIIS-3.3** (default and competitive configs) compares to "
+                    "**TRT-LLM** variants on **NVIDIA H200**."
+                ),
+                "baselines": [
+                    "RHAIIS-3.3",
+                    "vLLM-0.13.0-competitive",
+                    "RHAIIS-3.3-competitive",
+                ],
+                "competitors": ["TRT-LLM-1.0.0rc5", "TRT-LLM-1.2.0rc2"],
+            },
+        ],
+    },
+]
+
+
+def _available_ca_configs(df):
+    """Return only CA configurations where at least one group has both a baseline and a competitor with data."""
+    available_versions = set(df["version"].unique())
+    return [
+        cfg
+        for cfg in CA_CONFIGURATIONS
+        if any(
+            any(bl in available_versions for bl in g["baselines"])
+            and any(comp in available_versions for comp in g["competitors"])
+            for g in cfg["groups"]
+        )
+    ]
+
+
 def render_competitive_analysis_section(df):
     """Render the Competitive Analysis page.
 
     Pre-computed comparison tables showing RHAIIS/vLLM performance
-    against sglang and TRT-LLM on H200.
+    against sglang and TRT-LLM on NVIDIA H200.
     """
-    st.header("Competitive Analysis")
-    st.markdown(
-        "Performance comparison of **RHAIIS-3.3** and optimized competitive configurations "
-        "against **sglang** and **TRT-LLM** on **H200**."
-    )
+    available_ca = _available_ca_configs(df)
+    if not available_ca:
+        st.header("Competitive Analysis")
+        st.warning("No competitive analysis data available.")
+        return
+
+    header_col, _spacer, dropdown_col = st.columns([4, 4, 2])
+    with header_col:
+        st.header("Competitive Analysis")
+    with dropdown_col:
+        st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
+        if len(available_ca) > 1:
+            ca_labels = [
+                f"{cfg['label']} (Latest)" if i == 0 else f"{cfg['label']} (Previous)"
+                for i, cfg in enumerate(available_ca)
+            ]
+        else:
+            ca_labels = [cfg["label"] for cfg in available_ca]
+        selected_ca_label = st.selectbox(
+            "Select competitive analysis",
+            ca_labels,
+            index=0,
+            key="ca_config_selector",
+            label_visibility="collapsed",
+        )
+    selected_ca = available_ca[ca_labels.index(selected_ca_label)]
+    COMPARISON_GROUPS = selected_ca["groups"]
+
+    st.markdown(selected_ca["description"])
     st.caption(
         "Each comparison below shows a per-model summary: "
         "a model is a **Win** if it has more metric wins than losses (baseline outperforms by ≥5%), "
@@ -860,26 +1154,6 @@ def render_competitive_analysis_section(df):
     PROFILES = [
         ("Profile A: Balanced (1k/1k)", "1k/1k"),
         ("Profile D: Prefill Heavy (8k/1k)", "8k/1k"),
-    ]
-
-    COMPARISON_GROUPS = [
-        {
-            "title": "Default Configuration",
-            "description": (
-                "How **RHAIIS-3.3** (default serving config) compares to competing engines."
-            ),
-            "baselines": ["RHAIIS-3.3"],
-            "competitors": ["sglang-0.5.8", "TRT-LLM-1.0.0rc5", "TRT-LLM-1.2.0rc2"],
-        },
-        {
-            "title": "Optimized (Competitive) Configuration",
-            "description": (
-                "How **optimized / competitive** configurations compare to the same competitors, "
-                "demonstrating that tuned configs deliver better performance."
-            ),
-            "baselines": ["vLLM-0.13.0-competitive", "RHAIIS-3.3-competitive"],
-            "competitors": ["sglang-0.5.8", "TRT-LLM-1.0.0rc5", "TRT-LLM-1.2.0rc2"],
-        },
     ]
 
     metrics_config = {
@@ -944,8 +1218,197 @@ def render_competitive_analysis_section(df):
 
     h200_df = df[df["accelerator"] == ACCELERATOR]
     if h200_df.empty:
-        st.warning("⚠️ No H200 data available.")
+        st.warning("⚠️ No NVIDIA H200 data available.")
         return
+
+    _palette_baseline = [
+        "#EF553B",
+        "#FF7F0E",
+        "#D62728",
+        "#E377C2",
+        "#FF6692",
+        "#FFA15A",
+        "#FECB52",
+        "#F0027F",
+        "#BF5B17",
+        "#E6550D",
+        "#FD8D3C",
+        "#FDAE6B",
+        "#FC4E2A",
+        "#FB6A4A",
+        "#CB181D",
+        "#EF3B2C",
+    ]
+    _palette_competitor = [
+        "#636EFA",
+        "#1F77B4",
+        "#00CC96",
+        "#19D3F3",
+        "#AB63FA",
+        "#17BECF",
+        "#2CA02C",
+        "#7F7F7F",
+        "#386CB0",
+        "#3690C0",
+        "#74C476",
+        "#9E9AC8",
+        "#6A51A3",
+        "#807DBA",
+        "#0570B0",
+        "#4292C6",
+    ]
+
+    @st.dialog("Competitive Analysis — Metric Details", width="large")
+    def _show_ca_metric_dialog(
+        metric_name, baseline, competitor, profile_full, profile_short
+    ):
+        mcfg = metrics_config[metric_name]
+        col_name = mcfg["column"]
+
+        display_title = metric_name.replace(" (Geometric Mean)", "").replace(
+            " (Peak)", ""
+        )
+        st.markdown(f"#### {display_title} vs Concurrency")
+        st.markdown(
+            f"**{baseline}** vs **{competitor}** &nbsp;|&nbsp; "
+            f"**{ACCELERATOR}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
+        )
+
+        df_base = h200_df[
+            (h200_df["version"] == baseline) & (h200_df["profile"] == profile_full)
+        ]
+        df_comp = h200_df[
+            (h200_df["version"] == competitor) & (h200_df["profile"] == profile_full)
+        ]
+
+        base_mt = set(zip(df_base["model"].tolist(), df_base["TP"].tolist()))
+        comp_mt = set(zip(df_comp["model"].tolist(), df_comp["TP"].tolist()))
+        common_mt = sorted(base_mt.intersection(comp_mt))
+
+        if not common_mt:
+            st.warning("No common models found.")
+            return
+
+        per_model = []
+        for m, tp in common_mt:
+            m_short = m.split("/")[-1] if "/" in m else m
+            tp_s = f" (TP={int(tp)})" if pd.notna(tp) else ""
+            lbl = f"{m_short}{tp_s}"
+
+            d1 = df_base[(df_base["model"] == m) & (df_base["TP"] == tp)]
+            d2 = df_comp[(df_comp["model"] == m) & (df_comp["TP"] == tp)]
+
+            c1 = set(d1["intended concurrency"].dropna().unique())
+            c2 = set(d2["intended concurrency"].dropna().unique())
+            cc = c1.intersection(c2)
+            if not cc:
+                continue
+
+            cc_sorted = sorted(cc)
+            v1_by_c, v2_by_c = [], []
+            for c in cc_sorted:
+                r1 = d1[d1["intended concurrency"] == c][col_name].values
+                r2 = d2[d2["intended concurrency"] == c][col_name].values
+                v1_by_c.append(float(r1[0]) if len(r1) > 0 else None)
+                v2_by_c.append(float(r2[0]) if len(r2) > 0 else None)
+
+            if not any(v is not None for v in v1_by_c) and not any(
+                v is not None for v in v2_by_c
+            ):
+                continue
+
+            per_model.append(
+                {"label": lbl, "conc": cc_sorted, "v1": v1_by_c, "v2": v2_by_c}
+            )
+
+        if not per_model:
+            st.warning("No data available for this metric.")
+            return
+
+        if col_name == "ttft_p95":
+            for md in per_model:
+                md["v1"] = [v / 1000 if v is not None else None for v in md["v1"]]
+                md["v2"] = [v / 1000 if v is not None else None for v in md["v2"]]
+
+        fig = go.Figure()
+        for idx, md in enumerate(per_model):
+            c_bl = _palette_baseline[idx % len(_palette_baseline)]
+            c_cp = _palette_competitor[idx % len(_palette_competitor)]
+            x_vals = [int(c) for c in md["conc"]]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=md["v1"],
+                    mode="lines+markers",
+                    name=f"{md['label']} ({baseline})",
+                    line={"color": c_bl, "width": 2.5},
+                    marker={"size": 8},
+                    legendgroup=md["label"],
+                    hovertemplate=(
+                        f"<b>{md['label']}</b> — {baseline}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=md["v2"],
+                    mode="lines+markers",
+                    name=f"{md['label']} ({competitor})",
+                    line={"color": c_cp, "width": 2.5},
+                    marker={"size": 8},
+                    legendgroup=md["label"],
+                    hovertemplate=(
+                        f"<b>{md['label']}</b> — {competitor}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+        if "tok/sec" in col_name:
+            y_title = "Tokens / sec"
+        elif "latency" in col_name.lower() or col_name == "ttft_p95":
+            y_title = "Seconds"
+        else:
+            y_title = "Milliseconds"
+
+        fig.update_layout(
+            height=600,
+            xaxis_title="Concurrency",
+            yaxis_title=y_title,
+            margin={"t": 30, "b": 60},
+            hovermode="x unified",
+            legend={
+                "orientation": "v",
+                "yanchor": "top",
+                "y": 1,
+                "xanchor": "left",
+                "x": 1.02,
+                "font": {"size": 11},
+                "itemclick": "toggle",
+                "itemdoubleclick": "toggleothers",
+            },
+            xaxis={
+                "type": "category",
+                "categoryorder": "array",
+                "categoryarray": sorted(
+                    {int(c) for md in per_model for c in md["conc"]}
+                ),
+            },
+        )
+        dlg_key = f"ca_dlg_{metric_name}_{baseline}_{competitor}_{profile_short}"
+        st.plotly_chart(fig, use_container_width=True, key=dlg_key, theme=None)
+
+        st.caption(
+            "💡 **Tip:** Click a legend entry to toggle it. "
+            "Double-click to isolate a single trace. "
+            f"Warm colors (reds/oranges) = **{baseline}**, "
+            f"cool colors (blues/greens) = **{competitor}**."
+        )
 
     ca_container = st.container(key="ca_section")
     with ca_container:
@@ -1054,6 +1517,7 @@ def render_competitive_analysis_section(df):
                             profile_tabs_data[profile_short] = (
                                 summary_data,
                                 conc_list,
+                                profile_full,
                             )
 
                     if not profile_tabs_data:
@@ -1071,7 +1535,11 @@ def render_competitive_analysis_section(df):
                     }
 
                     per_profile_verdicts = []
-                    for prof_label, (prof_data, _conc) in profile_tabs_data.items():
+                    for prof_label, (
+                        prof_data,
+                        _conc,
+                        _pf,
+                    ) in profile_tabs_data.items():
                         model_wins, model_losses, model_similar = 0, 0, 0
                         for row in prof_data:
                             mw, ml, ms = 0, 0, 0
@@ -1099,7 +1567,7 @@ def render_competitive_analysis_section(df):
                         else:
                             icon = "🟡"
                         per_profile_verdicts.append(
-                            f"{icon} {prof_label}: {model_wins} model wins, {model_losses} model losses, {model_similar} similar"
+                            f"{icon} {prof_label}: {model_wins} wins, {model_losses} losses, {model_similar} similar"
                         )
                         if baseline not in group_scores:
                             group_scores[baseline] = {}
@@ -1109,16 +1577,27 @@ def render_competitive_analysis_section(df):
                         group_scores[baseline][competitor][1] += model_losses
                         group_scores[baseline][competitor][2] += model_similar
 
-                    verdict_str = "  |  ".join(per_profile_verdicts)
-                    expander_label = f"{baseline} vs {competitor}  —  {verdict_str}"
+                    verdict_str = " | ".join(per_profile_verdicts)
+
+                    all_models = set()
+                    for _pl, (pdata, _c, _pf) in profile_tabs_data.items():
+                        for row in pdata:
+                            all_models.add(row["Model"])
+                    models_str = ", ".join(sorted(all_models))
+                    expander_label = (
+                        f"{baseline} vs {competitor}  —  {verdict_str}  \n"
+                        f"Models: {models_str}"
+                    )
 
                     with st.expander(expander_label, expanded=False):
                         tab_labels = list(profile_tabs_data.keys())
                         tabs = st.tabs(tab_labels)
                         for tab, label in zip(tabs, tab_labels):
                             with tab:
-                                summary_data, conc_list = profile_tabs_data[label]
-                                st.markdown(f"**H200 GPU, ISL/OSL: {label}**")
+                                summary_data, conc_list, prof_full = profile_tabs_data[
+                                    label
+                                ]
+                                st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
                                 st.caption(
                                     f"ℹ️ Geometric mean metrics use concurrency levels: "
                                     f"{', '.join(str(c) for c in conc_list)}. "
@@ -1139,6 +1618,28 @@ def render_competitive_analysis_section(df):
                                     f"🔴 {baseline} performs worse than {competitor} | "
                                     f"🟡 Similar Performance (< 5% difference)"
                                 )
+
+                                st.markdown(
+                                    "**📊 Click a metric below to open a detailed comparison graph:**"
+                                )
+                                btn_metrics = list(metrics_config.keys())
+                                btn_cols = st.columns(len(btn_metrics))
+                                for btn_i, m_name in enumerate(btn_metrics):
+                                    with btn_cols[btn_i]:
+                                        short = m_name.replace(" (Geometric Mean)", "")
+                                        btn_key = f"ca_btn_{pair_key}_{label}_{btn_i}"
+                                        if st.button(
+                                            f"📊 {short}",
+                                            key=btn_key,
+                                            use_container_width=True,
+                                        ):
+                                            _show_ca_metric_dialog(
+                                                m_name,
+                                                baseline,
+                                                competitor,
+                                                prof_full,
+                                                label,
+                                            )
 
             if group_scores:
                 with score_placeholder:
@@ -1172,7 +1673,7 @@ def render_competitive_analysis_section(df):
                                 )
                                 wr_text = f"{cwr:.0f}%"
                             competitor_rows += f"""<div class="vllm-stat-row" style="margin-top:0.5rem;">
-<div class="vllm-stat" style="flex:2;"><div class="vllm-stat-label">vs {comp}</div></div>
+<div class="vllm-stat" style="flex:2;"><div class="vllm-stat-label" style="font-size:1rem;">vs {comp}</div></div>
 <div class="vllm-stat"><div class="vllm-stat-label">Win Rate</div><div class="vllm-stat-value {wr_cls}">{wr_text}</div></div>
 <div class="vllm-stat"><div class="vllm-stat-label">Wins</div><div class="vllm-stat-value val-green">{cw}</div></div>
 <div class="vllm-stat"><div class="vllm-stat-label">Losses</div><div class="vllm-stat-value val-red">{cl}</div></div>
@@ -1215,12 +1716,42 @@ def render_competitive_analysis_section(df):
 
 def render_overview_section(df):
     """Render the Overview page — executive summary of the latest release."""
-    st.header("Overview")
+    available_pairs = _available_overview_pairs(df)
+    if not available_pairs:
+        st.header("Overview")
+        st.warning("No release pair data available.")
+        return
+
+    header_col, _spacer, dropdown_col = st.columns([2, 5, 3])
+    with header_col:
+        st.header("Overview")
+    with dropdown_col:
+        st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
+        pair_labels = [f"{p['current']} vs {p['previous']}" for p in available_pairs]
+        selected_label = st.selectbox(
+            "Select release comparison",
+            pair_labels,
+            index=0,
+            key="overview_release_pair",
+            label_visibility="collapsed",
+        )
+    selected_pair = available_pairs[pair_labels.index(selected_label)]
+    ov_current = selected_pair["current"]
+    ov_previous = selected_pair["previous"]
+    ov_upstream = selected_pair.get("upstream")
+    ov_additional = selected_pair.get("additional", [])
+
     st.markdown(
-        "Executive summary comparing **RHAIIS-3.3** against **RHAIIS-3.2.5** (previous release)."
+        f"Executive summary comparing **{ov_current}** against **{ov_previous}** (previous release)."
     )
 
-    data = _compute_overview_data(df)
+    data = _compute_overview_data(
+        df,
+        current=ov_current,
+        previous=ov_previous,
+        upstream=ov_upstream,
+        additional=ov_additional,
+    )
 
     # ── Row 1: Top-level KPI cards ──────────────────────────────────
     c1, c2, c3 = st.columns(3)
@@ -1232,8 +1763,8 @@ def render_overview_section(df):
         bg_detail = ""
         if bg:
             bg_detail = (
-                f"<b>{bg['short_name']}</b> on {bg['accelerator']} "
-                f"(TP{bg['tp']}, {clean_profile_name(bg['profile'])})"
+                f"<b>{bg['short_name']}</b> on {_accel_display(bg['accelerator'])} "
+                f"(TP{bg['tp']}, {_display_profile(bg['profile'], bg.get('custom_isl_osl', ''))})"
             )
         st.markdown(
             f"""<div class="overview-card"><details><summary>
@@ -1266,8 +1797,8 @@ combinations.<br><br>
         wr_detail = ""
         if wc:
             wr_detail = (
-                f"<b>{wc['short_name']}</b> on {wc['accelerator']} "
-                f"(TP{wc['tp']}, {clean_profile_name(wc['profile'])})"
+                f"<b>{wc['short_name']}</b> on {_accel_display(wc['accelerator'])} "
+                f"(TP{wc['tp']}, {_display_profile(wc['profile'], wc.get('custom_isl_osl', ''))})"
                 f" — metric: <b>{wm}</b>"
             )
         st.markdown(
@@ -1289,12 +1820,13 @@ P95 ITL (normalised: negative = regression).<br><br>
     with c3:
         n_wins = len(data["win_combos"])
         n_losses = len(data["loss_combos"])
+        n_neutral = len(data["neutral_combos"])
         loss_lines = ""
         for r in data["loss_combos"]:
             pct = r.get("Throughput_pct")
             loss_lines += (
-                f"• {r['short_name']} on {r['accelerator']} "
-                f"(TP{r['tp']}, {clean_profile_name(r['profile'])}): "
+                f"• {r['short_name']} on {_accel_display(r['accelerator'])} "
+                f"(TP{r['tp']}, {_display_profile(r['profile'], r.get('custom_isl_osl', ''))}): "
                 f"<span class='val-red'>{pct:+.1f} %</span><br>"
             )
         st.markdown(
@@ -1305,8 +1837,9 @@ P95 ITL (normalised: negative = regression).<br><br>
 </div>
 </summary>
 <div class="overview-card-detail">
-{n_wins} wins / {n_losses} losses out of {data["total_cmp"]}
-compared combinations (geometric mean throughput).<br><br>
+{n_wins} wins / {n_losses} losses / {n_neutral} neutral out of {data["total_cmp"]}
+compared combinations (geometric mean throughput).<br>
+Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are neutral.<br><br>
 {"<b>Losses:</b><br>" + loss_lines if loss_lines else "<b>No losses.</b>"}
 </div></details></div>""",
             unsafe_allow_html=True,
@@ -1335,7 +1868,7 @@ compared combinations (geometric mean throughput).<br><br>
 
     # Accelerators Covered
     with c5:
-        accel_items = "".join(f"• {a}<br>" for a in data["accels_list"])
+        accel_items = "".join(f"• {_accel_display(a)}<br>" for a in data["accels_list"])
         st.markdown(
             f"""<div class="overview-card"><details><summary>
                 <div class="overview-card-title">Accelerators Covered</div>
@@ -1358,7 +1891,6 @@ compared combinations (geometric mean throughput).<br><br>
             "Regression": "val-red",
         }[h]
         dots = _health_dots_html(h)
-        n_wins = len(data["win_combos"])
         n_losses = len(data["loss_combos"])
         st.markdown(
             f"""<div class="overview-card"><details><summary>
@@ -1368,11 +1900,12 @@ compared combinations (geometric mean throughput).<br><br>
 </div>
 </summary>
 <div class="overview-card-detail">
-Based on throughput win rate ({data["win_rate"]:.0f} %
-= {n_wins} / {data["total_cmp"]}):<br>
-• <b>Healthy</b> — ≥ 80 %<br>
-• <b>Warning</b> — ≥ 60 %<br>
-• <b>Regression</b> — &lt; 60 %
+Non-regression rate: {data["win_rate"]:.0f} %
+= ({data["total_cmp"]} − {n_losses} losses) / {data["total_cmp"]} total.<br>
+Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br>
+• <b>Healthy</b> — ≥ 90 %<br>
+• <b>Warning</b> — ≥ 70 %<br>
+• <b>Regression</b> — &lt; 70 %
 </div></details></div>""",
             unsafe_allow_html=True,
         )
@@ -1380,29 +1913,64 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
     st.markdown("---")
 
     # ── vLLM Parity Scorecard ───────────────────────────────────────
-    st.markdown("### Upstream vLLM Parity")
-    st.caption(
-        "RHAIIS-3.3 builds on vLLM v0.13.0 — the goal is matching or exceeding upstream "
-        "throughput. Compared on H200 across common models. "
-        '"At parity" means within 5 %.'
-    )
-    vllm_avg_cls = "val-green" if data["vllm_avg"] >= 0 else "val-red"
-    parity_count = data["vllm_ties"] + data["vllm_wins"]
-    total_compared = data["vllm_wins"] + data["vllm_ties"] + data["vllm_losses"]
-    parity_pct = (parity_count / total_compared * 100) if total_compared else 0
-    parity_cls = (
-        "val-green"
-        if parity_pct >= 80
-        else ("val-amber" if parity_pct >= 60 else "val-red")
-    )
-    hue = (
-        "green"
-        if data["vllm_losses"] == 0
-        else ("yellow" if data["vllm_losses"] <= data["vllm_wins"] else "red")
-    )
-    st.markdown(
-        f"""<div class="vllm-scorecard vllm-hue-{hue}"><details><summary>
-<div class="vllm-scorecard-title">RHAIIS-3.3 vs vLLM v0.13.0 (H200)</div>
+    if not ov_upstream:
+        st.markdown("### Upstream vLLM Parity")
+        st.info("Upstream vLLM parity data is not available for this release pair.")
+        st.markdown("---")
+    else:
+        st.markdown("### Upstream vLLM Parity")
+        _vllm_ver = ov_upstream.replace("vLLM-", "v")
+        st.caption(
+            f"{ov_current} builds on vLLM {_vllm_ver} — the goal is matching or exceeding upstream "
+            "performance. Compared on NVIDIA H200 across common models. "
+            '"At parity" means within 5 %.'
+        )
+        vllm_avg_cls = "val-green" if data["vllm_avg"] >= 0 else "val-red"
+        parity_count = data["vllm_ties"] + data["vllm_wins"]
+        total_compared = data["vllm_wins"] + data["vllm_ties"] + data["vllm_losses"]
+        parity_pct = (parity_count / total_compared * 100) if total_compared else 0
+        parity_cls = (
+            "val-green"
+            if parity_pct >= 80
+            else ("val-amber" if parity_pct >= 60 else "val-red")
+        )
+        hue = (
+            "green"
+            if data["vllm_losses"] == 0
+            else ("yellow" if data["vllm_losses"] <= data["vllm_wins"] else "red")
+        )
+        vllm_ttft_avg_cls = "val-green" if data["vllm_ttft_avg"] <= 0 else "val-red"
+        vllm_itl_avg_cls = "val-green" if data["vllm_itl_avg"] <= 0 else "val-red"
+
+        def _vllm_indicator(pct, better, similar):
+            if better and not similar:
+                return "🟢"
+            return "🟡" if similar else "🔴"
+
+        def _vllm_metric_cell(pct, better, similar):
+            if pct is None:
+                return '<td style="text-align:right;opacity:0.4">—</td>'
+            icon = _vllm_indicator(pct, better, similar)
+            return f'<td style="text-align:right">{icon} {pct:+.1f} %</td>'
+
+        vllm_table_rows = ""
+        for r in sorted(
+            data["vllm_results"], key=lambda x: x["pct"] or 0, reverse=True
+        ):
+            vllm_table_rows += (
+                f"<tr>"
+                f'<td style="text-align:left"><b>{r["short_name"]}</b></td>'
+                f'<td style="text-align:center">{r["tp"]}</td>'
+                f'<td style="text-align:left">{r["profile"]}</td>'
+                f"{_vllm_metric_cell(r['pct'], r.get('better'), r.get('similar'))}"
+                f"{_vllm_metric_cell(r.get('ttft_pct'), r.get('ttft_better'), r.get('ttft_similar'))}"
+                f"{_vllm_metric_cell(r.get('itl_pct'), r.get('itl_better'), r.get('itl_similar'))}"
+                f"</tr>"
+            )
+
+        st.markdown(
+            f"""<div class="vllm-scorecard vllm-hue-{hue}"><details><summary>
+<div class="vllm-scorecard-title">{ov_current} vs vLLM {_vllm_ver} (NVIDIA H200)</div>
 <div class="vllm-stat-row">
 <div class="vllm-stat">
 <div class="vllm-stat-label">At or Above Parity</div>
@@ -1411,6 +1979,14 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
 <div class="vllm-stat">
 <div class="vllm-stat-label">Avg Throughput Δ</div>
 <div class="vllm-stat-value {vllm_avg_cls}">{data["vllm_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg TTFT P95 Δ</div>
+<div class="vllm-stat-value {vllm_ttft_avg_cls}">{data["vllm_ttft_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg ITL P95 Δ</div>
+<div class="vllm-stat-value {vllm_itl_avg_cls}">{data["vllm_itl_avg"]:+.1f} %</div>
 </div>
 <div class="vllm-stat">
 <div class="vllm-stat-label">Ahead</div>
@@ -1428,28 +2004,33 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
                     <div class="vllm-stat-label">Models Compared</div>
                     <div class="vllm-stat-value">{data["vllm_n_models"]}</div>
                 </div>
+                <div class="vllm-stat">
+                    <div class="vllm-stat-label">Workload Profiles</div>
+                    <div class="vllm-stat-value">{data["vllm_n_profiles"]}</div>
+                </div>
             </div>
         </summary>
         <div class="overview-card-detail">
-            Per-model throughput delta (geometric mean, H200):<br><br>
-            {
-            "".join(
-                f"• {'🟢' if r.get('better') and not r.get('similar') else '🟡' if r.get('similar') else '🔴'} "
-                f"<b>{r['short_name']}</b> {r['profile']}: {r['pct']:+.1f} %<br>"
-                for r in sorted(
-                    data["vllm_results"], key=lambda x: x["pct"] or 0, reverse=True
-                )
-            )
-        }
+            Per-model delta (geometric mean, NVIDIA H200):
+            <table class="vllm-parity-table">
+            <thead><tr>
+                <th style="text-align:left">Model</th>
+                <th style="text-align:center">TP</th>
+                <th style="text-align:left">Profile</th>
+                <th style="text-align:right">Throughput Δ</th>
+                <th style="text-align:right">TTFT P95 Δ</th>
+                <th style="text-align:right">ITL P95 Δ</th>
+            </tr></thead>
+            <tbody>{vllm_table_rows}</tbody>
+            </table>
             <br>
-            • <b>Ahead</b> (🟢) — RHAIIS throughput &gt; 5 % higher<br>
-            • <b>At Parity</b> (🟡) — within ± 5 %<br>
-            • <b>Behind</b> (🔴) — RHAIIS throughput &gt; 5 % lower
+            🟢 Ahead (&gt; 5 % better) · 🟡 At Parity (within ± 5 %) · 🔴 Behind (&gt; 5 % worse)<br>
+            <i>For latency metrics (TTFT/ITL), lower is better — a negative Δ means RHAIIS is faster.</i>
         </div></details></div>""",
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
 
-    st.markdown("---")
+        st.markdown("---")
 
     # ── Release Health by Model Family ──────────────────────────────
     st.markdown("### Release Health by Model Family")
@@ -1495,14 +2076,19 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
 
                 wr_cls = (
                     "val-green"
-                    if info["win_rate"] >= 80
-                    else ("val-red" if info["win_rate"] < 60 else "")
+                    if info["win_rate"] >= 90
+                    else ("val-red" if info["win_rate"] < 70 else "")
                 )
                 tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
 
-                fam_accels = sorted({r["accelerator"] for r in info["results"]})
+                fam_accels = sorted(
+                    {_accel_display(r["accelerator"]) for r in info["results"]}
+                )
                 fam_profiles = sorted(
-                    {clean_profile_name(r["profile"]) for r in info["results"]}
+                    {
+                        _display_profile(r["profile"], r.get("custom_isl_osl", ""))
+                        for r in info["results"]
+                    }
                 )
                 n_combos = len(info["results"])
 
@@ -1513,11 +2099,15 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
                     pct = r.get("Throughput_pct")
                     if pct is None:
                         continue
-                    icon = "🟢" if pct > 5 else ("🟡" if pct > -5 else "🔴")
-                    prof = clean_profile_name(r["profile"])
+                    icon = (
+                        "🟢"
+                        if pct > NEUTRAL_THRESHOLD_PCT
+                        else ("🟡" if pct >= -NEUTRAL_THRESHOLD_PCT else "🔴")
+                    )
+                    prof = _display_profile(r["profile"], r.get("custom_isl_osl", ""))
                     detail_lines += (
                         f"• {icon} <b>{r['short_name']}</b> "
-                        f"TP{r['tp']} · {r['accelerator']} · {prof}: "
+                        f"TP{r['tp']} · {_accel_display(r['accelerator'])} · {prof}: "
                         f"{pct:+.1f} %<br>"
                     )
 
@@ -1533,7 +2123,7 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
 </summary>
 <div class="overview-card-detail">
 <b>Coverage:</b> {", ".join(fam_accels)} &mdash; {n_combos} combo{"s" if n_combos != 1 else ""} across {", ".join(fam_profiles)}<br><br>
-<b>Per-combo throughput delta (geom-mean):</b><br><br>
+<b>Per-combo throughput delta (geometric mean):</b><br><br>
 {detail_lines}
 </div></details></div>""",
                     unsafe_allow_html=True,
@@ -1542,8 +2132,9 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
     st.caption(
         "**Worst** shows the single largest regression across Throughput, TTFT, and ITL "
         "(the specific metric varies by family). "
+        f"Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are excluded from win/loss (neutral). "
         "**Status** is derived from win rate: "
-        "Healthy ≥ 80 %, Warning ≥ 60 %, Regression < 60 %."
+        "Healthy ≥ 90 %, Warning ≥ 70 %, Regression < 70 %."
     )
 
     st.markdown("---")
@@ -1589,14 +2180,18 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
             model_lines = ""
             for mname, pcts in sorted(seen_models.items()):
                 avg = float(np.mean(pcts)) if pcts else 0
-                icon = "🟢" if avg > 5 else ("🟡" if avg > -5 else "🔴")
+                icon = (
+                    "🟢"
+                    if avg > NEUTRAL_THRESHOLD_PCT
+                    else ("🟡" if avg >= -NEUTRAL_THRESHOLD_PCT else "🔴")
+                )
                 model_lines += f"• {icon} <b>{mname}</b>: {avg:+.1f} % throughput<br>"
 
             tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
             st.markdown(
                 f"""<div class="overview-family-card {status_cls}"><details><summary>
 <div class="family-card-header">
-<span class="family-card-name">{accel}</span>
+<span class="family-card-name">{_accel_display(accel)}</span>
 <span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
 </div>
 <div class="family-card-stat">{info["n_models"]} model(s) &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
@@ -1623,7 +2218,9 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
         "</div></div>",
         unsafe_allow_html=True,
     )
-    st.caption("% delta vs. previous release (geom-mean across concurrency levels).")
+    st.caption(
+        "% delta vs. previous release (geometric mean across concurrency levels)."
+    )
 
     heatmap_cols = [
         ("TTFT P95", False, "P95 TTFT (ms)"),
@@ -1632,16 +2229,16 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
     ]
 
     for accel, info in data["accel_rollup"].items():
-        st.markdown(f"**{accel}**")
+        st.markdown(f"**{_accel_display(accel)}**")
         seen = {}
         for r in info["results"]:
-            key = (r["short_name"], r["tp"], r["profile"])
+            key = (r["short_name"], r["tp"], r["profile"], r.get("custom_isl_osl", ""))
             if key not in seen:
                 seen[key] = r
 
         rows_html = ""
-        for (sname, tp, profile), r in seen.items():
-            profile_short = clean_profile_name(profile)
+        for (sname, tp, profile, cisl_osl), r in seen.items():
+            profile_short = _display_profile(profile, cisl_osl)
             cells = ""
             for mname, hib, _ in heatmap_cols:
                 cells += f"<td>{_hm_cell(r.get(f'{mname}_pct'), hib)}</td>"
@@ -1665,15 +2262,25 @@ Based on throughput win rate ({data["win_rate"]:.0f} %
     # ── New in This Release ─────────────────────────────────────────
     st.markdown("### New in This Release")
     items = ""
-    for m in data["new_models"]:
-        items += f'<div class="new-release-item">• {_short_model_name(m)}</div>'
+    for entry in data["new_models"]:
+        name = _short_model_name(entry["model"])
+        config_parts = [
+            f"{ver} · {_accel_display(accel)} · {_display_profile(prof, cisl)}"
+            for ver, accel, prof, cisl in entry["configs"]
+        ]
+        config_str = (
+            f' <span style="opacity:0.7">({", ".join(config_parts)})</span>'
+            if config_parts
+            else ""
+        )
+        items += f'<div class="new-release-item">• {name}{config_str}</div>'
     for a in data["new_accels"]:
-        items += f'<div class="new-release-item">• Accelerator: <b>{a}</b></div>'
+        items += f'<div class="new-release-item">• Accelerator: <b>{_accel_display(a)}</b></div>'
     if not items:
         items = '<div class="new-release-item">No new models or accelerators.</div>'
     st.markdown(
         f"""<div class="new-release-callout">
-            <div class="new-release-callout-title">Added since RHAIIS-3.2.5</div>
+            <div class="new-release-callout-title">Added since {ov_previous}</div>
             {items}
         </div>""",
         unsafe_allow_html=True,
@@ -1835,12 +2442,19 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             + " | "
             + filtered_df["version"]
             + " | TP="
-            + filtered_df["TP"].astype(str)
+            + filtered_df["TP"].apply(lambda x: str(int(x)) if pd.notna(x) else "N/A")
         )
+        _has_dp_data = "DP" in filtered_df.columns and filtered_df["DP"].notna().any()
+        if _has_dp_data:
+            dp_suffix = filtered_df["DP"].apply(
+                lambda x: f" | DP={int(x)}" if pd.notna(x) else ""
+            )
+            filtered_df["run_identifier"] += dp_suffix
 
-        filtered_df_sorted = filtered_df.sort_values(
-            ["model_short", "accelerator", "version", "TP"]
-        ).copy()
+        _sort_cols = ["model_short", "accelerator", "version", "TP"]
+        if _has_dp_data:
+            _sort_cols.append("DP")
+        filtered_df_sorted = filtered_df.sort_values(_sort_cols).copy()
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1926,8 +2540,11 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 "run_identifier": filtered_df_sorted["run_identifier"].unique().tolist()
             },
         )
+        _legend_parts = "Accelerator | Model | Version | TP"
+        if _has_dp_data:
+            _legend_parts += " | DP"
         fig.update_layout(
-            legend_title_text="Run Details (Accelerator | Model | Version | TP)",
+            legend_title_text=f"Run Details ({_legend_parts})",
             legend={"font": {"size": 14}},
         )
         st.plotly_chart(fig, use_container_width=True, theme=None)
@@ -2114,7 +2731,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
             unique_versions = sorted({r.get("version", "Unknown") for r in results})
 
             # Set default versions - prefer these if available
-            preferred_versions = ["RHAIIS-3.2.3", "RHAIIS-3.2.5"]
+            preferred_versions = [OVERVIEW_CURRENT]
             default_versions = [v for v in preferred_versions if v in unique_versions]
             if not default_versions and unique_versions:
                 default_versions = [unique_versions[0]]
@@ -3006,7 +3623,8 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
             """
             return bool(
                 re.match(
-                    r"^[A-Za-z]+(?:-[A-Za-z]+)*-(\d+(?:\.\d+)*(?:rc\d+)?)$", version
+                    r"^[A-Za-z]+(?:-[A-Za-z]+)*-(\d+(?:\.\d+)*(?:rc\d+)?(?:-EA\d+)?)$",
+                    version,
                 )
             )
 
@@ -3682,8 +4300,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
         col1, col2, col3, col4 = st.columns(4)
 
         # Set default versions
-        default_v1 = "vLLM-0.13.0-competitive"
-        default_v2 = "TRT-LLM-1.2.0rc2"
+        default_v1 = OVERVIEW_CURRENT
+        default_v2 = OVERVIEW_PREVIOUS
 
         # Find index for default version 1
         v1_default_index = 0
@@ -3751,22 +4369,45 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 args=("compare_versions_summary_expanded",),
             )
 
+        # Secondary custom ISL/OSL pair filter
+        selected_custom_pair = None
+        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+            custom_temp = df[
+                (df["profile"] == "Custom")
+                & (df["accelerator"].isin(available_accelerators))
+            ]
+            custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
+            custom_pairs = [p for p in custom_pairs if p]
+            if custom_pairs:
+                selected_custom_pair = st.selectbox(
+                    "Select Custom ISL/OSL Pair",
+                    options=custom_pairs,
+                    format_func=format_custom_isl_osl,
+                    key="compare_summary_custom_isl_osl",
+                    on_change=keep_expander_open,
+                    args=("compare_versions_summary_expanded",),
+                )
+
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
 
         # Filter data for each version based on selected accelerator and profile
-        df_v1 = df[
+        base_mask_v1 = (
             (df["version"] == version_1)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
-        ].copy()
-
-        df_v2 = df[
+        )
+        base_mask_v2 = (
             (df["version"] == version_2)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
-        ].copy()
+        )
+        if selected_custom_pair:
+            base_mask_v1 = base_mask_v1 & (df["custom_isl_osl"] == selected_custom_pair)
+            base_mask_v2 = base_mask_v2 & (df["custom_isl_osl"] == selected_custom_pair)
+        df_v1 = df[base_mask_v1].copy()
+        df_v2 = df[base_mask_v2].copy()
 
         if df_v1.empty or df_v2.empty:
             st.warning(
@@ -3775,33 +4416,101 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
             return
 
-        # Find common model+TP combinations between both versions
-        # This ensures we compare the same model with the same TP value
-        v1_model_tp = set(zip(df_v1["model"].tolist(), df_v1["TP"].tolist()))
-        v2_model_tp = set(zip(df_v2["model"].tolist(), df_v2["TP"].tolist()))
-        common_model_tp = sorted(v1_model_tp.intersection(v2_model_tp))
+        _has_dp = "DP" in df_v1.columns
 
-        if not common_model_tp:
+        def _get_version_configs(df, model):
+            """Return sorted list of (type, value) parallelism configs for a model."""
+            model_data = df[df["model"] == model]
+            configs = set()
+            if _has_dp and model_data["DP"].notna().any():
+                for dp_val in model_data["DP"].dropna().unique():
+                    configs.add(("DP", int(dp_val)))
+            tp_data = model_data if not _has_dp else model_data[model_data["DP"].isna()]
+            if not tp_data.empty and tp_data["TP"].notna().any():
+                for tp_val in tp_data["TP"].dropna().unique():
+                    configs.add(("TP", int(tp_val)))
+            return sorted(configs) if configs else [("N/A", 0)]
+
+        def _slice_by_config(df, model, config):
+            """Return rows matching model and parallelism config."""
+            model_data = df[df["model"] == model]
+            ptype, pval = config
+            if ptype == "DP" and _has_dp:
+                return model_data[model_data["DP"] == pval]
+            elif ptype == "TP":
+                mask = model_data["TP"] == pval
+                if _has_dp:
+                    mask = mask & model_data["DP"].isna()
+                return model_data[mask]
+            return model_data
+
+        def _config_label(config):
+            ptype, pval = config
+            return f"{ptype}={pval}" if ptype != "N/A" else "N/A"
+
+        # Build comparison pairs: exact parallelism matches first, then
+        # cross-parallelism pairs for models that differ (e.g. TP vs DP).
+        common_models = sorted(
+            set(df_v1["model"].unique()) & set(df_v2["model"].unique())
+        )
+
+        if not common_models:
             st.warning(
-                f"⚠️ No common model+TP combinations found between {version_1} and {version_2} "
+                f"⚠️ No common models found between {version_1} and {version_2} "
                 f"for {selected_accelerator} with profile {selected_profile}."
             )
             return
 
-        # Collect the union of all common concurrency levels across model+TP combos
+        comparison_pairs = []  # (model, v1_config, v2_config)
+        for model in common_models:
+            v1_cfgs = _get_version_configs(df_v1, model)
+            v2_cfgs = _get_version_configs(df_v2, model)
+            common_cfgs = sorted(set(v1_cfgs) & set(v2_cfgs))
+            for cfg in common_cfgs:
+                comparison_pairs.append((model, cfg, cfg))
+            v1_rem = [c for c in v1_cfgs if c not in set(common_cfgs)]
+            v2_rem = [c for c in v2_cfgs if c not in set(common_cfgs)]
+            for v1_cfg, v2_cfg in zip(v1_rem, v2_rem):
+                comparison_pairs.append((model, v1_cfg, v2_cfg))
+
+        if not comparison_pairs:
+            st.warning(
+                f"⚠️ No comparable model configurations found between "
+                f"{version_1} and {version_2} for {selected_accelerator} "
+                f"with profile {selected_profile}."
+            )
+            return
+
+        # Alert user about cross-parallelism comparisons
+        cross_pairs = [
+            (m, v1_cfg, v2_cfg)
+            for m, v1_cfg, v2_cfg in comparison_pairs
+            if v1_cfg != v2_cfg
+        ]
+        if cross_pairs:
+            lines = []
+            for m, v1_cfg, v2_cfg in cross_pairs:
+                m_short = m.split("/")[-1] if "/" in m else m
+                lines.append(
+                    f"- **{m_short}**: {version_1} uses {_config_label(v1_cfg)}, "
+                    f"{version_2} uses {_config_label(v2_cfg)}"
+                )
+            st.warning(
+                "⚠️ **Cross-parallelism comparison** — the following models use "
+                "different parallelism strategies across versions. Metrics are still "
+                "comparable but hardware utilization differs.\n\n" + "\n".join(lines)
+            )
+
+        # Collect the union of all common concurrency levels across pairs
         all_common_concurrencies: set = set()
-        for model, tp in common_model_tp:
+        for model, v1_cfg, v2_cfg in comparison_pairs:
             v1_conc = set(
-                df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)][
-                    "intended concurrency"
-                ]
+                _slice_by_config(df_v1, model, v1_cfg)["intended concurrency"]
                 .dropna()
                 .unique()
             )
             v2_conc = set(
-                df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)][
-                    "intended concurrency"
-                ]
+                _slice_by_config(df_v2, model, v2_cfg)["intended concurrency"]
                 .dropna()
                 .unique()
             )
@@ -3841,7 +4550,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         # Extract ISL/OSL from profile for display
         profile_short = selected_profile
-        if "(" in selected_profile and ")" in selected_profile:
+        if selected_custom_pair:
+            profile_short = format_custom_isl_osl(selected_custom_pair)
+        elif "(" in selected_profile and ")" in selected_profile:
             profile_short = selected_profile.split("(")[-1].replace(")", "")
 
         # Display title with GPU and ISL/OSL info + "How are these calculated?" popover
@@ -3965,23 +4676,27 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         get_comparison_result = compare_two_datasets
 
-        # Check for duplicate rows (same version/model/TP/concurrency)
+        # Check for duplicate rows within each comparison slice
         dup_warnings = []
-        for _label, df_check, ver_name in [
-            ("Version 1", df_v1, version_1),
-            ("Version 2", df_v2, version_2),
-        ]:
-            for model, tp in common_model_tp:
-                subset = df_check[(df_check["model"] == model) & (df_check["TP"] == tp)]
+        _seen_dup_checks = set()
+        for model, v1_cfg, v2_cfg in comparison_pairs:
+            for df_check, ver_name, cfg in [
+                (df_v1, version_1, v1_cfg),
+                (df_v2, version_2, v2_cfg),
+            ]:
+                dup_key = (ver_name, model, cfg)
+                if dup_key in _seen_dup_checks:
+                    continue
+                _seen_dup_checks.add(dup_key)
+                subset = _slice_by_config(df_check, model, cfg)
                 conc_counts = subset["intended concurrency"].value_counts()
                 dups = conc_counts[conc_counts > 1]
                 if not dups.empty:
                     m_short = model.split("/")[-1] if "/" in model else model
-                    tp_s = f"TP={int(tp)}" if pd.notna(tp) else ""
                     conc_list = ", ".join(str(int(c)) for c in sorted(dups.index))
                     dup_warnings.append(
-                        f"**{ver_name}** — {m_short} ({tp_s}): duplicate rows at "
-                        f"concurrency {conc_list}"
+                        f"**{ver_name}** — {m_short} ({_config_label(cfg)}): "
+                        f"duplicate rows at concurrency {conc_list}"
                     )
         if dup_warnings:
             st.warning(
@@ -3993,17 +4708,20 @@ def render_compare_versions_summary_section(df, use_expander=True):
         # Build summary table data
         summary_data = []
 
-        for model, tp in common_model_tp:
+        for model, v1_cfg, v2_cfg in comparison_pairs:
             model_short = model.split("/")[-1] if "/" in model else model
 
-            # Get data for this specific model+TP combination
-            v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
-            v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+            v1_model_data = _slice_by_config(df_v1, model, v1_cfg)
+            v2_model_data = _slice_by_config(df_v2, model, v2_cfg)
 
-            # Format TP for display
-            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+            v1_label = _config_label(v1_cfg)
+            v2_label = _config_label(v2_cfg)
+            if v1_label == v2_label:
+                parallelism_str = f"({v1_label})"
+            else:
+                parallelism_str = f"({v1_label} → {v2_label})"
 
-            row_data = {"Model": f"{model_short} {tp_str}"}
+            row_data = {"Model": f"{model_short} {parallelism_str}"}
 
             for metric_name, metric_config in metrics_config.items():
                 pct_diff, v1_better, v1_peak, v2_peak, is_similar = (
@@ -4095,15 +4813,18 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     "#4292C6",
                 ]
 
-                # Collect per-concurrency data for all models
+                # Collect per-concurrency data for all comparison pairs
                 per_model = []
-                for m, tp in common_model_tp:
+                for m, v1_cfg, v2_cfg in comparison_pairs:
                     m_short = m.split("/")[-1] if "/" in m else m
-                    tp_s = f" (TP={int(tp)})" if pd.notna(tp) else ""
-                    lbl = f"{m_short}{tp_s}"
-
-                    d1 = df_v1[(df_v1["model"] == m) & (df_v1["TP"] == tp)]
-                    d2 = df_v2[(df_v2["model"] == m) & (df_v2["TP"] == tp)]
+                    d1 = _slice_by_config(df_v1, m, v1_cfg)
+                    d2 = _slice_by_config(df_v2, m, v2_cfg)
+                    l1 = _config_label(v1_cfg)
+                    l2 = _config_label(v2_cfg)
+                    if l1 == l2:
+                        lbl = f"{m_short} ({l1})"
+                    else:
+                        lbl = f"{m_short} ({l1} → {l2})"
 
                     c1 = set(d1["intended concurrency"].dropna().unique())
                     c2 = set(d2["intended concurrency"].dropna().unique())
@@ -4288,7 +5009,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             column_config = {
                 "Model": st.column_config.TextColumn(
                     "Model",
-                    help="Model name with tensor parallelism (TP) configuration",
+                    help="Model name with parallelism configuration (TP or DP). When versions use different parallelism, shown as V1 → V2.",
                 ),
                 "Peak Output Throughput": st.column_config.TextColumn(
                     "Peak Output Throughput",
@@ -4338,15 +5059,18 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.markdown("### 📋 Detailed Model Comparisons")
             st.markdown("*Click on a model to see detailed metrics comparison*")
 
-            for idx, (model, tp) in enumerate(common_model_tp, 1):
+            for idx, (model, v1_cfg, v2_cfg) in enumerate(comparison_pairs, 1):
                 model_short = model.split("/")[-1] if "/" in model else model
 
-                # Get data for this specific model+TP combination
-                v1_model_data = df_v1[(df_v1["model"] == model) & (df_v1["TP"] == tp)]
-                v2_model_data = df_v2[(df_v2["model"] == model) & (df_v2["TP"] == tp)]
+                v1_model_data = _slice_by_config(df_v1, model, v1_cfg)
+                v2_model_data = _slice_by_config(df_v2, model, v2_cfg)
 
-                # Get TP value for display
-                tp_val = int(tp) if pd.notna(tp) else "N/A"
+                v1_p_label = _config_label(v1_cfg)
+                v2_p_label = _config_label(v2_cfg)
+                if v1_p_label == v2_p_label:
+                    expander_parallelism = v1_p_label
+                else:
+                    expander_parallelism = f"{v1_p_label} → {v2_p_label}"
 
                 # Get common concurrencies
                 v1_concurrencies = set(
@@ -4429,7 +5153,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
 
-                with st.expander(f"{idx}. {model_short} (TP={tp_val})"):
+                with st.expander(f"{idx}. {model_short} ({expander_parallelism})"):
                     detail_rows = [
                         {
                             "Metric": "Peak Output Throughput (output tok/s)",
@@ -5435,13 +6159,25 @@ def render_model_performance_comparison_section(
                 max_throughput_idx = optimal_concurrency_data["output_tok/sec"].idxmax()
                 max_throughput_row = optimal_concurrency_data.loc[max_throughput_idx]
                 min_ttft_idx = optimal_concurrency_data["ttft_p95"].idxmin()
-                min_ttft_row = optimal_concurrency_data.loc[min_ttft_idx]
+                min_ttft_row = (
+                    optimal_concurrency_data.loc[min_ttft_idx]
+                    if pd.notna(min_ttft_idx)
+                    else max_throughput_row
+                )
                 min_itl_idx = optimal_concurrency_data["itl_p95"].idxmin()
-                min_itl_row = optimal_concurrency_data.loc[min_itl_idx]
+                min_itl_row = (
+                    optimal_concurrency_data.loc[min_itl_idx]
+                    if pd.notna(min_itl_idx)
+                    else max_throughput_row
+                )
                 max_efficiency_idx = optimal_concurrency_data[
                     "efficiency_ratio"
                 ].idxmax()
-                max_efficiency_row = optimal_concurrency_data.loc[max_efficiency_idx]
+                max_efficiency_row = (
+                    optimal_concurrency_data.loc[max_efficiency_idx]
+                    if pd.notna(max_efficiency_idx)
+                    else max_throughput_row
+                )
             else:
                 # Fallback to using the best_row if optimal_concurrency_data is empty
                 max_throughput_row = best_row
@@ -5708,7 +6444,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 ```
                 TTMT = 1,000,000 tokens ÷ Effective Throughput (tokens/sec)
                 ```
-                - H200/MI300X: Uses adjusted throughput
+                - B200/H200/MI300X: Uses adjusted throughput
                 - TPU: Uses raw throughput
 
                 💰 **Cost per Million Tokens (CPMT)**
@@ -5718,10 +6454,10 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                 **Where:**
                 - **Instance Cost/hour**: Cloud provider pricing
-                  - H200/MI300X: Pay for full 8-GPU instance regardless of TP
+                  - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                   - TPU: Per-core pricing, multiplied by TP count
                 - **Throughput**:
-                  - H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
                   - TPU: Raw throughput (you pay per core used)
                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                 """
@@ -5733,11 +6469,31 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         )
 
         with st.expander(
-            "💰 Cloud Instance Pricing (as of March 9th, 2026)", expanded=False
+            "💰 Cloud Instance Pricing (as of April 5th, 2026)", expanded=False
         ):
-            price_col1, price_col2, price_col3 = st.columns(3)
+            price_col1, price_col2, price_col3, price_col4 = st.columns(4)
 
             with price_col1:
+                st.markdown(
+                    """
+                <div style="
+                    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+                    color: white;
+                    padding: 10px;
+                    border-radius: 8px;
+                    text-align: center;
+                    margin-bottom: 5px;
+                ">
+                    <h5 style="margin: 0; color: white; font-size: 18px;">🟢 B200 (NVIDIA)</h5>
+                    <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$74.88/hour</div>
+                    <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p6-b200.48xlarge</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-B200</div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+            with price_col2:
                 st.markdown(
                     """
                 <div style="
@@ -5757,7 +6513,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     unsafe_allow_html=True,
                 )
 
-            with price_col2:
+            with price_col3:
                 st.markdown(
                     """
                 <div style="
@@ -5777,7 +6533,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     unsafe_allow_html=True,
                 )
 
-            with price_col3:
+            with price_col4:
                 st.markdown(
                     """
                 <div style="
@@ -5813,12 +6569,12 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         )
 
         percentile_map = {
-            "P95": {"suffix": "p95", "itl_default": 65.0, "ttft_default": 3400.0},
-            "P99": {"suffix": "p99", "itl_default": 65.0, "ttft_default": 3400.0},
+            "P95": {"suffix": "p95", "itl_default": 65.0, "ttft_default": 4.0},
+            "P99": {"suffix": "p99", "itl_default": 65.0, "ttft_default": 4.0},
             "P50 (Median)": {
                 "suffix": "median",
                 "itl_default": 65.0,
-                "ttft_default": 3400.0,
+                "ttft_default": 4.0,
             },
         }
 
@@ -5837,17 +6593,24 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             )
 
         with latency_col2:
-            ttft_threshold = st.number_input(
-                f"Max TTFT {percentile_label} (ms)",
-                min_value=500.0,
+            ttft_threshold_s = st.number_input(
+                f"Max TTFT {percentile_label} (s)",
+                min_value=0.5,
                 value=percentile_info["ttft_default"],
-                step=100.0,
+                step=0.1,
                 help=f"Time To First Token {percentile_label} threshold",
             )
+            ttft_threshold = ttft_threshold_s * 1000
 
         st.markdown("")
 
         accelerator_pricing = {
+            "B200": {
+                "instance_cost_per_hour": 74.88,
+                "total_gpus": 8,
+                "description": "B200 - AWS p6-b200.48xlarge ($74.88/hour)",
+                "instance_details": "AWS p6-b200.48xlarge - ondemand (8xNVIDIA-B200)",
+            },
             "H200": {
                 "instance_cost_per_hour": 41.62,
                 "total_gpus": 8,
@@ -5895,7 +6658,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 # TPU pricing is per core, so multiply by TP count
                 total_instance_cost_per_hour = instance_cost_per_hour * tp_count
             else:
-                # H200 and MI300X: You pay for the full instance regardless of TP used
+                # B200, H200, and MI300X: You pay for the full instance regardless of TP used
                 total_instance_cost_per_hour = instance_cost_per_hour
 
             # Base inference cost
@@ -6010,13 +6773,25 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 max_throughput_idx = optimal_concurrency_data["output_tok/sec"].idxmax()
                 max_throughput_row = optimal_concurrency_data.loc[max_throughput_idx]
                 min_ttft_idx = optimal_concurrency_data["ttft_p95"].idxmin()
-                min_ttft_row = optimal_concurrency_data.loc[min_ttft_idx]
+                min_ttft_row = (
+                    optimal_concurrency_data.loc[min_ttft_idx]
+                    if pd.notna(min_ttft_idx)
+                    else max_throughput_row
+                )
                 min_itl_idx = optimal_concurrency_data["itl_p95"].idxmin()
-                min_itl_row = optimal_concurrency_data.loc[min_itl_idx]
+                min_itl_row = (
+                    optimal_concurrency_data.loc[min_itl_idx]
+                    if pd.notna(min_itl_idx)
+                    else max_throughput_row
+                )
                 max_efficiency_idx = optimal_concurrency_data[
                     "efficiency_ratio"
                 ].idxmax()
-                max_efficiency_row = optimal_concurrency_data.loc[max_efficiency_idx]
+                max_efficiency_row = (
+                    optimal_concurrency_data.loc[max_efficiency_idx]
+                    if pd.notna(max_efficiency_idx)
+                    else max_throughput_row
+                )
             else:
                 # Fallback to using the best_row if optimal_concurrency_data is empty
                 max_throughput_row = best_row
@@ -6107,18 +6882,26 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             )
 
         st.info(
-            f"🎯 **Optimal Concurrency Analysis**: Finding best concurrency levels that meet PSAP SLOs (ITL {percentile_label} ≤ {itl_threshold}ms, TTFT {percentile_label} ≤ {ttft_threshold}ms)"
+            f"🎯 **Optimal Concurrency Analysis**: Finding best concurrency levels that meet PSAP SLOs (ITL {percentile_label} ≤ {itl_threshold}ms, TTFT {percentile_label} ≤ {ttft_threshold_s}s)"
         )
 
         debug_info = []
 
-        # FIRST PASS: Identify which model/accelerator/TP combinations have SLO-compliant configurations
+        # FIRST PASS: Identify which model/accelerator/TP (or DP) combinations have SLO-compliant configurations
         slo_analysis_data = []
-        model_accelerator_tp_groups = filtered_df.groupby(
-            ["model", "accelerator", "TP"]
-        )
+        _group_cols = ["model", "accelerator", "TP"]
+        _has_dp_col = "DP" in filtered_df.columns
+        if _has_dp_col:
+            _group_cols.append("DP")
+        model_accelerator_tp_groups = filtered_df.groupby(_group_cols, dropna=False)
 
-        for (model, accelerator, tp), group in model_accelerator_tp_groups:
+        for group_key, group in model_accelerator_tp_groups:
+            if _has_dp_col:
+                model, accelerator, tp, dp = group_key
+            else:
+                model, accelerator, tp = group_key
+                dp = np.nan
+
             result_series = get_optimal_concurrency_performance(
                 group,
                 itl_threshold,
@@ -6131,6 +6914,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             result_dict["model"] = model
             result_dict["accelerator"] = accelerator
             result_dict["TP"] = tp
+            result_dict["DP"] = dp
 
             slo_analysis_data.append(result_dict)
 
@@ -6184,29 +6968,36 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                 if accelerator in accelerator_pricing:
                     pricing_info = accelerator_pricing[accelerator]
-                    tp_count = row.get("throughput_tp", 1)
+                    tp_count = row.get("throughput_tp", np.nan)
+                    dp_count = row.get("DP", np.nan)
+                    is_dp_run = pd.notna(dp_count) and pd.isna(tp_count)
 
-                    # Calculate adjusted throughput = throughput × (total GPUs / TP)
                     raw_throughput = row.get("output_tok/sec", 0)
                     total_gpus = pricing_info.get("total_gpus", 1)
 
-                    if accelerator == "TPU":
-                        # TPU: Pay per core used, so use raw throughput
+                    if is_dp_run:
+                        # DP run: use raw throughput, scale instance cost by DP count
                         throughput_for_calc = raw_throughput
                         adjusted_throughput = raw_throughput
+                        parallelism_count = int(dp_count)
+                    elif accelerator == "TPU":
+                        throughput_for_calc = raw_throughput
+                        adjusted_throughput = raw_throughput
+                        parallelism_count = int(tp_count) if pd.notna(tp_count) else 1
                     else:
-                        # H200/MI300X: Pay for full instance, so use adjusted throughput
+                        safe_tp = int(tp_count) if pd.notna(tp_count) else 1
                         adjusted_throughput = (
-                            raw_throughput * (total_gpus / tp_count)
-                            if tp_count > 0
+                            raw_throughput * (total_gpus / safe_tp)
+                            if safe_tp > 0
                             else 0
                         )
                         throughput_for_calc = adjusted_throughput
+                        parallelism_count = safe_tp
 
                     cost_metrics = calculate_cost_metrics(
                         throughput_for_calc,
                         pricing_info["instance_cost_per_hour"],
-                        tp_count,
+                        parallelism_count,
                         model_name,
                         accelerator,
                     )
@@ -6232,6 +7023,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                             "accelerator_desc": pricing_info["description"],
                             "version": row.get("throughput_version", "Unknown"),
                             "tp": tp_count,
+                            "dp": dp_count,
                             "throughput": raw_throughput,
                             "adjusted_throughput": adjusted_throughput,
                             "concurrency_used": concurrency_used,
@@ -6254,9 +7046,17 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 cost_df = cost_df.dropna(subset=["cpmt_total"])
 
                 if not cost_df.empty:
-                    # Create a combined label showing model and TP for better visualization
+
+                    def _parallelism_label(row):
+                        if pd.notna(row.get("dp")) and pd.isna(row.get("tp")):
+                            return f"DP={int(row['dp'])}"
+                        elif pd.notna(row.get("tp")):
+                            return f"TP={int(row['tp'])}"
+                        return "N/A"
+
+                    cost_df["parallelism"] = cost_df.apply(_parallelism_label, axis=1)
                     cost_df["model_tp_label"] = cost_df.apply(
-                        lambda row: f"{row['model']} (TP={int(row['tp'])})", axis=1
+                        lambda row: f"{row['model']} ({row['parallelism']})", axis=1
                     )
 
                     cost_col1, cost_col2 = st.columns(2)
@@ -6273,13 +7073,13 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                             title="Time to Million Tokens (minutes) - Lower is Better",
                             labels={
                                 "ttmt_minutes": "Time to Million Tokens (minutes)",
-                                "model_tp_label": "Model (TP Configuration)",
+                                "model_tp_label": "Model (Parallelism)",
                             },
                             template="plotly_white_light",
                             hover_data={
                                 "version": True,
                                 "throughput": ":.1f",
-                                "tp": True,
+                                "parallelism": True,
                                 "cpmt_total": ":.3f",
                             },
                         )
@@ -6301,13 +7101,13 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                             title="Cost per Million Tokens (USD) - Lower is Better",
                             labels={
                                 "cpmt_total": "Cost per Million Tokens (USD)",
-                                "model_tp_label": "Model (TP Configuration)",
+                                "model_tp_label": "Model (Parallelism)",
                             },
                             template="plotly_white_light",
                             hover_data={
                                 "version": True,
                                 "throughput": ":.1f",
-                                "tp": True,
+                                "parallelism": True,
                                 "ttmt_minutes": ":.1f",
                             },
                         )
@@ -6339,19 +7139,20 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                                  **Version**: Inference server version used
 
-                                 **TP**: Tensor Parallelism (number of GPUs)
+                                 **Parallelism**: TP (Tensor Parallelism) or DP (Data Parallelism) and size
 
                                  **Concurrency**: Optimal concurrent requests
 
                                  **Throughput**: Output tokens generated per second
 
                                  **Adjusted Throughput**:
-                                 - H200/MI300X: Raw Throughput × (8 GPUs / TP)
+                                 - TP runs on B200/H200/MI300X: Raw Throughput × (8 GPUs / TP)
+                                 - DP runs: Raw throughput (each replica is independent)
                                  - TPU: Raw throughput (pay per core used)
 
-                                 **TTFT {percentile_label}**: Time to First Token ({percentile_choice.lower()})
+                                 **TTFT {percentile_label} (s)**: Time to First Token ({percentile_choice.lower()}) in seconds
 
-                                 **ITL {percentile_label}**: Inter-Token Latency ({percentile_choice.lower()})
+                                 **ITL {percentile_label} (ms)**: Inter-Token Latency ({percentile_choice.lower()}) in milliseconds
 
                                  **Instance Cost**: Full cloud instance hourly cost
 
@@ -6370,7 +7171,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 ```
                                 TTMT = 1,000,000 tokens ÷ Effective Throughput (tokens/sec)
                                 ```
-                                - H200/MI300X: Uses adjusted throughput
+                                - B200/H200/MI300X: Uses adjusted throughput
                                 - TPU: Uses raw throughput
 
                                 💰 **Cost per Million Tokens (CPMT)**
@@ -6380,10 +7181,10 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                                 **Where:**
                                 - **Instance Cost/hour**: Cloud provider pricing
-                                  - H200/MI300X: Pay for full 8-GPU instance regardless of TP
+                                  - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                                   - TPU: Per-core pricing, multiplied by TP count
                                 - **Throughput**:
-                                  - H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
                                   - TPU: Raw throughput (you pay per core used)
                                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                                 """
@@ -6401,7 +7202,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     cost_display_df["Model"] = cost_display_df["model"]
                     cost_display_df["Accelerator"] = cost_display_df["accelerator_desc"]
                     cost_display_df["Version"] = cost_display_df["version"]
-                    cost_display_df["TP"] = cost_display_df["tp"].astype(int)
+                    cost_display_df["Parallelism"] = cost_display_df["parallelism"]
                     cost_display_df["Concurrency"] = cost_display_df[
                         "concurrency_used"
                     ].apply(
@@ -6414,14 +7215,14 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         "adjusted_throughput"
                     ].round(1)
 
-                    ttft_col_name = f"TTFT {percentile_label} (ms)"
+                    ttft_col_name = f"TTFT {percentile_label} (s)"
                     itl_col_name = f"ITL {percentile_label} (ms)"
                     ttft_data_col = f"ttft_{percentile_info['suffix']}"
                     itl_data_col = f"itl_{percentile_info['suffix']}"
 
                     cost_display_df[ttft_col_name] = cost_display_df[
                         ttft_data_col
-                    ].apply(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A")
+                    ].apply(lambda x: f"{x / 1000:.2f}" if pd.notna(x) else "N/A")
                     cost_display_df[itl_col_name] = cost_display_df[itl_data_col].apply(
                         lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"
                     )
@@ -6440,7 +7241,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         "Model",
                         "Accelerator",
                         "Version",
-                        "TP",
+                        "Parallelism",
                         "Concurrency",
                         "Throughput (tok/s)",
                         "Adjusted Throughput (tok/s)",
@@ -6462,15 +7263,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Accelerator": st.column_config.TextColumn(
                             "Accelerator",
-                            help="Hardware accelerator type and cloud instance details (e.g., H200, MI300X, TPU)",
+                            help="Hardware accelerator type and cloud instance details (e.g., B200, H200, MI300X, TPU)",
                         ),
                         "Version": st.column_config.TextColumn(
                             "Version",
                             help="Inference server version used (e.g., RHAIIS-3.2.1, vLLM-0.10.0)",
                         ),
-                        "TP": st.column_config.NumberColumn(
-                            "TP",
-                            help="Tensor Parallelism size - number of GPUs/cores used to split the model",
+                        "Parallelism": st.column_config.TextColumn(
+                            "Parallelism",
+                            help="Parallelism strategy: TP (Tensor Parallelism) or DP (Data Parallelism) and size",
                         ),
                         "Concurrency": st.column_config.TextColumn(
                             "Concurrency",
@@ -6483,12 +7284,12 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Adjusted Throughput (tok/s)": st.column_config.NumberColumn(
                             "Adjusted Throughput (tok/s)",
-                            help="Effective throughput for cost calculations: H200/MI300X = Raw × (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
+                            help="Effective throughput for cost calculations: B200/H200/MI300X = Raw × (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
                             format="%.1f",
                         ),
                         ttft_col_name: st.column_config.TextColumn(
                             ttft_col_name,
-                            help=f"Time to First Token {percentile_label} - latency until first token is generated at optimal concurrency (lower is better). PSAP SLO: ≤ {ttft_threshold}ms",
+                            help=f"Time to First Token {percentile_label} - latency until first token is generated at optimal concurrency (lower is better). PSAP SLO: ≤ {ttft_threshold_s}s",
                         ),
                         itl_col_name: st.column_config.TextColumn(
                             itl_col_name,
@@ -6496,7 +7297,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Instance Cost ($/hour)": st.column_config.NumberColumn(
                             "Instance Cost ($/hour)",
-                            help="Cloud instance hourly cost: H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP × per-core cost)",
+                            help="Cloud instance hourly cost: B200/H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP × per-core cost)",
                             format="%.1f",
                         ),
                         "Time to 1M Tokens (min)": st.column_config.NumberColumn(
@@ -6519,7 +7320,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     )
 
                     st.info(
-                        f"💡 **Performance Details**: **Concurrency** shows the optimal concurrency level where each model achieves best throughput while meeting PSAP SLOs. **TTFT {percentile_label}** and **ITL {percentile_label}** show the actual latency values achieved at this optimal concurrency, confirming SLO compliance (ITL {percentile_label} ≤ {itl_threshold}ms, TTFT {percentile_label} ≤ {ttft_threshold}ms)."
+                        f"💡 **Performance Details**: **Concurrency** shows the optimal concurrency level where each model achieves best throughput while meeting PSAP SLOs. **TTFT {percentile_label}** and **ITL {percentile_label}** show the actual latency values achieved at this optimal concurrency, confirming SLO compliance (ITL {percentile_label} ≤ {itl_threshold}ms, TTFT {percentile_label} ≤ {ttft_threshold_s}s)."
                     )
 
                     st.subheader("💡 Cost Insights")
@@ -6567,8 +7368,8 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         )
 
                         range_subtitle = (
-                            f"Max: {overall_max_cost_row['model']} (TP={int(overall_max_cost_row['tp'])}) | "
-                            f"Min: {overall_min_cost_row['model']} (TP={int(overall_min_cost_row['tp'])})"
+                            f"Max: {overall_max_cost_row['model']} ({overall_max_cost_row['parallelism']}) | "
+                            f"Min: {overall_min_cost_row['model']} ({overall_min_cost_row['parallelism']})"
                         )
 
                         card_col1, card_col2 = st.columns([4, 1])
@@ -6587,7 +7388,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         with card_col2:
                             with st.popover("📊"):
                                 st.markdown("**Cost Range by Accelerator:**")
-                                accelerators = ["H200", "MI300X", "TPU"]
+                                accelerators = ["B200", "H200", "MI300X", "TPU"]
                                 for acc in accelerators:
                                     acc_data = cost_df[
                                         cost_df["accelerator"].str.contains(
@@ -6611,10 +7412,10 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                         **{acc}: ${cost_range:.3f} range**
 
                                         🔴 **Max:** ${max_cost_row["cpmt_total"]:.3f}
-                                        *{max_cost_row["model"]}* (TP={int(max_cost_row["tp"])}, v{max_cost_row["version"]})
+                                        *{max_cost_row["model"]}* ({max_cost_row["parallelism"]}, v{max_cost_row["version"]})
 
                                         🟢 **Min:** ${min_cost_row["cpmt_total"]:.3f}
-                                        *{min_cost_row["model"]}* (TP={int(min_cost_row["tp"])}, v{min_cost_row["version"]})
+                                        *{min_cost_row["model"]}* ({min_cost_row["parallelism"]}, v{min_cost_row["version"]})
                                         """
                                         )
                                         if acc != "TPU":
@@ -6680,8 +7481,8 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 450.49,
                     "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},  # TP-specific values
                 },
-                # Profile E: Prefill Heavy (8k/1k)
-                "Profile E: Prefill Heavy (8k/1k)": {
+                # Profile D: Prefill Heavy (8k/1k)
+                "Profile D: Prefill Heavy (8k/1k)": {
                     "deepseek-ai/DeepSeek-R1-0528": 652.18,
                     "Qwen/Qwen3-235B-A22B-Instruct-2507": 555.96,
                     "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 629.71,
@@ -6689,7 +7490,39 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     "RedHatAI/Qwen3-235B-A22B-FP8-dynamic": 410.34,
                     "meta-llama/Llama-3.3-70B-Instruct": 603.45,
                     "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 450.49,
-                    "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},  # TP-specific values
+                    "openai/gpt-oss-120b": {4: 429.65, 1: 603.58},
+                },
+            },
+            "RHAIIS-3.4-EA1": {
+                "Profile A: Balanced (1k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 642.55,
+                    "meta-llama/Llama-3.3-70B-Instruct": 625.25,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 597.07,
+                    "openai/gpt-oss-120b": {1: 585.11, 4: 452.03},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 566.60,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 537.06,
+                    "deepseek-ai/DeepSeek-R1-0528": 522.54,
+                    "deepseek-ai/DeepSeek-V3.2": 516.12,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 627.10,
+                    "meta-llama/Llama-3.3-70B-Instruct": 613.62,
+                    "openai/gpt-oss-120b": {1: 579.11, 4: 473.30},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 568.59,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 550.64,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 514.09,
+                    "deepseek-ai/DeepSeek-R1-0528": 500.59,
+                    "deepseek-ai/DeepSeek-V3.2": 493.59,
+                },
+                "Profile D: Prefill Heavy (8k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 653.54,
+                    "meta-llama/Llama-3.3-70B-Instruct": 646.65,
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 610.70,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 606.43,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 601.07,
+                    "openai/gpt-oss-120b": {1: 579.11, 4: 538.76},
+                    "deepseek-ai/DeepSeek-R1-0528": 564.89,
+                    "deepseek-ai/DeepSeek-V3.2": 551.83,
                 },
             },
         },
@@ -6714,8 +7547,8 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     "meta-llama/Llama-3.3-70B-Instruct": 162.9,
                     "meta-llama/Llama-4-Maverick-17B-128E-Instruct": 355.97,
                 },
-                # Profile E: Prefill Heavy (8k/1k)
-                "Profile E: Prefill Heavy (8k/1k)": {
+                # Profile D: Prefill Heavy (8k/1k)
+                "Profile D: Prefill Heavy (8k/1k)": {
                     "Qwen/Qwen3-235B-A22B-Instruct-2507": 404.65,
                     "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 437.76,
                     "RedHatAI/Llama-4-Maverick-17B-128E-Instruct-FP8": 375.08,
@@ -6744,9 +7577,14 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
             Power consumption in kW
         """
         # Normalize version string - map variants like "RHAIIS-3.2.5-sanity" to "RHAIIS-3.2.5"
+        # Check each known version key and pick the first that matches as a substring
         normalized_version = version
-        if "RHAIIS-3.2.5" in str(version):
-            normalized_version = "RHAIIS-3.2.5"
+        for known_ver in sorted(
+            GPU_POWER_DATA.get(accelerator, {}).keys(), key=len, reverse=True
+        ):
+            if known_ver in str(version):
+                normalized_version = known_ver
+                break
 
         # Try to find specific power data
         if accelerator in GPU_POWER_DATA:
@@ -6792,7 +7630,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
             """
             <p style="font-size: 1.3rem;">
             This section computes energy consumption and carbon footprint for GPU-based inference
-            performance benchmarking runs on <strong>RHAIIS 3.2.5</strong> using measured GPU power from Grafana metrics.
+            performance benchmarking runs using measured GPU power from Grafana metrics.
             </p>
             """,
             unsafe_allow_html=True,
@@ -6897,9 +7735,18 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
         st.markdown("---")
         st.markdown("#### ⚡ Energy Calculation")
 
+        # Determine which versions have measured GPU power data and their supported accelerators
+        supported_versions = set()
+        version_accelerators = {}
+        for accel, acc_data in GPU_POWER_DATA.items():
+            for ver in acc_data:
+                supported_versions.add(ver)
+                version_accelerators.setdefault(ver, []).append(accel)
+        supported_versions = sorted(supported_versions, reverse=True)
+
         st.info(
             "💡 **Note:** Energy computation uses measured GPU power from Grafana metrics "
-            "(DCGM/ROCm-SMI) for **RHAIIS 3.2.5** on H200 and MI300X accelerators."
+            f"(DCGM/ROCm-SMI). Measured data available for: **{', '.join(supported_versions)}**."
         )
 
         # Flag to track if we should show energy calculations
@@ -6907,30 +7754,53 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
         energy_filtered_df = None
 
         if full_df is not None and not full_df.empty:
-            # Filter to only RHAIIS-3.2.5 data and supported accelerators (H200, MI300X)
             if "version" in full_df.columns and "accelerator" in full_df.columns:
-                rhaiis_325_df = full_df[
-                    (full_df["version"] == "RHAIIS-3.2.5")
-                    & (full_df["accelerator"].isin(["H200", "MI300X"]))
-                ]
+                # Filter to versions that have measured power data
+                energy_base_df = full_df[full_df["version"].isin(supported_versions)]
 
-                if rhaiis_325_df.empty:
+                if energy_base_df.empty:
                     st.warning(
-                        "⚠️ No RHAIIS 3.2.5 data available for H200 or MI300X accelerators in the dataset."
+                        f"⚠️ No data available for versions with measured power data ({', '.join(supported_versions)})."
                     )
                     show_energy_calculations = False
                 else:
                     # Create independent filters for this section
                     st.markdown("##### Select Filters for Energy Calculation")
 
-                    energy_filter_col1, energy_filter_col2, energy_filter_col3 = (
-                        st.columns(3)
-                    )
+                    (
+                        energy_filter_col1,
+                        energy_filter_col2,
+                        energy_filter_col3,
+                        energy_filter_col4,
+                    ) = st.columns(4)
 
-                    # Filter 1: Accelerator
+                    # Filter 1: Version
                     with energy_filter_col1:
+                        available_versions = sorted(
+                            energy_base_df["version"].unique().tolist(), reverse=True
+                        )
+                        selected_energy_version = st.selectbox(
+                            "RHAIIS Version",
+                            available_versions,
+                            index=0,
+                            key="energy_version_filter",
+                            help="Select the RHAIIS version for energy calculation",
+                            on_change=keep_energy_expander_open,
+                        )
+
+                    # Filter by version and its supported accelerators
+                    allowed_accels = version_accelerators.get(
+                        selected_energy_version, []
+                    )
+                    version_filtered_df = energy_base_df[
+                        (energy_base_df["version"] == selected_energy_version)
+                        & (energy_base_df["accelerator"].isin(allowed_accels))
+                    ]
+
+                    # Filter 2: Accelerator
+                    with energy_filter_col2:
                         available_accelerators = sorted(
-                            rhaiis_325_df["accelerator"].unique().tolist()
+                            version_filtered_df["accelerator"].unique().tolist()
                         )
                         selected_energy_accelerators = st.multiselect(
                             "Accelerator(s)",
@@ -6943,16 +7813,16 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
                     # Filter accelerator first for dependent filters
                     if selected_energy_accelerators:
-                        acc_filtered_df = rhaiis_325_df[
-                            rhaiis_325_df["accelerator"].isin(
+                        acc_filtered_df = version_filtered_df[
+                            version_filtered_df["accelerator"].isin(
                                 selected_energy_accelerators
                             )
                         ]
                     else:
-                        acc_filtered_df = rhaiis_325_df
+                        acc_filtered_df = version_filtered_df
 
-                    # Filter 2: Profile (ISL/OSL) - single select
-                    with energy_filter_col2:
+                    # Filter 3: Profile (ISL/OSL) - single select
+                    with energy_filter_col3:
                         if "profile" in acc_filtered_df.columns:
                             available_profiles = sorted(
                                 acc_filtered_df["profile"].unique().tolist()
@@ -6961,7 +7831,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                             measured_profiles = [
                                 "Profile A: Balanced (1k/1k)",
                                 "Profile B: Variable Workload (512/2k)",
-                                "Profile E: Prefill Heavy (8k/1k)",
+                                "Profile D: Prefill Heavy (8k/1k)",
                             ]
                             # Find first measured profile available, else use first available
                             default_profile_idx = 0
@@ -6989,8 +7859,8 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     else:
                         profile_filtered_df = acc_filtered_df
 
-                    # Filter 3: Model
-                    with energy_filter_col3:
+                    # Filter 4: Model
+                    with energy_filter_col4:
                         available_models = sorted(
                             profile_filtered_df["model"].unique().tolist()
                         )
@@ -7011,7 +7881,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                         )
 
                     # Apply all filters
-                    energy_filtered_df = rhaiis_325_df.copy()
+                    energy_filtered_df = version_filtered_df.copy()
 
                     if selected_energy_accelerators:
                         energy_filtered_df = energy_filtered_df[
@@ -7044,79 +7914,55 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
             st.warning("⚠️ No data available.")
             show_energy_calculations = False
 
-        if (
-            show_energy_calculations
-            and energy_filtered_df is not None
-            and not energy_filtered_df.empty
-        ):
-            # Group by model, accelerator, TP to calculate energy
-            energy_data = []
-
-            # Get unique combinations
-            if "intended concurrency" in energy_filtered_df.columns:
-                concurrency_col = "intended concurrency"
-            elif "measured concurrency" in energy_filtered_df.columns:
-                concurrency_col = "measured concurrency"
+        def _build_energy_rows(source_df, measured_only=False):
+            """Compute energy rows from a benchmark DataFrame."""
+            rows = []
+            if "intended concurrency" in source_df.columns:
+                conc_col = "intended concurrency"
+            elif "measured concurrency" in source_df.columns:
+                conc_col = "measured concurrency"
             else:
-                concurrency_col = None
+                conc_col = None
 
-            for (model, accelerator, tp), group in energy_filtered_df.groupby(
-                ["model", "accelerator", "TP"]
+            for (model, accelerator, tp, profile, version), group in source_df.groupby(
+                ["model", "accelerator", "TP", "profile", "version"]
             ):
-                # Count unique concurrency levels
-                if concurrency_col:
-                    num_concurrencies = group[concurrency_col].nunique()
+                if conc_col:
+                    num_concurrencies = group[conc_col].nunique()
                 else:
                     num_concurrencies = len(group)
-
-                # Calculate runtime: concurrencies × 10 minutes each
-                runtime_minutes = num_concurrencies * 10
-                runtime_hours = runtime_minutes / 60
-                runtime_seconds = runtime_minutes * 60
-
-                # GPU count = TP value
+                if "EA1" in str(version) or "EA2" in str(version):
+                    seconds_per_conc = 450
+                else:
+                    seconds_per_conc = 600
+                runtime_seconds = num_concurrencies * seconds_per_conc
+                runtime_minutes = runtime_seconds / 60
+                runtime_hours = runtime_seconds / 3600
                 gpu_count = int(tp)
-
-                # Number of replicas = 1 for RHAIIS
                 replicas = 1
 
-                # Get version and profile from the group for power lookup
-                version = group["version"].iloc[0] if "version" in group.columns else ""
-                profile = group["profile"].iloc[0] if "profile" in group.columns else ""
-
-                # Get GPU power (kW) - use measured data if available, else fallback
                 gpu_power = get_gpu_power(accelerator, model, version, profile, int(tp))
-
-                # Calculate energy
                 avg_power = gpu_power * gpu_count
                 gpu_energy = avg_power * replicas * runtime_hours
 
-                # Calculate average output throughput and total tokens for energy per token
                 avg_output_throughput = 0
                 total_tokens = 0
                 energy_per_1m_tokens = None
 
                 if "output_tok/sec" in group.columns:
-                    # Get average throughput across all concurrency levels
                     avg_output_throughput = group["output_tok/sec"].mean()
                     if pd.notna(avg_output_throughput) and avg_output_throughput > 0:
-                        # Total tokens = throughput × runtime
                         total_tokens = avg_output_throughput * runtime_seconds
-                        # Energy per 1M tokens (in Wh) = (GPU Energy in kWh × 1000) / (total_tokens / 1,000,000)
-                        # Simplified: Energy per 1M tokens (Wh) = (GPU Energy × 1e9) / total_tokens
                         if total_tokens > 0:
-                            energy_per_1m_tokens = (
-                                gpu_energy * 1e9
-                            ) / total_tokens  # Wh per 1M tokens
+                            energy_per_1m_tokens = (gpu_energy * 1e9) / total_tokens
 
-                # Get short model name
-                model_short = model.split("/")[-1] if "/" in model else model
-
-                # Check if using measured data (for display purposes)
-                # Normalize version for lookup (e.g., "RHAIIS-3.2.5-sanity" -> "RHAIIS-3.2.5")
-                normalized_version = (
-                    "RHAIIS-3.2.5" if "RHAIIS-3.2.5" in str(version) else version
-                )
+                normalized_version = version
+                for known_ver in sorted(
+                    GPU_POWER_DATA.get(accelerator, {}).keys(), key=len, reverse=True
+                ):
+                    if known_ver in str(version):
+                        normalized_version = known_ver
+                        break
                 using_measured = (
                     accelerator in GPU_POWER_DATA
                     and normalized_version in GPU_POWER_DATA.get(accelerator, {})
@@ -7128,10 +7974,15 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     .get(profile, {})
                 )
 
-                energy_data.append(
+                if measured_only and not using_measured:
+                    continue
+
+                rows.append(
                     {
-                        "Model": model_short,
-                        "Accelerator": accelerator,
+                        "Model": model,
+                        "Version": version,
+                        "ISL/OSL": clean_profile_name(profile),
+                        "Accelerator": _accel_display(accelerator),
                         "TP (GPUs Used)": gpu_count,
                         "No of Nodes": replicas,
                         "Concurrencies": num_concurrencies,
@@ -7154,6 +8005,14 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                         else "📈 Estimated",
                     }
                 )
+            return rows
+
+        if (
+            show_energy_calculations
+            and energy_filtered_df is not None
+            and not energy_filtered_df.empty
+        ):
+            energy_data = _build_energy_rows(energy_filtered_df)
 
             if energy_data:
                 energy_df = pd.DataFrame(energy_data)
@@ -7259,8 +8118,18 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                 column_config = {
                     "Model": st.column_config.TextColumn(
                         "Model",
-                        width="medium",
-                        help="The LLM model being benchmarked (e.g., Llama-3.3-70B, DeepSeek-R1). Short name shown; full path includes organization prefix.",
+                        width="large",
+                        help="The LLM model being benchmarked (e.g., meta-llama/Llama-3.3-70B-Instruct, deepseek-ai/DeepSeek-R1-0528).",
+                    ),
+                    "Version": st.column_config.TextColumn(
+                        "Version",
+                        width="small",
+                        help="RHAIIS release version used for this benchmark run.",
+                    ),
+                    "ISL/OSL": st.column_config.TextColumn(
+                        "ISL/OSL",
+                        width="small",
+                        help="Input Sequence Length / Output Sequence Length profile used for the benchmark (e.g., 1k/1k, 512/2k, 8k/1k).",
                     ),
                     "Accelerator": st.column_config.TextColumn(
                         "Accelerator",
@@ -7300,7 +8169,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Power per GPU (kW)": st.column_config.NumberColumn(
                         "Power per GPU (kW)",
-                        help="Average power consumption per GPU in kilowatts during inference. Measured from Grafana metrics (DCGM for H200, ROCm-SMI for MI300X) for RHAIIS 3.2.5.",
+                        help="Average power consumption per GPU in kilowatts during inference. Measured from Grafana metrics (DCGM for H200, ROCm-SMI for MI300X).",
                         format="%.3f",
                     ),
                     "Total Power Draw (kW)": st.column_config.NumberColumn(
@@ -7319,7 +8188,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Data Source": st.column_config.TextColumn(
                         "Data Source",
-                        help="📊 Measured = Power values from actual Grafana/Prometheus metrics during RHAIIS 3.2.5 benchmarks. 📈 Estimated = Using typical inference power values (fallback when measured data unavailable).",
+                        help="📊 Measured = Power values from actual Grafana/Prometheus metrics during benchmarks. 📈 Estimated = Using typical inference power values (fallback when measured data unavailable).",
                         width="small",
                     ),
                 }
@@ -7331,9 +8200,78 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     column_config=column_config,
                 )
 
+                SHOW_ENERGY_DOWNLOAD_BUTTONS = (
+                    False  # flip to True to show download buttons
+                )
+                if SHOW_ENERGY_DOWNLOAD_BUTTONS:
+                    dl_col1, dl_col2, dl_col3 = st.columns([1, 1, 1])
+                    with dl_col1:
+                        csv_data = energy_df.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            label="📥 Download Table as CSV",
+                            data=csv_data,
+                            file_name="energy_computation.csv",
+                            mime="text/csv",
+                            key="energy_csv_download",
+                        )
+                    with dl_col2:
+                        all_profiles_base = version_filtered_df.copy()
+                        if selected_energy_accelerators:
+                            all_profiles_base = all_profiles_base[
+                                all_profiles_base["accelerator"].isin(
+                                    selected_energy_accelerators
+                                )
+                            ]
+                        if selected_energy_models:
+                            all_profiles_base = all_profiles_base[
+                                all_profiles_base["model"].isin(selected_energy_models)
+                            ]
+                        all_profiles_rows = _build_energy_rows(
+                            all_profiles_base, measured_only=True
+                        )
+                        if all_profiles_rows:
+                            all_profiles_df = pd.DataFrame(
+                                all_profiles_rows
+                            ).sort_values(
+                                ["ISL/OSL", "Total Energy Used (kWh)"],
+                                ascending=[True, False],
+                            )
+                            all_csv = all_profiles_df.to_csv(index=False).encode(
+                                "utf-8"
+                            )
+                            st.download_button(
+                                label="📥 Download All Profiles as CSV",
+                                data=all_csv,
+                                file_name="energy_computation_all_profiles.csv",
+                                mime="text/csv",
+                                key="energy_all_profiles_csv_download",
+                            )
+                    with dl_col3:
+                        all_versions_rows = _build_energy_rows(
+                            energy_base_df, measured_only=True
+                        )
+                        if all_versions_rows:
+                            all_versions_df = pd.DataFrame(
+                                all_versions_rows
+                            ).sort_values(
+                                ["Version", "ISL/OSL", "Total Energy Used (kWh)"],
+                                ascending=[False, True, False],
+                            )
+                            all_ver_csv = all_versions_df.to_csv(index=False).encode(
+                                "utf-8"
+                            )
+                            st.download_button(
+                                label="📥 Download All Versions as CSV",
+                                data=all_ver_csv,
+                                file_name="energy_computation_all_versions.csv",
+                                mime="text/csv",
+                                key="energy_all_versions_csv_download",
+                            )
+
                 st.caption(
-                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies × 10 minutes each. "
-                    "Power per GPU values are from Grafana metrics (DCGM/ROCm-SMI) for RHAIIS 3.2.5. "
+                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies × duration per level "
+                    "(7.5 min for 3.4 releases, 10 min for previous releases). "
+                    "Power per GPU values are from Grafana metrics (DCGM/ROCm-SMI). "
                     "**Energy/1M Tokens** is a normalized efficiency metric for comparing across hardware at production scale."
                 )
 
@@ -7353,7 +8291,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     )
             else:
                 st.info(
-                    "No RHAIIS 3.2.5 data available for energy calculation with current filter selections."
+                    "No data available for energy calculation with current filter selections."
                 )
 
 
@@ -7536,6 +8474,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             "MI300X": {
                 "dashboard_id": "amd-ods-az-amd-01",
                 "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
+            },
+            "B200": {
+                "dashboard_id": "psap-b200-mlperf",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-b200-mlperf",
             },
         }
 
@@ -7854,22 +8796,24 @@ def render_sidebar_header():
             view_options.append("LLM-D Dashboard")
 
         if len(view_options) > 1:
-            current_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
-            try:
-                default_index = view_options.index(current_view)
-            except ValueError:
-                default_index = 0
+            # Pre-populate the widget key so we never need the `index`
+            # param (which can conflict with the key and eat the first click).
+            if "dashboard_view_selector" not in st.session_state:
+                current_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
+                st.session_state.dashboard_view_selector = (
+                    current_view if current_view in view_options else view_options[0]
+                )
 
             selected_view = st.radio(
                 "Select View:",
                 options=view_options,
-                index=default_index,
                 key="dashboard_view_selector",
                 horizontal=False,
                 label_visibility="collapsed",
             )
             st.session_state.selected_view = selected_view
-            st.query_params["view"] = selected_view
+            if st.query_params.get("view") != selected_view:
+                st.query_params["view"] = selected_view
             st.markdown("---")
         else:
             st.session_state.selected_view = view_options[0]
@@ -7893,12 +8837,14 @@ def render_confidentiality_notice():
 initialize_streamlit_config()
 initialize_session_state()
 
-# Check URL for view parameter and set session state accordingly
-# This allows the view selection to persist across page refreshes
-if "view" in st.query_params:
+# Sync view from URL on the very first load (page refresh / shared link).
+# On subsequent reruns the radio widget key is the source of truth, so we
+# must not overwrite it here — that would undo the user's click.
+if "view" in st.query_params and "dashboard_view_selector" not in st.session_state:
     view_from_url = st.query_params["view"]
     if view_from_url in ["RHAIIS Dashboard", "MLPerf Dashboard", "LLM-D Dashboard"]:
         st.session_state.selected_view = view_from_url
+        st.session_state.dashboard_view_selector = view_from_url
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
@@ -8149,6 +9095,21 @@ def main():
                 except:
                     url_tp_sizes = []
 
+            url_custom_isl_osl = None
+            if "custom_isl_osl" in query_params:
+                url_custom_isl_osl = query_params["custom_isl_osl"].strip()
+
+            url_dp_sizes = []
+            if "dp_sizes" in query_params:
+                try:
+                    url_dp_sizes = [
+                        int(d.strip())
+                        for d in query_params["dp_sizes"].split(",")
+                        if d.strip().isdigit()
+                    ]
+                except Exception:
+                    url_dp_sizes = []
+
             url_section = None
             url_section_filters = {}
 
@@ -8192,9 +9153,19 @@ def main():
                 url_tp_sizes,
                 url_section,
                 url_section_filters,
+                url_custom_isl_osl,
+                url_dp_sizes,
             )
 
     df["profile"] = assign_profile_vectorized(df)
+
+    df["custom_isl_osl"] = np.where(
+        df["profile"] == "Custom",
+        df["prompt toks"].astype(int).astype(str)
+        + "/"
+        + df["output toks"].astype(int).astype(str),
+        "",
+    )
 
     df["error_rate"] = (
         df["errored_requests"]
@@ -8221,6 +9192,8 @@ def main():
             url_tp_sizes,
             url_section,
             url_section_filters,
+            url_custom_isl_osl,
+            url_dp_sizes,
         ) = decode_filters_from_url()
 
         if url_section:
@@ -8255,7 +9228,7 @@ def main():
         available_tp_sizes = sorted(df["TP"].dropna().unique().tolist())
         available_accels = sorted(df["accelerator"].unique().tolist())
 
-        preferred_versions = ["RHAIIS-3.3", "vLLM-0.13.0"]
+        preferred_versions = [OVERVIEW_CURRENT, OVERVIEW_UPSTREAM]
         default_versions = [v for v in preferred_versions if v in available_versions]
 
         preferred_models = [
@@ -8293,7 +9266,12 @@ def main():
         st.session_state.baseline_tp_sizes = (
             url_tp_sizes if (has_url_filters and url_tp_sizes) else available_tp_sizes
         )
+        if url_dp_sizes:
+            st.session_state.baseline_dp_sizes = url_dp_sizes
+            st.session_state.show_advanced_filters = True
         st.session_state.use_url_filters = has_url_filters
+        if url_custom_isl_osl:
+            st.session_state.selected_custom_isl_osl = url_custom_isl_osl
 
     SECTIONS_WITHOUT_GLOBAL_FILTERS = {
         "🏠 Overview",
@@ -8328,7 +9306,7 @@ def main():
         st.subheader("Filter Your Data")
 
         filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(
-            [1.5, 1.5, 1.5, 3, 1]
+            [1.5, 1.3, 1.5, 2.7, 1]
         )
 
         with filter_col1:
@@ -8419,7 +9397,11 @@ def main():
             if prev_selected is not None:
                 preserved_selections = [a for a in prev_selected if a in accelerators]
             else:
-                preserved_selections = acc_default
+                persisted = st.session_state.get("_persisted_accelerators", None)
+                if persisted is not None:
+                    preserved_selections = [a for a in persisted if a in accelerators]
+                else:
+                    preserved_selections = acc_default
 
             selected_accelerators = st.multiselect(
                 "1️⃣ Select Accelerator(s)",
@@ -8489,8 +9471,10 @@ def main():
             # render behind) can override the user's selection.
             profile_key = f"profile_filter_{st.session_state.filter_change_key}"
             if profile_key not in st.session_state:
-                # First render with this key — set the computed default
-                if profiles_default and profiles_default in profiles:
+                persisted_profile = st.session_state.get("_persisted_profile", None)
+                if persisted_profile and persisted_profile in profiles:
+                    st.session_state[profile_key] = persisted_profile
+                elif profiles_default and profiles_default in profiles:
                     st.session_state[profile_key] = profiles_default
                 elif profiles:
                     st.session_state[profile_key] = (
@@ -8521,6 +9505,38 @@ def main():
             selected_profiles = (
                 [selected_profile] if selected_profile is not None else []
             )
+
+            # Secondary filter: specific ISL/OSL pair when Custom is selected
+            selected_custom_isl_osl = None
+            if selected_profile == "Custom":
+                custom_temp = df.copy()
+                if selected_accelerators:
+                    custom_temp = custom_temp[
+                        custom_temp["accelerator"].isin(selected_accelerators)
+                    ]
+                custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+                custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
+                custom_pairs = [p for p in custom_pairs if p]
+                if custom_pairs:
+                    custom_key = (
+                        f"custom_isl_osl_filter_{st.session_state.filter_change_key}"
+                    )
+                    if custom_key not in st.session_state:
+                        url_custom = st.session_state.get("selected_custom_isl_osl")
+                        st.session_state[custom_key] = (
+                            url_custom
+                            if url_custom and url_custom in custom_pairs
+                            else custom_pairs[0]
+                        )
+                    elif st.session_state.get(custom_key) not in custom_pairs:
+                        st.session_state[custom_key] = custom_pairs[0]
+                    selected_custom_isl_osl = st.selectbox(
+                        "Select Custom ISL/OSL Pair",
+                        custom_pairs,
+                        format_func=format_custom_isl_osl,
+                        key=custom_key,
+                    )
+                    st.session_state.selected_custom_isl_osl = selected_custom_isl_osl
 
             # Update baseline_profile to remember user's current selection
             # This ensures the selected profile is retained when other filters change
@@ -8566,7 +9582,11 @@ def main():
             if prev_selected is not None:
                 preserved_selections = [v for v in prev_selected if v in versions]
             else:
-                preserved_selections = versions_default
+                persisted = st.session_state.get("_persisted_versions", None)
+                if persisted is not None:
+                    preserved_selections = [v for v in persisted if v in versions]
+                else:
+                    preserved_selections = versions_default
 
             selected_versions = st.multiselect(
                 "3️⃣ Select Version(s)",
@@ -8719,10 +9739,16 @@ def main():
 
             # Keep previously selected models that are still available in current profile
             # Use 'is not None' to allow empty list selection
-            if prev_selected is not None:
+            if select_all_checked:
+                preserved_selections = models
+            elif prev_selected is not None:
                 preserved_selections = [m for m in prev_selected if m in models]
             else:
-                preserved_selections = models_to_select
+                persisted = st.session_state.get("_persisted_models", None)
+                if persisted is not None:
+                    preserved_selections = [m for m in persisted if m in models]
+                else:
+                    preserved_selections = models_to_select
 
             selected_models = st.multiselect(
                 "4️⃣ Select Model(s)",
@@ -8788,6 +9814,10 @@ def main():
             elif prev_selected_tp is not None:
                 # Models didn't change - preserve user's manual TP selections (filtered to available)
                 tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
+            elif st.session_state.get("_persisted_tp", None) is not None:
+                tp_default = [
+                    tp for tp in st.session_state["_persisted_tp"] if tp in tp_sizes
+                ]
             elif st.session_state.get("reset_to_defaults", False):
                 baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
                 tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
@@ -8803,21 +9833,13 @@ def main():
             )
 
             if st.button(
-                "↩ Reset to Defaults",
-                help="Reset filters to system/URL defaults",
+                "⚙️ Advanced Filters",
+                help="Show/hide DP size filter",
                 use_container_width=True,
             ):
-                st.session_state.clear_all_filters = False
-                st.session_state.filters_were_cleared = False
-                st.session_state.reset_to_defaults = True
-                st.session_state.filter_change_key += 1
-                st.session_state.previous_models_for_tp_tracking = None
-                st.session_state.performance_plots_expanded = False
-                st.session_state.model_comparison_expanded = False
-                st.session_state.runtime_configs_expanded = False
-                st.session_state.energy_expanded = False
-                if "previous_filter_state" in st.session_state:
-                    del st.session_state.previous_filter_state
+                st.session_state.show_advanced_filters = not st.session_state.get(
+                    "show_advanced_filters", False
+                )
                 st.rerun()
 
             # Update the tracking variable with current selection
@@ -8830,12 +9852,49 @@ def main():
 
         # URL sync is now handled after section rendering (single atomic from_dict call)
 
+        # --- Advanced Filters (DP) ---
+        selected_dp = []
+        _has_dp = "DP" in df.columns
+
+        if st.session_state.get("show_advanced_filters", False) and _has_dp:
+            adv_col1, _ = st.columns([1.5, 6.5])
+            fck = st.session_state.get("filter_change_key", 0)
+
+            with adv_col1:
+                dp_values = sorted(df["DP"].dropna().unique().tolist())
+                dp_key = f"dp_filter_{fck}"
+                if dp_values:
+                    selected_dp = st.multiselect(
+                        "6️⃣ Select DP Size(s)",
+                        dp_values,
+                        default=st.session_state.get("baseline_dp_sizes", dp_values),
+                        key=dp_key,
+                    )
+                else:
+                    st.caption("No DP data available")
+
+        dp_mask = (
+            (df["DP"].isin(selected_dp) | df["DP"].isna())
+            if st.session_state.get("show_advanced_filters", False)
+            and _has_dp
+            and selected_dp
+            else True
+        )
+
+        custom_mask = (
+            (df["custom_isl_osl"] == selected_custom_isl_osl)
+            if selected_profile == "Custom" and selected_custom_isl_osl
+            else True
+        )
+        tp_mask = df["TP"].isin(selected_tp) | df["TP"].isna()
         filtered_df = df[
             df["accelerator"].isin(selected_accelerators)
             & df["model"].isin(selected_models)
             & df["version"].isin(selected_versions)
             & (df["profile"].isin(selected_profiles) if selected_profiles else True)
-            & df["TP"].isin(selected_tp)
+            & tp_mask
+            & custom_mask
+            & dp_mask
         ].copy()
 
         # Detect if filters have changed and close expanders
@@ -9028,8 +10087,14 @@ def main():
                 desired_params["versions"] = ",".join(selected_versions)
             if selected_profile:
                 desired_params["profile"] = selected_profile
+            if selected_profile == "Custom":
+                custom_val = st.session_state.get("selected_custom_isl_osl")
+                if custom_val:
+                    desired_params["custom_isl_osl"] = custom_val
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
+            if st.session_state.get("show_advanced_filters", False) and selected_dp:
+                desired_params["dp_sizes"] = ",".join(map(str, selected_dp))
             # Section + section-specific filters
             active = st.session_state.get("active_section")
             if active and active in SECTION_TO_SLUG:
