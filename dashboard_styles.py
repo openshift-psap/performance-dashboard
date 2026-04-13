@@ -473,6 +473,25 @@ def get_app_css():
     .vllm-scorecard:hover details summary::after { opacity: 0.8; }
     .vllm-scorecard details[open] summary::after { opacity: 1; }
 
+    .vllm-parity-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.5rem;
+        font-size: 0.82rem;
+    }
+    .vllm-parity-table th {
+        padding: 0.4rem 0.6rem;
+        border-bottom: 2px solid #d1d5db;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .vllm-parity-table td {
+        padding: 0.35rem 0.6rem;
+        border-bottom: 1px solid #e5e7eb;
+        white-space: nowrap;
+    }
+    .vllm-parity-table tbody tr:hover { background: rgba(0,0,0,0.03); }
+
     /* Regression heatmap */
     .heatmap-table {
         width: 100%;
@@ -709,6 +728,48 @@ def get_app_css():
     footer {
         display: none !important;
         height: 0 !important;
+    }
+
+    /* ── Seamless section / filter / view transitions ── */
+
+    /* Prevent content area from collapsing to zero during Streamlit reruns */
+    .block-container {
+        min-height: 100vh;
+    }
+
+    /* Fade-in animation for freshly rendered content */
+    @keyframes contentFadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+    }
+
+    [data-testid="stMain"] > .block-container {
+        animation: contentFadeIn 0.2s ease-out;
+    }
+
+    /* Dim stale elements quickly during reruns so the progressive
+       rebuild is barely visible; a short transition avoids a harsh
+       snap-to-invisible that reads as a "flash". */
+    [data-stale="true"] {
+        opacity: 0 !important;
+        transition: opacity 0.06s ease-out !important;
+    }
+
+    /* Batch-reveal filter rows: widgets render one-by-one during a rerun.
+       Hide the row during that build-up, then fade the whole row in at
+       once so individual widgets don't "flash" into view sequentially. */
+    [data-testid="stHorizontalBlock"]:has(
+        [data-testid="stSelectbox"],
+        [data-testid="stMultiSelect"]
+    ) {
+        animation: contentFadeIn 0.18s ease-out 0.08s both;
+    }
+
+    /* Prevent individual widget containers from causing cascading reflow
+       while their siblings are still being mounted by Streamlit. */
+    [data-testid="stSelectbox"],
+    [data-testid="stMultiSelect"] {
+        contain: layout style;
     }
 
     /* Scrollable sidebar content */
