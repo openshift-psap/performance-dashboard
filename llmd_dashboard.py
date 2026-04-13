@@ -173,6 +173,14 @@ def assign_profile(row):
     return f"{prompt_toks}/{output_toks}"
 
 
+_CUSTOM_ISL_OSL_LABELS = {
+    "0/0": "Real Dataset (0/0)",
+    "1000/1000": "1000/1000 - Balanced",
+    "8000/800": "8000/800 - Heterogeneous",
+    "128/128": "128/128 - Multi-turn",
+}
+
+
 def clean_profile_name(profile_name):
     """Extract only the token counts in parentheses from profile names."""
     if profile_name and "(" in profile_name and ")" in profile_name:
@@ -181,14 +189,6 @@ def clean_profile_name(profile_name):
         if start_idx != -1 and end_idx != -1:
             return profile_name[start_idx : end_idx + 1]
     return _CUSTOM_ISL_OSL_LABELS.get(profile_name, profile_name)
-
-
-_CUSTOM_ISL_OSL_LABELS = {
-    "0/0": "Real Dataset (0/0)",
-    "1000/1000": "1000/1000 - Balanced",
-    "8000/800": "8000/800 - Heterogeneous",
-    "128/128": "128/128 - Multi-turn",
-}
 
 
 def format_custom_isl_osl(pair):
