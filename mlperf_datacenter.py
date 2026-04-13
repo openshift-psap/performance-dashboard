@@ -965,6 +965,7 @@ def create_benchmark_comparison_chart(
     # For CPU runs, fill in '# of Accelerators' with a display value
     cpu_mask = plot_df["Accelerator"].astype(str).str.startswith("cpu-", na=False)
     if cpu_mask.any():
+        plot_df["# of Accelerators"] = plot_df["# of Accelerators"].astype(object)
         plot_df.loc[cpu_mask, "# of Accelerators"] = "N/A (CPU)"
 
     if plot_df.empty:

@@ -25,6 +25,7 @@ def process_benchmark_section(
     guidellm_version,
     guidellm_start_time_ms,
     guidellm_end_time_ms,
+    dp_size=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -33,18 +34,20 @@ def process_benchmark_section(
         accelerator: Accelerator type (e.g., H200, MI300X).
         model_name: Name of the AI model.
         version: Version of the inference server.
-        tp_size: Tensor parallelism size.
+        tp_size: Tensor parallelism size (None for DP runs).
         runtime_args: Runtime configuration arguments.
         global_data_config: Global data configuration from top-level args.
         image_tag: Container image tag used for the run.
         guidellm_version: Version of guidellm used to run the benchmark.
         guidellm_start_time_ms: Aggregated start time in milliseconds.
         guidellm_end_time_ms: Aggregated end time in milliseconds.
+        dp_size: Data parallelism size (None for TP runs).
 
     Returns:
         dict: Processed benchmark metrics.
     """
-    full_model_name = f"{accelerator}-{model_name}-{tp_size}"
+    parallelism_tag = tp_size if tp_size is not None else dp_size
+    full_model_name = f"{accelerator}-{model_name}-{parallelism_tag}"
 
     config = benchmark.get("config", {})
     uuid = config.get("run_id")
@@ -163,6 +166,7 @@ def process_benchmark_section(
         "guidellm_end_time_ms": guidellm_end_time_ms,
         "image_tag": image_tag,
         "guidellm_version": guidellm_version,
+        "DP": dp_size,
     }
 
     return row
@@ -177,6 +181,7 @@ def parse_guidellm_json(
     runtime_args,
     image_tag,
     guidellm_version,
+    dp_size=None,
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -185,10 +190,11 @@ def parse_guidellm_json(
         accelerator: Accelerator type.
         model_name: Name of the AI model.
         version: Version of the inference server.
-        tp_size: Tensor parallelism size.
+        tp_size: Tensor parallelism size (None for DP runs).
         runtime_args: Runtime configuration arguments.
         image_tag: Container image tag used for the run.
         guidellm_version: Version of guidellm used to run the benchmark.
+        dp_size: Data parallelism size (None for TP runs).
 
     Returns:
         DataFrame: Processed benchmark results.
@@ -249,6 +255,7 @@ def parse_guidellm_json(
             guidellm_version,
             guidellm_start_time_ms,
             guidellm_end_time_ms,
+            dp_size=dp_size,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -289,7 +296,18 @@ def main():
         required=True,
         help="Version/framework identifier (e.g., 'vLLM-0.13.0')",
     )
-    parser.add_argument("--tp", type=int, required=True, help="Tensor parallelism size")
+    parser.add_argument(
+        "--tp",
+        type=int,
+        default=None,
+        help="Tensor parallelism size (required if --dp is not set)",
+    )
+    parser.add_argument(
+        "--dp",
+        type=int,
+        default=None,
+        help="Data parallelism size (required if --tp is not set)",
+    )
     parser.add_argument(
         "--accelerator", required=True, help="Accelerator type (e.g., 'H200', 'MI300X')"
     )
@@ -315,7 +333,15 @@ def main():
     )
     args = parser.parse_args()
 
-    print(f"Processing {args.json_file}...")
+    if args.tp is None and args.dp is None:
+        parser.error("At least one of --tp or --dp must be provided.")
+    if args.tp is not None and args.dp is not None:
+        parser.error(
+            "Only one of --tp or --dp should be provided (runs use either TP or DP, not both)."
+        )
+
+    parallelism_desc = f"TP={args.tp}" if args.tp is not None else f"DP={args.dp}"
+    print(f"Processing {args.json_file} ({parallelism_desc})...")
 
     new_data_df = parse_guidellm_json(
         args.json_file,
@@ -326,6 +352,7 @@ def main():
         args.runtime_args,
         args.image_tag,
         args.guidellm_version,
+        dp_size=args.dp,
     )
 
     if new_data_df is not None and not new_data_df.empty:
@@ -384,6 +411,7 @@ def main():
             "guidellm_end_time_ms",
             "image_tag",
             "guidellm_version",
+            "DP",
         ]
 
         for col in fieldnames:
