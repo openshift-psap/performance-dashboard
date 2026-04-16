@@ -51,7 +51,10 @@ def process_benchmark_section(
 
     # Get strategy info (streams/concurrency)
     strategy = config.get("strategy", {})
-    intended_concurrency = strategy.get("streams") or strategy.get("max_concurrency", 0)
+    streams = strategy.get("streams")
+    intended_concurrency = (
+        streams if streams is not None else strategy.get("max_concurrency", 0)
+    )
 
     # Parse data config for prompt/output tokens
     # Format can be either JSON or key=value pairs like "prompt_tokens=1000,output_tokens=1000"
@@ -205,7 +208,9 @@ def parse_guidellm_json(
 
     # Check guidellm version
     metadata = data.get("metadata", {})
-    guidellm_version = metadata.get("guidellm_version", "unknown")
+    detected_version = metadata.get("guidellm_version")
+    if detected_version:
+        guidellm_version = detected_version
     print(f"Detected guidellm version: {guidellm_version}")
 
     all_run_data = []
@@ -231,8 +236,8 @@ def parse_guidellm_json(
             end_times.append(scheduler_metrics["end_time"])
 
     # Get min start_time and max end_time, convert to milliseconds
-    guidellm_start_time_ms = int(min(start_times) * 1000) if start_times else ""
-    guidellm_end_time_ms = int(max(end_times) * 1000) if end_times else ""
+    guidellm_start_time_ms = int(min(start_times) * 1000) if start_times else None
+    guidellm_end_time_ms = int(max(end_times) * 1000) if end_times else None
 
     print(f"Processing {len(benchmarks)} benchmark sections...")
 
