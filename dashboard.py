@@ -106,6 +106,31 @@ OVERVIEW_RELEASE_PAIRS = [
         "upstream": "vLLM-0.13.0",
         "additional": [],
     },
+    # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
+    {
+        "current": "vLLM-0.18.0",
+        "previous": "vLLM-0.17.1",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.17.1",
+        "previous": "vLLM-0.16.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.16.0",
+        "previous": "vLLM-0.14.1",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.14.1",
+        "previous": "vLLM-0.13.0",
+        "upstream": None,
+        "additional": [],
+    },
 ]
 
 # ±3 % dead-zone: changes within this range are "neutral" (neither win nor loss)
