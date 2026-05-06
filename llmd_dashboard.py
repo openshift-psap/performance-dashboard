@@ -3290,15 +3290,31 @@ def render_llmd_dashboard(llmd_csv_path: str):
             var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
                    || sb.querySelector('button[kind="headerNoPadding"]')
                    || sb.querySelector('button[kind="header"]');
-            if (hdr) hdr.classList.add('hamburger-btn');
+            if (hdr) {{
+                hdr.classList.add('hamburger-btn');
+                hdr.setAttribute('data-tooltip', 'Collapse sidebar');
+            }}
         }}
         var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
         if (!sidebarOpen) {{
             var header = doc.querySelector('[data-testid="stHeader"]');
             if (header) {{
                 var firstBtn = header.querySelector('button');
-                if (firstBtn) firstBtn.classList.add('hamburger-btn');
+                if (firstBtn) {{
+                    firstBtn.classList.add('hamburger-btn');
+                    firstBtn.setAttribute('data-tooltip', 'Expand sidebar');
+                    if (!firstBtn.classList.contains('hamburger-pulse')) {{
+                        firstBtn.classList.add('hamburger-pulse');
+                    }}
+                }}
             }}
+        }}
+        // Remove pulse when sidebar is open
+        if (sidebarOpen && sb) {{
+            var hdrBtn = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                      || sb.querySelector('button[kind="headerNoPadding"]')
+                      || sb.querySelector('button[kind="header"]');
+            if (hdrBtn) hdrBtn.classList.remove('hamburger-pulse');
         }}
     }}
 
