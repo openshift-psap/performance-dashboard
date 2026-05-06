@@ -1106,6 +1106,7 @@ def create_benchmark_comparison_chart(
     # For CPU runs, fill in '# of Accelerators' with a display value
     cpu_mask = plot_df["Accelerator"].astype(str).str.startswith("cpu-", na=False)
     if cpu_mask.any():
+        plot_df["# of Accelerators"] = plot_df["# of Accelerators"].astype(object)
         plot_df.loc[cpu_mask, "# of Accelerators"] = "N/A (CPU)"
 
     if plot_df.empty:
@@ -1929,9 +1930,7 @@ def create_version_comparison(
             return None
 
         comparison_df["System_Display"] = comparison_df.apply(
-            lambda r: (
-                f"{r['Organization']} - {r['Accelerator']} x{r['Total Accelerators']}"
-            ),
+            lambda r: f"{r['Organization']} - {r['Accelerator']} x{r['Total Accelerators']}",
             axis=1,
         )
 
