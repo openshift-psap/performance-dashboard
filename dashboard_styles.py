@@ -695,6 +695,7 @@ def get_app_css():
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
+        position: relative !important;
     }
     button.hamburger-btn > * {
         display: none !important;
@@ -704,6 +705,44 @@ def get_app_css():
         font-size: 2rem !important;
         color: #374151 !important;
         line-height: 1 !important;
+    }
+    button.hamburger-btn[data-tooltip]::before {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 100%;
+        top: 50%;
+        transform: translateY(-50%);
+        margin-left: 6px;
+        background: #1f2937;
+        color: #fff;
+        font-size: 0.75rem;
+        font-weight: 500;
+        padding: 4px 10px;
+        border-radius: 5px;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.1s;
+    }
+    button.hamburger-btn[data-tooltip]:hover::before {
+        opacity: 1;
+    }
+    /* Collapse tooltip appears to the left (button is inside the sidebar) */
+    [data-testid="stSidebar"] button.hamburger-btn[data-tooltip]::before {
+        left: auto;
+        right: 100%;
+        margin-left: 0;
+        margin-right: 6px;
+    }
+
+    /* Gentle nudge animation when sidebar is collapsed */
+    @keyframes hamburger-nudge {
+        0%, 100% { transform: translateX(0); }
+        25%      { transform: translateX(4px); }
+        75%      { transform: translateX(-2px); }
+    }
+    button.hamburger-pulse::after {
+        animation: hamburger-nudge 0.6s ease-in-out infinite;
     }
 
     /* ── Sidebar navigation styling ── */
@@ -1855,80 +1894,48 @@ def apply_theme_css():
 
 
 def get_mlperf_dashboard_css():
-    """Get MLPerf dashboard specific CSS for tabs, tooltips, and filters.
+    """Get MLPerf dashboard specific CSS for tabs and multiselect tags.
 
     Returns:
         CSS string for MLPerf dashboard styling
     """
-    tooltip_css = """
-        /* Force light mode for all tooltips and popovers */
-        [role="tooltip"],
-        [data-testid="stTooltipContent"],
-        .stTooltipIcon,
-        [data-baseweb="tooltip"],
-        div[class*="tooltip"],
-        div[class*="Tooltip"] {
-            background-color: white !important;
-            color: #1a1f36 !important;
-            border: 1px solid #d1d5db !important;
-        }
-
-        /* Nested divs in tooltips */
-        [role="tooltip"] *,
-        [data-testid="stTooltipContent"] *,
-        [data-baseweb="tooltip"] * {
-            color: #1a1f36 !important;
-        }
-        """
-
-    return f"""
+    return """
     <style>
     /* Make MLPerf tabs bigger */
-    .stTabs [data-baseweb="tab-list"] button {{
+    .stTabs [data-baseweb="tab-list"] button {
         font-size: 2rem;
         padding: 1.5rem 3rem;
         font-weight: 700;
         height: auto;
         min-height: 70px;
-    }}
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {{
+    }
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
         font-size: 2.1rem;
-    }}
+    }
 
-    {tooltip_css}
-
-    /* Fix dropdown/multiselect visibility in light mode */
-    [data-baseweb="popover"] {{
-        background-color: white !important;
-        color: #1a1f36 !important;
-    }}
-
-    [data-baseweb="select"] [data-baseweb="menu"] {{
-        background-color: white !important;
-        color: #1a1f36 !important;
-    }}
-
-    [data-baseweb="menu"] li {{
-        background-color: white !important;
-        color: #1a1f36 !important;
-    }}
-
-    [data-baseweb="menu"] li:hover {{
-        background-color: #f0f2f6 !important;
-        color: #1a1f36 !important;
-    }}
+    /* Remove inherited borders from UI-chrome buttons (help icons, dropdown arrows, options) */
+    [data-testid="stTooltipIcon"],
+    .stTooltipIcon,
+    [data-testid="stSelectbox"] button,
+    [data-testid="stMultiSelect"] button,
+    [data-baseweb="select"] button,
+    [data-baseweb="popover"] button {
+        border: none !important;
+        box-shadow: none !important;
+        background-color: transparent !important;
+    }
 
     /* Fix multiselect tags visibility */
-    [data-baseweb="tag"] {{
+    [data-baseweb="tag"] {
         background-color: #cc0000 !important;
         color: #ffffff !important;
-    }}
+    }
 
     [data-baseweb="tag"] span,
-    [data-baseweb="tag"] svg {{
+    [data-baseweb="tag"] svg {
         color: #ffffff !important;
         fill: #ffffff !important;
-    }}
+    }
     </style>
     """
 
@@ -1939,12 +1946,7 @@ def get_mlperf_table_tooltip_css():
     <style>
     [role="tooltip"],
     [data-testid="stTooltipContent"],
-    [data-baseweb="tooltip"],
-    .stTooltip,
-    div[class*="tooltip"],
-    div[class*="Tooltip"],
-    div[data-baseweb="tooltip"],
-    body [role="tooltip"] {
+    [data-baseweb="tooltip"] {
         background: white !important;
         background-color: white !important;
         color: #1a1f36 !important;
@@ -1953,9 +1955,7 @@ def get_mlperf_table_tooltip_css():
 
     [role="tooltip"] *,
     [data-testid="stTooltipContent"] *,
-    [data-baseweb="tooltip"] *,
-    div[class*="tooltip"] *,
-    div[class*="Tooltip"] * {
+    [data-baseweb="tooltip"] * {
         background: transparent !important;
         color: #1a1f36 !important;
     }
