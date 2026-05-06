@@ -77,11 +77,13 @@ S3_KEY_LLMD = os.environ.get("S3_KEY_LLMD", "llmd-dashboard.csv")
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+S3_LOGS_BUCKET = os.environ.get("S3_LOGS_BUCKET", "psap-model-furnace")
+S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 
 # ── Overview version configuration (single source of truth) ──────
-OVERVIEW_CURRENT = "RHAIIS-3.4-EA1"
-OVERVIEW_PREVIOUS = "RHAIIS-3.3"
-OVERVIEW_UPSTREAM = "vLLM-0.14.1"
+OVERVIEW_CURRENT = "RHAIIS-3.4-EA2"
+OVERVIEW_PREVIOUS = "RHAIIS-3.4-EA1"
+OVERVIEW_UPSTREAM = "vLLM-0.16.0"
 OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
 
 # Ordered list of back-to-back release pairs for the Overview dropdown.
@@ -191,6 +193,49 @@ def read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.Dat
         raise Exception(
             f"Failed to read from S3 bucket '{bucket}', key '{key}': {str(e)}"
         )
+
+
+@st.cache_data(ttl=300)
+def fetch_log_from_s3(uuid_str: str) -> tuple:
+    """Fetch a log file from S3 for the given UUID.
+
+    Returns:
+        (True, log_content) on success, (False, error_message) on failure.
+    """
+    key = f"{S3_LOGS_PREFIX}{uuid_str}.log"
+    try:
+        import boto3
+        from botocore import UNSIGNED
+        from botocore.config import Config
+
+        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+            s3_client = boto3.client(
+                "s3",
+                region_name=S3_REGION,
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            )
+        else:
+            try:
+                s3_client = boto3.client("s3", region_name=S3_REGION)
+                s3_client.head_object(Bucket=S3_LOGS_BUCKET, Key=key)
+            except Exception:
+                s3_client = boto3.client(
+                    "s3",
+                    region_name=S3_REGION,
+                    config=Config(signature_version=UNSIGNED),
+                )
+
+        response = s3_client.get_object(Bucket=S3_LOGS_BUCKET, Key=key)
+        return (True, response["Body"].read().decode("utf-8"))
+
+    except ImportError:
+        return (False, "boto3 is required for S3 access.")
+    except Exception as e:
+        err = str(e)
+        if "NoSuchKey" in err or "404" in err or "Not Found" in err:
+            return (False, f"Log not available for UUID: {uuid_str}")
+        return (False, f"Failed to fetch log: {err}")
 
 
 def get_csv_source() -> str:
@@ -918,8 +963,8 @@ def _compute_overview_data(
         1 for r in vllm_itl_data if not r["itl_better"] and not r["itl_similar"]
     )
 
-    # --- New in this release (current + additional versions vs previous) ---
-    release_versions = [CURRENT] + additional
+    # --- New in this release (current + additional + upstream vs previous) ---
+    release_versions = [CURRENT] + additional + ([VLLM] if VLLM else [])
     df_release = df[df["version"].isin(release_versions)]
     new_model_names = sorted(
         set(df_release["model"].unique()) - set(df_prev["model"].unique())
@@ -8423,6 +8468,165 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
             )
 
 
+def render_view_logs_section(filtered_df, use_expander=True):
+    """📋 View Logs Section - Fetch and display logs from S3 for selected runs."""
+    if use_expander:
+        if "view_logs_expanded" not in st.session_state:
+            st.session_state.view_logs_expanded = False
+        ctx = st.expander(
+            "📋 View Logs",
+            expanded=st.session_state.view_logs_expanded,
+        )
+    else:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        if not use_expander:
+            st.subheader("📋 View Logs")
+
+        if "uuid" not in filtered_df.columns:
+            st.info("No UUID column available in the data.")
+            return
+
+        logs_df = filtered_df.dropna(subset=["uuid"]).drop_duplicates(subset=["uuid"])
+        if logs_df.empty:
+            st.info("No UUIDs available for the current filter selection.")
+            return
+
+        labels = (
+            logs_df["model"].fillna("?")
+            + " | "
+            + logs_df["accelerator"].fillna("?")
+            + " | "
+            + logs_df["version"].fillna("?")
+            + " | "
+            + logs_df["uuid"].astype(str)
+        )
+        options = list(zip(logs_df["uuid"], labels))
+
+        selected = st.selectbox(
+            "Select a run to view its log:",
+            options,
+            format_func=lambda x: x[1],
+            key="view_logs_selector",
+            on_change=keep_expander_open,
+            args=("view_logs_expanded",),
+        )
+
+        if selected:
+            uuid_str = selected[0]
+
+            st.markdown(
+                """
+                <style>
+                    div[data-testid="stMainBlockContainer"] .view-logs-btn button {
+                        padding: 0.65rem 1.5rem;
+                        font-size: 1.05rem;
+                        font-weight: 600;
+                        border-radius: 8px;
+                        letter-spacing: 0.02em;
+                        transition: all 0.2s ease;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.10);
+                        background-color: #cc0000 !important;
+                        color: white !important;
+                        border: none !important;
+                    }
+                    div[data-testid="stMainBlockContainer"] .view-logs-btn button:hover {
+                        transform: translateY(-1px);
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+                        background-color: #a30000 !important;
+                    }
+                    div[data-testid="stMainBlockContainer"] .view-logs-btn button:active {
+                        background-color: #8c0000 !important;
+                        transform: translateY(0);
+                    }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            col_fetch, col_spacer = st.columns([1, 2])
+            with col_fetch:
+                st.markdown('<div class="view-logs-btn">', unsafe_allow_html=True)
+                if st.button(
+                    "🔍  Fetch Log",
+                    key="fetch_log_btn",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    st.session_state._fetched_log_uuid = uuid_str
+                    st.session_state._fetched_log_result = fetch_log_from_s3(uuid_str)
+                    st.session_state._show_full_log = False
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            cached = st.session_state.get("_fetched_log_result")
+            if cached and st.session_state.get("_fetched_log_uuid") == uuid_str:
+                success, content = cached
+                if success:
+                    startup_marker = "Application startup complete."
+                    marker_pos = content.find(startup_marker)
+                    has_startup = marker_pos != -1
+
+                    if has_startup and not st.session_state.get("_show_full_log"):
+                        truncated = content[: marker_pos + len(startup_marker)]
+                        st.success(f"Log loaded for UUID: `{uuid_str}` (startup only)")
+                        st.text_area(
+                            "Log output (startup)",
+                            value=truncated,
+                            height=300,
+                            disabled=True,
+                            key="view_logs_content",
+                        )
+                        col_full, col_dl = st.columns(2)
+                        with col_full:
+                            st.markdown(
+                                '<div class="view-logs-btn">', unsafe_allow_html=True
+                            )
+                            if st.button(
+                                "📄  Show Full Log",
+                                key="show_full_log_btn",
+                                use_container_width=True,
+                            ):
+                                st.session_state._show_full_log = True
+                                st.rerun()
+                            st.markdown("</div>", unsafe_allow_html=True)
+                        with col_dl:
+                            st.markdown(
+                                '<div class="view-logs-btn">', unsafe_allow_html=True
+                            )
+                            st.download_button(
+                                "⬇️  Download Full Log",
+                                data=content,
+                                file_name=f"{uuid_str}.log",
+                                mime="text/plain",
+                                key="download_log_btn",
+                                use_container_width=True,
+                            )
+                            st.markdown("</div>", unsafe_allow_html=True)
+                    else:
+                        st.success(f"Log loaded for UUID: `{uuid_str}`")
+                        st.text_area(
+                            "Log output",
+                            value=content,
+                            height=500,
+                            disabled=True,
+                            key="view_logs_content_full",
+                        )
+                        st.markdown(
+                            '<div class="view-logs-btn">', unsafe_allow_html=True
+                        )
+                        st.download_button(
+                            "⬇️  Download Full Log",
+                            data=content,
+                            file_name=f"{uuid_str}.log",
+                            mime="text/plain",
+                            key="download_log_full_btn",
+                            use_container_width=True,
+                        )
+                        st.markdown("</div>", unsafe_allow_html=True)
+                else:
+                    st.warning(content)
+
+
 def render_filtered_data_section(filtered_df, use_expander=True):
     """📄 Filtered Data Display Section - View only, no download functionality."""
     if use_expander:
@@ -8433,7 +8637,8 @@ def render_filtered_data_section(filtered_df, use_expander=True):
         if not use_expander:
             st.subheader("📄 Filtered Data")
         st.info(
-            "💡 **Tips**: Hover over column headers to see detailed descriptions of each field."
+            "💡 **Tips**: Hover over column headers to see detailed descriptions of each field. "
+            "Select a row to view its server log."
         )
         display_filtered_df = filtered_df.copy()
         display_filtered_df.reset_index(drop=True, inplace=True)
@@ -8534,15 +8739,21 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             create_grafana_link, axis=1
         )
 
-        # Reorder columns to place grafana_metrics_link after TP and Run Date at the end
+        display_filtered_df["view_logs_link"] = False
+
+        # Reorder columns to place grafana_metrics_link after TP, view_logs_link after that, and Run Date at the end
         cols = display_filtered_df.columns.tolist()
         if "grafana_metrics_link" in cols and "TP" in cols:
             cols.remove("grafana_metrics_link")
             tp_idx = cols.index("TP")
             cols.insert(tp_idx + 1, "grafana_metrics_link")
+        if "view_logs_link" in cols and "grafana_metrics_link" in cols:
+            cols.remove("view_logs_link")
+            gml_idx = cols.index("grafana_metrics_link")
+            cols.insert(gml_idx + 1, "view_logs_link")
         if "Run Date" in cols:
             cols.remove("Run Date")
-            cols.append("Run Date")  # Move to end
+            cols.append("Run Date")
             display_filtered_df = display_filtered_df[cols]
 
         # Define column configurations with help text
@@ -8760,18 +8971,51 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 help="Link to Grafana dashboard showing detailed metrics for this benchmark run (available only for runs with timestamp data)",
                 display_text="View Metrics 📊",
             ),
+            "view_logs_link": st.column_config.CheckboxColumn(
+                "View Logs 📋",
+                help="Check to view the server log for this run",
+            ),
             "Run Date": st.column_config.TextColumn(
                 "Run Date",
                 help="Date when the benchmark run was executed (from guidellm_start_time)",
             ),
         }
 
-        st.dataframe(
+        @st.dialog("Server Log", width="large")
+        def _show_log_dialog(uuid_str, run_label):
+            st.markdown(f"**Run:** {run_label}")
+            st.markdown(f"**UUID:** `{uuid_str}`")
+            with st.spinner("Fetching log..."):
+                success, content = fetch_log_from_s3(uuid_str)
+            if success:
+                st.text_area("Log", value=content, height=500, disabled=True)
+            else:
+                st.warning(content)
+
+        editable_cols = ["view_logs_link"]
+        disabled_cols = [
+            c for c in display_filtered_df.columns if c not in editable_cols
+        ]
+
+        edited_df = st.data_editor(
             display_filtered_df,
             use_container_width=True,
             hide_index=True,
             column_config=column_config,
+            disabled=disabled_cols,
+            key="filtered_data_table",
         )
+
+        checked = edited_df[edited_df["view_logs_link"]]
+        if not checked.empty:
+            row = checked.iloc[0]
+            uuid_val = row.get("uuid")
+            if pd.notna(uuid_val) and uuid_val != "":
+                st.session_state._dialog_show_full = False
+                run_label = f"{row.get('model', '?')} | {row.get('accelerator', '?')} | {row.get('version', '?')}"
+                _show_log_dialog(str(uuid_val), run_label)
+            else:
+                st.info("No log available for the selected row (missing UUID).")
 
 
 def render_sidebar_header():
@@ -8890,11 +9134,89 @@ st.session_state.previous_view = selected_view
 if MLPERF_AVAILABLE and selected_view == "MLPerf Dashboard":
     # Version mapping
     mlperf_versions = {
+        "v6.0": "mlperf-data/mlperf-6.0.csv",
         "v5.1": "mlperf-data/mlperf-5.1.csv",
         "v5.0": "mlperf-data/mlperf-5.0.csv",
     }
 
     render_mlperf_dashboard(mlperf_versions)
+
+    # Auto-collapse sidebar + hamburger icon for MLPerf view
+    _stc.html(
+        """
+<script>
+(function() {
+    var doc = parent.document;
+
+    // --- Click-to-close sidebar ---
+    if (doc._sidebarClickClose) {
+        doc.removeEventListener('click', doc._sidebarClickClose);
+    }
+    if (doc._clickCloseTimeout) {
+        clearTimeout(doc._clickCloseTimeout);
+    }
+    doc._sidebarClickClose = function(e) {
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (!sb || sb.getAttribute('aria-expanded') !== 'true') return;
+        var main = doc.querySelector('[data-testid="stMain"]');
+        if (!main || !main.contains(e.target)) return;
+        setTimeout(function() {
+            var sb2 = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb2 || sb2.getAttribute('aria-expanded') !== 'true') return;
+            var closeBtn = sb2.querySelector('[data-testid="stSidebarHeader"] button')
+                        || sb2.querySelector('button[kind="headerNoPadding"]')
+                        || sb2.querySelector('button[kind="header"]');
+            if (closeBtn) closeBtn.click();
+        }, 0);
+    };
+    var clickDelay = doc._clickCloseInitialized ? 0 : 1500;
+    doc._clickCloseInitialized = true;
+    doc._clickCloseTimeout = setTimeout(function() {
+        doc.addEventListener('click', doc._sidebarClickClose);
+    }, clickDelay);
+
+    // --- Hamburger icon replacement ---
+    if (doc._hamburgerInterval) clearInterval(doc._hamburgerInterval);
+    function scan() {
+        var sb = doc.querySelector('[data-testid="stSidebar"]');
+        if (sb) {
+            var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                   || sb.querySelector('button[kind="headerNoPadding"]')
+                   || sb.querySelector('button[kind="header"]');
+            if (hdr) {
+                hdr.classList.add('hamburger-btn');
+                hdr.setAttribute('data-tooltip', 'Collapse sidebar');
+            }
+        }
+        var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
+        if (!sidebarOpen) {
+            var header = doc.querySelector('[data-testid="stHeader"]');
+            if (header) {
+                var firstBtn = header.querySelector('button');
+                if (firstBtn) {
+                    firstBtn.classList.add('hamburger-btn');
+                    firstBtn.setAttribute('data-tooltip', 'Expand sidebar');
+                    if (!firstBtn.classList.contains('hamburger-pulse')) {
+                        firstBtn.classList.add('hamburger-pulse');
+                    }
+                }
+            }
+        }
+        // Remove pulse when sidebar is open
+        if (sidebarOpen && sb) {
+            var hdrBtn = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                      || sb.querySelector('button[kind="headerNoPadding"]')
+                      || sb.querySelector('button[kind="header"]');
+            if (hdrBtn) hdrBtn.classList.remove('hamburger-pulse');
+        }
+    }
+    scan();
+    doc._hamburgerInterval = setInterval(scan, 500);
+})();
+</script>
+""",
+        height=0,
+    )
     st.stop()  # Stop execution here, don't load RHAIIS data
 
 # If LLM-D view is selected, render LLM-D dashboard and exit
@@ -8931,6 +9253,7 @@ def main():
             "💰 Cost Analysis": "cost_analysis",
             "🌱 Energy Computation": "energy_carbon",
             "⚙️ Runtime Server Configs": "runtime_configs",
+            "📋 View Logs": "view_logs",
             "📄 Filtered Data": "filtered_data",
             "💡 IntelliConfig": "intelliconfig",
             "🔍 Competitive Analysis": "competitive_analysis",
@@ -8938,6 +9261,9 @@ def main():
         SLUG_TO_SECTION = {v: k for k, v in SECTION_TO_SLUG.items()}
 
         SECTION_FILTER_KEYS = {
+            "overview": {
+                "ov_pair": "overview_release_pair",
+            },
             "performance_plots": {
                 "pp_x": "perf_plots_x_axis",
                 "pp_y": "perf_plots_y_axis",
@@ -9962,6 +10288,7 @@ def main():
         if selected_profile != "Custom":
             section_list.append("🌱 Energy Computation")
         section_list.append("⚙️ Runtime Server Configs")
+        section_list.append("📋 View Logs")
         section_list.append("📄 Filtered Data")
 
         SECTION_GROUPS = [
@@ -9996,6 +10323,7 @@ def main():
                     "🔄 Pareto Tradeoff Analysis",
                     "🔄 Pareto Tradeoff Graphs",
                     "⚙️ Runtime Server Configs",
+                    "📋 View Logs",
                     "📄 Filtered Data",
                 ],
             ),
@@ -10067,6 +10395,8 @@ def main():
                 render_intelliconfig_section(df)
             elif sel == "⚙️ Runtime Server Configs":
                 render_runtime_configs_section(filtered_df, use_expander=False)
+            elif sel == "📋 View Logs":
+                render_view_logs_section(filtered_df, use_expander=False)
             elif sel == "📄 Filtered Data":
                 render_filtered_data_section(filtered_df, use_expander=False)
 
@@ -10358,7 +10688,10 @@ _stc.html(
             var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
                    || sb.querySelector('button[kind="headerNoPadding"]')
                    || sb.querySelector('button[kind="header"]');
-            if (hdr) hdr.classList.add('hamburger-btn');
+            if (hdr) {{
+                hdr.classList.add('hamburger-btn');
+                hdr.setAttribute('data-tooltip', 'Collapse sidebar');
+            }}
         }}
         // Sidebar expand button (only when sidebar is collapsed)
         var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
@@ -10366,8 +10699,21 @@ _stc.html(
             var header = doc.querySelector('[data-testid="stHeader"]');
             if (header) {{
                 var firstBtn = header.querySelector('button');
-                if (firstBtn) firstBtn.classList.add('hamburger-btn');
+                if (firstBtn) {{
+                    firstBtn.classList.add('hamburger-btn');
+                    firstBtn.setAttribute('data-tooltip', 'Expand sidebar');
+                    if (!firstBtn.classList.contains('hamburger-pulse')) {{
+                        firstBtn.classList.add('hamburger-pulse');
+                    }}
+                }}
             }}
+        }}
+        // Remove pulse when sidebar is open
+        if (sidebarOpen && sb) {{
+            var hdrBtn = sb.querySelector('[data-testid="stSidebarHeader"] button')
+                      || sb.querySelector('button[kind="headerNoPadding"]')
+                      || sb.querySelector('button[kind="header"]');
+            if (hdrBtn) hdrBtn.classList.remove('hamburger-pulse');
         }}
     }}
 

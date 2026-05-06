@@ -54,6 +54,11 @@ spec:
               value: "the location of the llmd-dashboard.csv file"
             - name: S3_REGION
               value: "the region of your bucket"
+            # S3 Configuration for logs
+            - name: S3_LOGS_BUCKET
+              value: "psap-model-furnace"
+            - name: S3_LOGS_PREFIX
+              value: "logs/"
             # AWS credentials from Kubernetes Secret
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
