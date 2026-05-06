@@ -10,22 +10,7 @@ from typing import Optional
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import plotly.io as pio
 import streamlit as st
-
-if "plotly_white_light" not in pio.templates:
-    _light_hover = go.layout.Template(
-        layout=go.Layout(
-            hoverlabel={
-                "bgcolor": "white",
-                "font_color": "#262730",
-                "bordercolor": "#d1d5db",
-            },
-        ),
-    )
-    pio.templates["plotly_white_light"] = pio.templates["plotly_white"]
-    pio.templates["plotly_white_light"].layout.update(_light_hover.layout)
-    pio.templates.default = "plotly_white_light"
 
 from dashboard_styles import (
     generate_color_palette,
@@ -34,12 +19,183 @@ from dashboard_styles import (
 )
 
 
-@st.cache_data(ttl=300)
+def _load_flat_format(file_path: str, encoding: str, delimiter: str) -> pd.DataFrame:
+    """Load and transform flat format CSV (v6.0+) to pivot format.
+
+    The flat format has one row per result with Model MLC, Scenario, and
+    Avg. Result as separate columns. This transforms it to match the pivot
+    format expected by the dashboard.
+
+    Args:
+        file_path: Path to the CSV file
+        encoding: File encoding to use
+        delimiter: CSV delimiter to use
+
+    Returns:
+        DataFrame in pivot format matching v5.x structure
+    """
+    import codecs
+    import io
+
+    # Read the flat CSV with first row as header
+    # UTF-16 requires special handling with codecs + StringIO
+    if encoding.startswith("utf-16"):
+        with codecs.open(file_path, "r", encoding=encoding) as f:
+            content = f.read()
+        df = pd.read_csv(io.StringIO(content), sep=delimiter)
+    else:
+        df = pd.read_csv(file_path, encoding=encoding, sep=delimiter)
+
+    # Validate that we got data
+    if df.empty:
+        raise ValueError(f"CSV file appears to be empty: {file_path}")
+
+    # Check that required columns exist
+    required_cols = ["Model MLC", "Scenario", "Avg. Result at System Name"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns: {missing_cols}. Available: {list(df.columns)}"
+        )
+
+    # Normalize column names - remove "(click + for details)" suffixes
+    column_mappings = {
+        "System Name (click + for details)": "System Name",
+        "Accelerator (click + for details)": "Accelerator",
+        "Processor (click + for details)": "Processor",
+    }
+    df = df.rename(columns=column_mappings)
+
+    # Handle duplicate columns by keeping first occurrence
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated(keep="first")]
+
+    # Extract the result value and create metric column name
+    # Format: {model}_{scenario}_{units}
+    units_col = df["Units"].str.strip() if "Units" in df.columns else "Tokens/s"
+    df["_metric_col"] = (
+        df["Model MLC"].str.strip() + "_" + df["Scenario"].str.strip() + "_" + units_col
+    )
+
+    # Get unique metric columns
+    metric_cols = df["_metric_col"].unique().tolist()
+
+    # Define metadata columns to keep
+    metadata_cols = [
+        "Public ID",
+        "Organization",
+        "Availability",
+        "System Name",
+        "Processor",
+        "# of  Processors ",
+        "Accelerator",
+        "Accelerators per node",
+        "Code",
+        "Division/Power",
+        "# of Nodes",
+        "Host Processor Core Count",
+        "Total Accelerators ",
+    ]
+
+    # Filter to columns that exist
+    existing_meta_cols = [c for c in metadata_cols if c in df.columns]
+
+    # Create pivot: group by system and spread metrics into columns
+    # First, create a unique system identifier
+    system_id_cols = [
+        "Public ID",
+        "Organization",
+        "System Name",
+        "Accelerator",
+        "# of Nodes",
+    ]
+    system_id_cols = [c for c in system_id_cols if c in df.columns]
+
+    # Get unique systems with their metadata
+    systems_df = df.drop_duplicates(subset=system_id_cols)[existing_meta_cols].copy()
+    systems_df = systems_df.reset_index(drop=True)
+
+    # For each metric column, merge in the values
+    result_col = "Avg. Result at System Name"
+    if result_col not in df.columns:
+        # Try alternative column names
+        for alt in ["Avg. Result", "Result"]:
+            if alt in df.columns:
+                result_col = alt
+                break
+
+    for metric_col in metric_cols:
+        if not metric_col or metric_col == "nan_nan_nan":
+            continue
+        # Get rows for this metric
+        metric_df = df[df["_metric_col"] == metric_col][
+            system_id_cols + [result_col]
+        ].copy()
+        metric_df = metric_df.rename(columns={result_col: metric_col})
+        # Merge into systems_df
+        systems_df = systems_df.merge(metric_df, on=system_id_cols, how="left")
+
+    # Convert metric columns to numeric
+    for col in systems_df.columns:
+        if "_Tokens/s" in col or "_Samples/s" in col or "_Queries/s" in col:
+            if systems_df[col].dtype == "object":
+                systems_df[col] = (
+                    systems_df[col].astype(str).str.replace(",", "", regex=False)
+                )
+            systems_df[col] = pd.to_numeric(systems_df[col], errors="coerce")
+
+    # Add computed columns
+    if "Accelerators per node" in systems_df.columns:
+        systems_df["accelerators_per_node"] = pd.to_numeric(
+            systems_df["Accelerators per node"], errors="coerce"
+        )
+    elif "Total Accelerators " in systems_df.columns:
+        systems_df["accelerators_per_node"] = pd.to_numeric(
+            systems_df["Total Accelerators "], errors="coerce"
+        )
+
+    if "# of Nodes" in systems_df.columns:
+        systems_df["node_count"] = pd.to_numeric(
+            systems_df["# of Nodes"], errors="coerce"
+        )
+        systems_df["node_count"] = systems_df["node_count"].fillna(1)
+    else:
+        systems_df["node_count"] = 1
+
+    # Use "Total Accelerators " column if available (6.0+ data with irregular counts)
+    # Otherwise fall back to computed value for older CSV files
+    if "Total Accelerators " in systems_df.columns:
+        systems_df["accelerator_count"] = pd.to_numeric(
+            systems_df["Total Accelerators "], errors="coerce"
+        )
+    elif "accelerators_per_node" in systems_df.columns:
+        systems_df["accelerator_count"] = (
+            systems_df["accelerators_per_node"] * systems_df["node_count"]
+        )
+
+    # Handle CPU runs
+    if "Accelerator" in systems_df.columns and "System Name" in systems_df.columns:
+        cpu_mask = (
+            systems_df["Accelerator"].isna()
+            | (systems_df["Accelerator"] == "N/A")
+            | (systems_df["Accelerator"] == "")
+            | (systems_df["Accelerator"].astype(str).str.strip() == "")
+        )
+        if cpu_mask.any():
+            systems_df.loc[cpu_mask, "Accelerator"] = "cpu-" + systems_df.loc[
+                cpu_mask, "System Name"
+            ].astype(str)
+
+    return systems_df
+
+
+@st.cache_data
 def load_mlperf_data(file_path: str) -> pd.DataFrame:
     """Load and parse MLPerf Inference Datacenter results CSV.
 
     The CSV has a complex multi-row header structure that needs special handling.
     Supports both the new standard CSV format and legacy UTF-16 TSV format.
+    Also supports flat format (v6.0+) where each row is a single result.
 
     Args:
         file_path: Path to the MLPerf CSV file
@@ -47,9 +203,9 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
     Returns:
         Parsed DataFrame with flattened column names
     """
-    # Try different encodings and delimiters to handle various CSV/TSV exports
-    # New format: UTF-8 with comma delimiters (standard CSV)
-    # Legacy format: UTF-16 with tab delimiters (TSV)
+    import codecs
+    import io
+
     encodings = [
         "utf-8",
         "utf-16",
@@ -68,13 +224,24 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
     for encoding in encodings:
         for delimiter in delimiters:
             try:
-                raw_df = pd.read_csv(
-                    file_path, header=None, encoding=encoding, sep=delimiter
-                )
+                # UTF-16 requires special handling with codecs + StringIO
+                if encoding.startswith("utf-16"):
+                    with codecs.open(file_path, "r", encoding=encoding) as f:
+                        content = f.read()
+                    raw_df = pd.read_csv(
+                        io.StringIO(content), header=None, sep=delimiter
+                    )
+                else:
+                    raw_df = pd.read_csv(
+                        file_path, header=None, encoding=encoding, sep=delimiter
+                    )
                 # Verify it actually parsed correctly (should have multiple columns)
-                if (
-                    raw_df.shape[1] > 15
-                ):  # Should have at least 15 metadata columns + metric columns
+                # Also check first cell isn't garbled (UTF-16 BOM as latin-1 = 'ÿþ')
+                first_cell = str(raw_df.iloc[0, 0]) if len(raw_df) > 0 else ""
+                is_garbled = first_cell.startswith("ÿþ") or first_cell.startswith(
+                    "\ufeff"
+                )
+                if raw_df.shape[1] > 15 and not is_garbled:
                     successful_encoding = encoding
                     successful_delimiter = delimiter
                     break  # Success!
@@ -85,6 +252,15 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
 
     if raw_df is None or successful_encoding is None:
         raise ValueError("Could not read file with any encoding/delimiter combination")
+
+    # Detect if this is flat format (v6.0+) by checking for exact "Model MLC" column header
+    # v5.x has "Benchmark  /  Model MLC  /  Scenario  /  Units" (combined text)
+    # v6.0+ has "Model MLC" as a standalone column header
+    first_row_values = [str(v).strip() for v in raw_df.iloc[0].tolist()]
+    is_flat_format = "Model MLC" in first_row_values
+
+    if is_flat_format:
+        return _load_flat_format(file_path, successful_encoding, successful_delimiter)
 
     # Extract header rows (rows 0-4 contain header information)
     # Row 0: Benchmark/Model/Scenario/Units labels (not useful)
@@ -223,7 +399,13 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
         df["node_count"] = 1
 
     # Calculate total accelerators across all nodes
-    if "accelerators_per_node" in df.columns and "node_count" in df.columns:
+    # Use "Total Accelerators " column if available (6.0+ data with irregular counts)
+    # Otherwise fall back to computed value for older CSV files
+    if "Total Accelerators " in df.columns:
+        df["accelerator_count"] = pd.to_numeric(
+            df["Total Accelerators "], errors="coerce"
+        )
+    elif "accelerators_per_node" in df.columns and "node_count" in df.columns:
         df["accelerator_count"] = df["accelerators_per_node"] * df["node_count"]
 
     # Normalize column names across different MLPerf versions
@@ -267,16 +449,7 @@ def load_mlperf_data(file_path: str) -> pd.DataFrame:
     # Normalize units for LLM models
     # MLPerf CSVs have inconsistent unit labels - some LLM models use "Samples/s" or "Queries/s"
     # when they should use "Tokens/s" (since LLMs generate text tokens, not samples)
-    llm_models = [
-        "llama",
-        "deepseek",
-        "gpt",
-        "mistral",
-        "mixtral",
-        "falcon",
-        "qwen",
-        "yi",
-    ]
+    llm_models = ["llama", "deepseek", "gpt", "mistral", "mixtral", "whisper"]
 
     # Build column rename mapping for LLM columns with wrong units
     column_renames = {}
@@ -368,6 +541,7 @@ def render_mlperf_filters(
         Tuple of (filtered_df, filter_selections)
     """
     st.markdown("### Filter your data")
+    st.caption("Each filter updates based on your previous selections")
 
     # Initialize session state for filter management
     if "mlperf_filters_initialized" not in st.session_state:
@@ -377,7 +551,7 @@ def render_mlperf_filters(
 
     # Filter out preview data - only show available entries
     # df_available = df[df['Availability'] == 'available'].copy()
-    df_available = df.copy()
+    df_available = df
 
     # Create columns for filters - add version filter as first column
     filter_row0_col1, filter_row0_col2, filter_row0_col3 = st.columns(3)
@@ -407,7 +581,7 @@ def render_mlperf_filters(
     with filter_col1:
         # Determine baseline defaults
         baseline_models = []
-        preferred_models = ["llama3.1-8b-datacenter"]
+        preferred_models = ["llama2-70b-99.9"]
         for model in preferred_models:
             if model in all_benchmarks:
                 baseline_models.append(model)
@@ -475,17 +649,8 @@ def render_mlperf_filters(
     # FILTER 2: Scenario (Second layer - depends on benchmarks)
     with filter_col2:
         if available_scenarios:
-            # Determine baseline defaults
-            baseline_scenarios = []
-            preferred_scenarios = ["Offline", "Server"]
-            for scenario in preferred_scenarios:
-                if scenario in available_scenarios:
-                    baseline_scenarios.append(scenario)
-
-            if not baseline_scenarios:
-                baseline_scenarios = (
-                    available_scenarios[:1] if available_scenarios else []
-                )
+            # Determine baseline defaults - select all scenarios by default
+            baseline_scenarios = available_scenarios
 
             # Store baseline in session state on first run
             if "mlperf_baseline_scenarios" not in st.session_state:
@@ -560,17 +725,8 @@ def render_mlperf_filters(
     # FILTER 3: Organization (Third layer - depends on benchmark + scenario)
     with filter_col3:
         if available_orgs:
-            # Determine baseline defaults
-            baseline_orgs = []
-            preferred_orgs = ["RedHat"]
-            for org in preferred_orgs:
-                if org in available_orgs:
-                    baseline_orgs.append(org)
-
-            if not baseline_orgs:
-                baseline_orgs = (
-                    available_orgs[:5] if len(available_orgs) > 5 else available_orgs
-                )
+            # Determine baseline defaults - select all organizations by default
+            baseline_orgs = available_orgs
 
             # Store baseline in session state on first run
             if "mlperf_baseline_orgs" not in st.session_state:
@@ -654,19 +810,8 @@ def render_mlperf_filters(
     # FILTER 4: Accelerator (Fourth layer - depends on organization)
     with filter_col4:
         if available_accelerators:
-            # Determine baseline defaults
-            baseline_accelerators = []
-            preferred_accelerators = ["NVIDIA L40S", "NVIDIA H100-SXM-80GB"]
-            for acc in preferred_accelerators:
-                if acc in available_accelerators:
-                    baseline_accelerators.append(acc)
-
-            if not baseline_accelerators:
-                baseline_accelerators = (
-                    available_accelerators[:5]
-                    if len(available_accelerators) > 5
-                    else available_accelerators
-                )
+            # Determine baseline defaults - select all accelerators by default
+            baseline_accelerators = available_accelerators
 
             # Store baseline in session state on first run
             if "mlperf_baseline_accelerators" not in st.session_state:
@@ -702,7 +847,7 @@ def render_mlperf_filters(
                 options=available_accelerators,
                 default=default_accelerators,
                 key=f"mlperf_acc_filter_{st.session_state.mlperf_filter_change_key}",
-                help="GPU/accelerator types",
+                help="accelerator types",
             )
         else:
             st.multiselect(
@@ -760,15 +905,8 @@ def render_mlperf_filters(
     # FILTER 5: # of Accelerators (Fifth layer - depends on accelerator)
     with filter_col5:
         if available_acc_counts:
-            # Determine baseline defaults
-            baseline_acc_counts = []
-            preferred_counts = [1]
-            for count in preferred_counts:
-                if count in available_acc_counts:
-                    baseline_acc_counts.append(count)
-
-            if not baseline_acc_counts:
-                baseline_acc_counts = available_acc_counts
+            # Determine baseline defaults - select all accelerator counts by default
+            baseline_acc_counts = available_acc_counts
 
             # Store baseline in session state on first run
             if "mlperf_baseline_acc_counts" not in st.session_state:
@@ -802,7 +940,7 @@ def render_mlperf_filters(
                 options=available_acc_counts,
                 default=default_acc_counts,
                 key=f"mlperf_acc_count_filter_{st.session_state.mlperf_filter_change_key}",
-                help="Total GPUs across all nodes (# of Nodes × Accelerators per node)",
+                help="Total Accelerators across all nodes (# of Nodes × Accelerators per node)",
             )
         else:
             st.multiselect(
@@ -952,9 +1090,12 @@ def create_benchmark_comparison_chart(
 
     plot_df = df[cols_to_include].copy()
 
-    # Fill missing columns
+    # Fill missing columns using computed accelerator_count as fallback
     if "# of Accelerators" not in plot_df.columns:
-        plot_df["# of Accelerators"] = None
+        if "accelerator_count" in df.columns:
+            plot_df["# of Accelerators"] = df["accelerator_count"]
+        else:
+            plot_df["# of Accelerators"] = None
     if "# of Nodes" not in plot_df.columns:
         plot_df["# of Nodes"] = None
 
@@ -977,11 +1118,11 @@ def create_benchmark_comparison_chart(
         plot_df[system_col] + " (" + plot_df["Organization"] + ")"
     )
 
-    # Sort by performance
-    plot_df = plot_df.sort_values(metric_col, ascending=False)
-
-    # Show all systems (removed top 20 limit - chart is scrollable)
-    # Chart height dynamically adjusts: max(400, len(plot_df) * 25)
+    # Sort by performance and deduplicate: source data can have multiple submissions
+    # (different Public IDs) for the same system, which causes Plotly to stack bars.
+    plot_df = plot_df.sort_values(metric_col, ascending=False).drop_duplicates(
+        subset=["System_Display"], keep="first"
+    )
 
     # Generate unique colors for all organizations
     unique_orgs = sorted(plot_df["Organization"].unique())
@@ -1105,7 +1246,7 @@ def create_normalized_comparison_chart(
     ]
     plot_df = df[required_cols].copy()
 
-    # Exclude CPU runs from normalized comparisons (they don't have GPU counts)
+    # Exclude CPU runs from normalized comparisons (they don't have Accelerator counts)
     plot_df = plot_df[
         ~plot_df["Accelerator"].astype(str).str.startswith("cpu-", na=False)
     ]
@@ -1123,30 +1264,38 @@ def create_normalized_comparison_chart(
     # Store original values before normalization
     plot_df["Total_Accelerators"] = plot_df["accelerator_count"].copy()
     plot_df["Num_Nodes"] = plot_df["node_count"].copy()
-    plot_df["GPUs_Per_Node"] = plot_df["accelerators_per_node"].copy()
+    plot_df["Accelerators_Per_Node"] = plot_df["accelerators_per_node"].copy()
     plot_df["Total_Performance"] = plot_df[metric_col].copy()
 
     # Calculate per-node performance
     plot_df["Performance_Per_Node"] = plot_df[metric_col] / plot_df["node_count"]
 
     # Perform normalization
-    if "Per GPU" in norm_method:
-        # Normalize to per-GPU performance
+    if "Per Accelerator" in norm_method:
+        # Normalize to per-Accelerator performance
         plot_df["Normalized_Value"] = plot_df[metric_col] / plot_df["accelerator_count"]
-        norm_label = f"Per GPU ({unit}/GPU)"
-        title_suffix = "Normalized per GPU"
+        norm_label = f"Per Accelerator ({unit}/Accelerator)"
+        title_suffix = "Normalized per Accelerator"
     else:
-        # Normalize to 8-GPU node: (Performance per node) × (8 / GPUs per node)
+        # Normalize to 8-Accelerator node: (Performance per node) × (8 / Accelerators per node)
         plot_df["Normalized_Value"] = plot_df["Performance_Per_Node"] * (
-            8 / plot_df["GPUs_Per_Node"]
+            8 / plot_df["Accelerators_Per_Node"]
         )
-        norm_label = f"Per 8-GPU Node ({unit}/8-GPU Node)"
-        title_suffix = "Normalized per 8-GPU Node"
+        norm_label = f"Per 8-Accelerator Node ({unit}/8-Accelerator Node)"
+        title_suffix = "Normalized per 8-Accelerator Node"
 
     # Create unique identifier for each system-organization combination
     # This prevents stacking when multiple orgs use the same system name
+    # Append dagger to both the system name and organization so each part is clearly marked
     plot_df["System_Display"] = (
-        plot_df[system_col] + " (" + plot_df["Organization"] + ")"
+        plot_df[system_col] + "(" + plot_df["Organization"] + ")" + " †"
+    )
+
+    # Deduplicate: source data can have multiple submissions (different Public IDs)
+    # for the same system, which causes Plotly to stack bars and misalign the x-axis.
+    # Keep the entry with the highest normalized value per system.
+    plot_df = plot_df.sort_values("Normalized_Value", ascending=False).drop_duplicates(
+        subset=["System_Display"], keep="first"
     )
 
     # Calculate global minimum from unfiltered data (if provided) to ensure consistent baseline
@@ -1173,7 +1322,7 @@ def create_normalized_comparison_chart(
 
             if not global_df.empty:
                 # Apply same normalization
-                if "Per GPU" in norm_method:
+                if "Per Accelerator" in norm_method:
                     global_df["Normalized_Value"] = (
                         global_df[metric_col] / global_df["accelerator_count"]
                     )
@@ -1237,7 +1386,7 @@ def create_normalized_comparison_chart(
             "Organization": True,
             "Accelerator": True,
             "Num_Nodes": ":.0f",
-            "GPUs_Per_Node": ":.0f",
+            "Accelerators_Per_Node": ":.0f",
             "Total_Accelerators": ":.0f",
             "Total_Performance": ":,.2f",
             "Performance_Per_Node": ":,.2f",
@@ -1251,7 +1400,7 @@ def create_normalized_comparison_chart(
             "Normalized_Value": norm_label,
             "System_Display": "System Name",
             "Num_Nodes": "# of Nodes",
-            "GPUs_Per_Node": "GPUs per Node",
+            "Accelerators_Per_Node": "Accelerators per Node",
             "Total_Accelerators": "Total Accelerators",
             "Total_Performance": f"Total {unit}",
             "Performance_Per_Node": f"{unit} per Node",
@@ -1286,7 +1435,7 @@ def create_normalized_comparison_chart(
     return fig, baseline_info
 
 
-@st.cache_data(ttl=600)
+@st.cache_data
 def load_dataset_for_model(model_name: str) -> Optional[pd.DataFrame]:
     """Load the dataset file (pickle or JSON) for a specific MLPerf model.
 
@@ -1327,14 +1476,10 @@ def load_dataset_for_model(model_name: str) -> Optional[pd.DataFrame]:
 
         # Validate required columns exist
         if "input_length" not in data.columns or "output_length" not in data.columns:
-            st.error(
-                f"Dataset CSV must contain 'input_length' and 'output_length' columns. Found: {list(data.columns)}"
-            )
             return None
 
         return data
-    except Exception as e:
-        st.error(f"Error loading dataset summary: {e}")
+    except Exception:
         return None
 
 
@@ -1534,7 +1679,10 @@ def create_offline_vs_server_comparison(df: pd.DataFrame, filter_selections: dic
                         "Organization": row.get("Organization", "Unknown"),
                         "System Name": row.get("System Name", "Unknown"),
                         "Accelerator": row.get("Accelerator", "Unknown"),
-                        "# of Accelerators": row.get("# of Accelerators", "N/A"),
+                        "# of Accelerators": row.get(
+                            "accelerator_count",
+                            row.get("# of Accelerators", "N/A"),
+                        ),
                         "Offline Performance": offline_perf,
                         "Server Performance": server_perf,
                         "Degradation %": degradation_pct,
@@ -1560,17 +1708,29 @@ def render_mlperf_results_table(df: pd.DataFrame, filter_selections: dict):
     st.markdown("### 📋 Detailed Results")
 
     # Select columns to display
+    # Only include Total Accelerators for v6.0+ which has the field for irregular counts
+    has_total_accelerators = "Total Accelerators " in df.columns
+
     metadata_cols = [
         "Public ID",
         "Organization",
         "System Name",
         "Accelerator",
         "# of Nodes",
-        "# of Accelerators",
-        "Processor",
-        "# of  Processors ",
-        "Availability",
+        "accelerators_per_node",
     ]
+
+    # Add Total Accelerators column only for CSVs that have this field (v6.0+)
+    if has_total_accelerators:
+        metadata_cols.append("accelerator_count")
+
+    metadata_cols.extend(
+        [
+            "Processor",
+            "# of  Processors ",
+            "Availability",
+        ]
+    )
 
     # Add metric columns based on selected benchmarks and scenarios
     metric_cols = []
@@ -1610,14 +1770,23 @@ def render_mlperf_results_table(df: pd.DataFrame, filter_selections: dict):
     # Apply tooltip CSS for table column headers in light mode
     st.markdown(get_mlperf_table_tooltip_css(), unsafe_allow_html=True)
 
+    # Rename columns for display
+    column_renames = {
+        "accelerators_per_node": "Accelerators/Node",
+        "accelerator_count": "Total Accelerators",
+    }
+    display_df = display_df.rename(columns=column_renames)
+    final_cols = [column_renames.get(c, c) for c in final_cols]
+
     # Configure columns with help text
     column_config = {}
 
     # Define specific help text for key columns
     help_texts = {
         "# of Nodes": "Number of nodes in the system",
-        "# of Accelerators": "Number of accelerators (GPUs) per node",
-        "Accelerator": "Type of accelerator/GPU used",
+        "Accelerators/Node": "Number of accelerators per node",
+        "Total Accelerators": "Total accelerators across all nodes (used for normalization)",
+        "Accelerator": "Type of accelerator used",
         "Organization": "Organization that submitted the results",
         "System Name": "Name of the system configuration",
         "Public ID": "MLPerf submission identifier",
@@ -1626,13 +1795,27 @@ def render_mlperf_results_table(df: pd.DataFrame, filter_selections: dict):
         "Availability": "Results availability status (available/preview)",
     }
 
+    # Columns that should be displayed as numbers (not text)
+    numeric_cols = {
+        "Accelerators/Node",
+        "Total Accelerators",
+        "# of Nodes",
+        "# of  Processors ",
+    }
+    # Renamed metadata columns for checking
+    renamed_metadata = {column_renames.get(c, c) for c in metadata_cols}
+
     for col in final_cols:
-        if col in metadata_cols:
+        if col in renamed_metadata:
             help_text = help_texts.get(col, f"System {col.lower()}")
             # Pin Organization and System Name columns
             if col == "Organization" or col == "System Name":
                 column_config[col] = st.column_config.TextColumn(
                     col, help=help_text, pinned=True
+                )
+            elif col in numeric_cols:
+                column_config[col] = st.column_config.NumberColumn(
+                    col, help=help_text, format="%.0f"
                 )
             else:
                 column_config[col] = st.column_config.TextColumn(col, help=help_text)
@@ -1653,7 +1836,11 @@ def render_mlperf_results_table(df: pd.DataFrame, filter_selections: dict):
 
 
 def create_version_comparison(
-    version_data: dict, model_name: str, scenarios: list, filter_selections: dict
+    version_data: dict,
+    model_name: str,
+    scenarios: list,
+    filter_selections: dict,
+    selected_org: Optional[str] = None,
 ) -> Optional[pd.DataFrame]:
     """Create a comparison dataframe across multiple MLPerf versions.
 
@@ -1662,6 +1849,9 @@ def create_version_comparison(
         model_name: Selected MLC model name
         scenarios: List of selected scenarios
         filter_selections: Current filter selections
+        selected_org: If set, show all submissions by this org (no
+            multi-version requirement). If None, show all orgs that
+            submitted in 2+ versions.
 
     Returns:
         DataFrame with version comparison data, or None if no data
@@ -1671,22 +1861,23 @@ def create_version_comparison(
 
     comparison_rows = []
 
-    # For each version, extract relevant data
     for version_label, df in version_data.items():
-        # Apply filters (organizations, accelerators, etc.)
         filtered_df = df.copy()
 
-        orgs = filter_selections.get("organizations", [])
-        if orgs:
-            filtered_df = filtered_df[filtered_df["Organization"].isin(orgs)]
+        if selected_org:
+            # Single-org mode: only filter by org, ignore global filters
+            # since accelerator names/availability vary across versions.
+            filtered_df = filtered_df[filtered_df["Organization"] == selected_org]
+        else:
+            orgs = filter_selections.get("organizations", [])
+            if orgs:
+                filtered_df = filtered_df[filtered_df["Organization"].isin(orgs)]
 
-        accelerators = filter_selections.get("accelerators", [])
-        if accelerators:
-            filtered_df = filtered_df[filtered_df["Accelerator"].isin(accelerators)]
+            accelerators = filter_selections.get("accelerators", [])
+            if accelerators:
+                filtered_df = filtered_df[filtered_df["Accelerator"].isin(accelerators)]
 
-        # Extract metrics for each scenario
         for scenario in scenarios:
-            # Find metric column
             matching_cols = [
                 col
                 for col in filtered_df.columns
@@ -1698,23 +1889,22 @@ def create_version_comparison(
             metric_col = matching_cols[0]
             unit = metric_col.split("_")[-1] if "_" in metric_col else "Performance"
 
-            # Get systems with data for this metric
             systems_with_data = filtered_df[filtered_df[metric_col].notna()].copy()
 
             for _, row in systems_with_data.iterrows():
-                system_display = f"{row.get('System Name', 'Unknown')} ({row['Organization']}) - {row['Accelerator']}"
+                acc_count = row.get(
+                    "accelerator_count", row.get("# of Accelerators", "N/A")
+                )
                 comparison_rows.append(
                     {
                         "Version": version_label,
                         "Organization": row["Organization"],
                         "System Name": row["System Name"],
                         "Accelerator": row["Accelerator"],
-                        "# of Accelerators": row.get("# of Accelerators", "N/A"),
+                        "Total Accelerators": acc_count,
                         "Scenario": scenario,
                         "Performance": row[metric_col],
                         "Unit": unit,
-                        "System_Display": system_display,
-                        "_System_Key": f"{row['Organization']}_{row.get('System Name', 'Unknown')}_{row['Accelerator']}_{scenario}",
                     }
                 )
 
@@ -1723,25 +1913,38 @@ def create_version_comparison(
 
     comparison_df = pd.DataFrame(comparison_rows)
 
-    # Only keep systems that appear in multiple versions (using internal _System_Key)
-    system_counts = comparison_df.groupby("_System_Key")["Version"].nunique()
-    multi_version_systems = system_counts[system_counts > 1].index
+    if selected_org:
+        # Single-org view: show all submissions, no multi-version filter.
+        comparison_df["System_Display"] = comparison_df.apply(
+            lambda r: f"{r['Accelerator']} x{r['Total Accelerators']}",
+            axis=1,
+        )
+    else:
+        # All-orgs view: only keep orgs that submitted in 2+ versions.
+        org_versions = comparison_df.groupby("Organization")["Version"].nunique()
+        multi_version_orgs = org_versions[org_versions > 1].index
+        comparison_df = comparison_df[
+            comparison_df["Organization"].isin(multi_version_orgs)
+        ]
+        if comparison_df.empty:
+            return None
 
-    comparison_df = comparison_df[
-        comparison_df["_System_Key"].isin(multi_version_systems)
-    ]
+        comparison_df["System_Display"] = comparison_df.apply(
+            lambda r: f"{r['Organization']} - {r['Accelerator']} x{r['Total Accelerators']}",
+            axis=1,
+        )
 
-    if comparison_df.empty:
-        return None
-
-    # Drop the internal key column before returning
-    comparison_df = comparison_df.drop(columns=["_System_Key"])
+    # Deduplicate: keep best performance per (hardware config, version).
+    idx = comparison_df.groupby(["System_Display", "Version"])["Performance"].idxmax()
+    comparison_df = comparison_df.loc[idx]
 
     return comparison_df
 
 
 def create_version_comparison_chart(
-    comparison_df: pd.DataFrame, model_name: str, scenarios: list
+    comparison_df: pd.DataFrame,
+    model_name: str,
+    scenarios: list,
 ) -> Optional[go.Figure]:
     """Create a grouped bar chart comparing performance across versions.
 
@@ -1756,28 +1959,63 @@ def create_version_comparison_chart(
     if comparison_df is None or comparison_df.empty:
         return None
 
-    # System_Display is already created in create_version_comparison function
+    plot_df = comparison_df.copy()
 
-    # Create grouped bar chart (horizontal)
+    hover_template = (
+        "<b>%{y}</b><br>"
+        "Submission: %{customdata[4]}<br>"
+        "Performance: %{x:,.1f} %{customdata[1]}<br>"
+        "Version: %{customdata[0]}<br>"
+        "Accelerator: %{customdata[2]}<br>"
+        "Total Accelerators: %{customdata[3]}"
+        "<extra></extra>"
+    )
+
+    # Group entries by organization: orgs sorted by their best
+    # performance, and within each org entries sorted by performance.
+    best_per_system = plot_df.groupby("System_Display")["Performance"].max()
+    org_best = plot_df.groupby("Organization")["Performance"].max()
+    system_org = plot_df.drop_duplicates("System_Display").set_index("System_Display")[
+        "Organization"
+    ]
+    order = (
+        best_per_system.to_frame("perf")
+        .assign(org=system_org, org_best=system_org.map(org_best))
+        .sort_values(["org_best", "perf"], ascending=[True, True])
+        .index.tolist()
+    )
+
     fig = px.bar(
-        comparison_df,
+        plot_df,
         x="Performance",
         y="System_Display",
         color="Version",
         barmode="group",
         orientation="h",
         facet_col="Scenario" if len(scenarios) > 1 else None,
-        title=f"{model_name} Performance Across Versions<br><sub>Grouped by System (Higher is Better →)</sub>",
+        title=f"{model_name} Performance Across Versions<br><sub>Grouped by Organization (Higher is Better →)</sub>",
         labels={
-            "Performance": f"Performance ({comparison_df['Unit'].iloc[0]})",
+            "Performance": f"Performance ({plot_df['Unit'].iloc[0]})",
             "System_Display": "System",
             "Version": "MLPerf Version",
         },
-        height=max(500, len(comparison_df["System_Display"].unique()) * 40),
+        custom_data=[
+            "Version",
+            "Unit",
+            "Accelerator",
+            "Total Accelerators",
+            "System Name",
+        ],
+        height=max(500, len(plot_df["System_Display"].unique()) * 50),
+        category_orders={
+            "System_Display": order,
+            "Version": sorted(plot_df["Version"].unique()),
+        },
     )
 
+    fig.update_traces(hovertemplate=hover_template)
+
     fig.update_layout(
-        yaxis={"categoryorder": "total ascending"},
         showlegend=True,
         legend={
             "title": "MLPerf Version",
@@ -1796,29 +2034,36 @@ def create_version_comparison_chart(
         },
     )
 
-    # Add improvement percentage annotations
-    # Calculate % change from earliest to latest version
-    for system in comparison_df["System_Display"].unique():
-        system_data = comparison_df[
-            comparison_df["System_Display"] == system
-        ].sort_values("Version")
-        if len(system_data) >= 2:
-            versions_sorted = sorted(system_data["Version"].unique())
-            first_version = versions_sorted[0]
-            last_version = versions_sorted[-1]
-
-            first_perf = system_data[system_data["Version"] == first_version][
-                "Performance"
-            ].iloc[0]
-            last_perf = system_data[system_data["Version"] == last_version][
-                "Performance"
-            ].iloc[0]
-
-            if first_perf > 0:
-                ((last_perf - first_perf) / first_perf) * 100
-                # Note: We could add annotations here but it might clutter the chart
-
     return fig
+
+
+def _render_version_selector(mlperf_versions: dict, selected_version: str) -> str:
+    """Render just the version selector.
+
+    Args:
+        mlperf_versions: Dict mapping version labels to CSV file paths
+        selected_version: Currently selected version
+
+    Returns:
+        The selected version string
+    """
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        version_selector = st.selectbox(
+            "Select MLPerf Version",
+            options=list(mlperf_versions.keys()),
+            index=list(mlperf_versions.keys()).index(selected_version)
+            if selected_version in mlperf_versions
+            else 0,
+            key="mlperf_version_selector_main",
+            help="Choose which MLPerf Inference version results to display",
+        )
+
+        if version_selector != selected_version:
+            st.session_state.mlperf_version = version_selector
+            st.rerun()
+
+    return version_selector
 
 
 def render_mlperf_dashboard(mlperf_versions: dict):
@@ -1835,7 +2080,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
 
     # Initialize session state for version
     if "mlperf_version" not in st.session_state:
-        st.session_state.mlperf_version = "v5.1"  # Default to latest version
+        st.session_state.mlperf_version = "v6.0"
 
     # Get the selected version from session state
     selected_version = st.session_state.mlperf_version
@@ -1906,34 +2151,31 @@ def render_mlperf_dashboard(mlperf_versions: dict):
         else:
             for benchmark in benchmarks:
                 for scenario in scenarios:
-                    with st.expander(f"🔍 {benchmark} - {scenario}", expanded=False):
+                    with st.expander(f"🔍 {benchmark} - {scenario}", expanded=True):
                         fig = create_benchmark_comparison_chart(
                             filtered_df, benchmark, scenario, filter_selections
                         )
                         if fig:
-                            st.plotly_chart(fig, use_container_width=True, theme=None)
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.info(f"No data available for {benchmark} - {scenario}")
-
     with tab2:
         st.markdown("### ⚖️ Normalized Result Comparisons")
         st.markdown(
-            "Compare hardware performance normalized by GPU count for fair comparisons."
+            "Compare hardware performance normalized by accelerator count for fair comparisons."
         )
         st.info(
             "ℹ️ **Note**: These calculations assume linear scaling, which is an approximation. "
-            "**When upscaling** (e.g., 1 GPU → 8 GPUs), results tend to **over-estimate** actual performance. **When downscaling** (e.g., 16 GPUs → 8 GPUs), results tend to **under-estimate** actual performance. \
-            CPU runs are excluded from this section as normalization by GPU count is not applicable to CPU-only systems."
+            "**When upscaling** (e.g., 1 accelerator → 8 accelerators), results tend to **over-estimate** actual performance. **When downscaling** (e.g., 16 accelerators → 8 accelerators), results tend to **under-estimate** actual performance. \
+            CPU runs are excluded from this section as normalization by accelerator count is not applicable to CPU-only systems."
         )
 
-        with st.expander("ℹ️ How normalization works", expanded=False):
+        with st.expander("ℹ️ How normalization works", expanded=True):
             st.markdown(
                 "**Normalization helps compare different hardware configurations fairly:**\n\n"
-                "• **Per GPU**: Shows performance efficiency per single GPU\n"
-                "  - Calculation: Total ÷ (# of Nodes × GPUs per node)\n\n"
-                "• **Per 8-GPU Node**: Normalizes all results to a single 8-GPU node\n"
+                "• **Per Accelerator**: Shows performance efficiency per single accelerator\n"
+                "  - Calculation: Total ÷ (# of Nodes × accelerators per node)\n\n"
                 "  - Step 1: Per-node performance = Total ÷ # of Nodes\n"
-                "  - Step 2: Normalize to 8 GPUs = ((Per-node performance) ÷ GPUs per node) × 8"
             )
 
         st.success(
@@ -1943,16 +2185,21 @@ def render_mlperf_dashboard(mlperf_versions: dict):
             "For example, a 50% benefit means the system performs 50% better than the baseline."
         )
 
+        # Note clarifying that normalized scores are unverified/non-official
+        st.info(
+            "⚠️ The normalized scores shown here are marked as unverified because these normalized numbers are not official MLPerf results. "
+            "They are derived from MLPerf results but have been transformed via normalization."
+        )
+
         # Normalization selector
         norm_method: str = st.radio(
             "Normalize by:",
             options=[
-                "Per GPU (÷ total GPUs)",
-                "Per 8-GPU Node (per-node perf × 8 ÷ GPUs/node)",
+                "Per Accelerator (÷ Total Accelerators)",
             ],
             index=0,
             horizontal=True,
-            help="Normalize performance to compare hardware on equal GPU count basis. Note: MLPerf '# of Accelerators' is per node.",
+            help="Normalize performance to compare hardware on equal accelerator count basis. Note: MLPerf '# of Accelerators' is per node.",
         )
 
         benchmarks = filter_selections.get("benchmarks", [])
@@ -1965,7 +2212,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
         else:
             for benchmark in benchmarks:
                 for scenario in scenarios:
-                    with st.expander(f"🔍 {benchmark} - {scenario}", expanded=False):
+                    with st.expander(f"🔍 {benchmark} - {scenario}", expanded=True):
                         fig, baseline_info = create_normalized_comparison_chart(
                             filtered_df,
                             benchmark,
@@ -1976,16 +2223,16 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                         )
                         if fig:
                             # Display baseline information
-                            if baseline_info:
-                                st.info(
-                                    f"📊 **Baseline System** (0% benefit): "
-                                    f"**{baseline_info['system_name']}** ({baseline_info['organization']}) - "
-                                    f"{baseline_info['accelerator']} - "
-                                    f"Normalized Value: {baseline_info['value']:,.2f}"
-                                )
-                            st.plotly_chart(fig, use_container_width=True, theme=None)
+
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.info(f"No data available for {benchmark} - {scenario}")
+            # Footnote specific to normalized/derived scores
+            st.markdown("---")
+            st.markdown(
+                "<div style='font-size:0.9em; color:gray'>† Result not verified by MLCommons Association.</div>",
+                unsafe_allow_html=True,
+            )
 
     with tab3:
         st.markdown("### 🔄 Offline vs Server Performance Comparison")
@@ -2048,8 +2295,13 @@ def render_mlperf_dashboard(mlperf_versions: dict):
             colors = generate_color_palette(len(unique_orgs))
             color_map = dict(zip(unique_orgs, colors))
 
-            # Sort comparison_df for plotting
-            plot_df = comparison_df.sort_values("Degradation %", ascending=False).copy()
+            # Sort and deduplicate: source data can have multiple submissions
+            # (different Public IDs) for the same system, which causes stacking.
+            plot_df = (
+                comparison_df.sort_values("Degradation %", ascending=False)
+                .drop_duplicates(subset=["System_Display", "Benchmark"], keep="first")
+                .copy()
+            )
 
             # Create visualization with hover_data (let Plotly handle data alignment)
             fig = px.bar(
@@ -2101,10 +2353,10 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                 },
             )
 
-            st.plotly_chart(fig, use_container_width=True, theme=None)
+            st.plotly_chart(fig, use_container_width=True)
 
             # Display detailed table
-            with st.expander("📊 Detailed Comparison Table", expanded=False):
+            with st.expander("📊 Detailed Comparison Table", expanded=True):
                 st.info(
                     "💡 **Note**: Degradation % shows how much performance drops from Offline to Server. "
                     "Server/Offline Ratio shows what percentage of offline performance is retained in server mode."
@@ -2137,7 +2389,7 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                             "System Name", help="System configuration", pinned=True
                         ),
                         "Accelerator": st.column_config.TextColumn(
-                            "Accelerator", help="GPU/accelerator type"
+                            "Accelerator", help="Accelerator type"
                         ),
                         "# of Accelerators": "# of Accelerators",
                         "Offline Performance": st.column_config.NumberColumn(
@@ -2218,15 +2470,13 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        st.plotly_chart(fig_input, use_container_width=True, theme=None)
+                        st.plotly_chart(fig_input, use_container_width=True)
 
                     with col2:
-                        st.plotly_chart(
-                            fig_output, use_container_width=True, theme=None
-                        )
+                        st.plotly_chart(fig_output, use_container_width=True)
 
                     # Show additional statistics
-                    with st.expander("📊 Detailed Statistics", expanded=False):
+                    with st.expander("📊 Detailed Statistics", expanded=True):
                         # Find input and output columns
                         input_col = None
                         output_col = None
@@ -2287,15 +2537,30 @@ def render_mlperf_dashboard(mlperf_versions: dict):
             st.info("Please select at least one scenario to compare across versions.")
         else:
             model_name = benchmarks[0]
-            st.markdown(f"#### Comparing **{model_name}** across versions")
+
+            default_idx = scenarios.index("Offline") if "Offline" in scenarios else 0
+            compare_scenario = st.selectbox(
+                "Scenario",
+                options=scenarios,
+                index=default_idx,
+                key="version_compare_scenario",
+            )
+            compare_scenarios = [compare_scenario]
+
+            # Filter versions for comparison based on selected version
+            if "v6.0" in selected_version:
+                comparison_versions = mlperf_versions
+            else:
+                comparison_versions = {
+                    k: v for k, v in mlperf_versions.items() if "v6.0" not in k
+                }
 
             # Load data from all available versions
             with st.spinner("Loading data from all versions..."):
                 version_data = {}
-                for version_label, csv_path in mlperf_versions.items():
+                for version_label, csv_path in comparison_versions.items():
                     try:
                         version_df = load_mlperf_data(csv_path)
-                        # Check if this model exists in this version
                         version_benchmarks = extract_benchmarks_and_scenarios(
                             version_df
                         )
@@ -2310,26 +2575,59 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                     "Cross-version comparison requires the model to be present in at least 2 versions."
                 )
             else:
+                # Collect orgs that submitted this model+scenario across versions
+                all_orgs: set[str] = set()
+                for vdf in version_data.values():
+                    if "Organization" not in vdf.columns:
+                        continue
+                    matching_cols = [
+                        c
+                        for c in vdf.columns
+                        if model_name in c and compare_scenario in c
+                    ]
+                    if matching_cols:
+                        col = matching_cols[0]
+                        orgs_with_data = vdf.loc[vdf[col].notna(), "Organization"]
+                        all_orgs.update(orgs_with_data.dropna().unique())
+
+                compare_org = st.selectbox(
+                    "Organization",
+                    options=sorted(all_orgs),
+                    index=0,
+                    key="version_compare_org",
+                    help=(
+                        "Select an organization to see all their submissions "
+                        "for this model and scenario across versions."
+                    ),
+                )
+
+                st.markdown(
+                    f"#### {compare_org} submissions for **{model_name}** — {compare_scenario}"
+                )
+
                 st.success(
                     f"✅ Found **{model_name}** in {len(version_data)} versions: {', '.join(version_data.keys())}"
                 )
 
-                # Create comparison visualization
                 comparison_df = create_version_comparison(
-                    version_data, model_name, scenarios, filter_selections
+                    version_data,
+                    model_name,
+                    compare_scenarios,
+                    filter_selections,
+                    selected_org=compare_org,
                 )
 
                 if comparison_df is not None and not comparison_df.empty:
-                    # Display comparison chart
                     fig = create_version_comparison_chart(
-                        comparison_df, model_name, scenarios
+                        comparison_df,
+                        model_name,
+                        compare_scenarios,
                     )
                     if fig:
-                        st.plotly_chart(fig, use_container_width=True, theme=None)
+                        st.plotly_chart(fig, use_container_width=True)
 
-                    # Display detailed comparison table
                     with st.expander(
-                        "📊 Detailed Version Comparison Table", expanded=True
+                        "📊 Detailed Version Comparison Table", expanded=False
                     ):
                         st.dataframe(
                             comparison_df,
@@ -2347,75 +2645,6 @@ def render_mlperf_dashboard(mlperf_versions: dict):
                         )
                 else:
                     st.info(
-                        "No common systems found across the selected versions and scenarios."
+                        f"No submissions found for **{compare_org}** on "
+                        f"**{model_name}** / {compare_scenario}."
                     )
-
-    # Bottom scroll space
-    st.markdown('<div style="height: 150px;"></div>', unsafe_allow_html=True)
-
-    # Click anywhere on main area to collapse sidebar + hamburger icon replacement
-    import streamlit.components.v1 as _stc
-
-    _stc.html(
-        """
-<script>
-(function() {
-    var doc = parent.document;
-
-    // --- Click-to-close sidebar ---
-    if (doc._sidebarClickClose) {
-        doc.removeEventListener('click', doc._sidebarClickClose);
-    }
-    if (doc._clickCloseTimeout) {
-        clearTimeout(doc._clickCloseTimeout);
-    }
-
-    doc._sidebarClickClose = function(e) {
-        var sb = doc.querySelector('[data-testid="stSidebar"]');
-        if (!sb || sb.getAttribute('aria-expanded') !== 'true') return;
-        var main = doc.querySelector('[data-testid="stMain"]');
-        if (!main || !main.contains(e.target)) return;
-        setTimeout(function() {
-            var sb2 = doc.querySelector('[data-testid="stSidebar"]');
-            if (!sb2 || sb2.getAttribute('aria-expanded') !== 'true') return;
-            var closeBtn = sb2.querySelector('[data-testid="stSidebarHeader"] button')
-                        || sb2.querySelector('button[kind="headerNoPadding"]')
-                        || sb2.querySelector('button[kind="header"]');
-            if (closeBtn) closeBtn.click();
-        }, 0);
-    };
-
-    var clickDelay = doc._clickCloseInitialized ? 0 : 1500;
-    doc._clickCloseInitialized = true;
-    doc._clickCloseTimeout = setTimeout(function() {
-        doc.addEventListener('click', doc._sidebarClickClose);
-    }, clickDelay);
-
-    // --- Hamburger icon replacement ---
-    if (doc._hamburgerInterval) clearInterval(doc._hamburgerInterval);
-
-    function scan() {
-        var sb = doc.querySelector('[data-testid="stSidebar"]');
-        if (sb) {
-            var hdr = sb.querySelector('[data-testid="stSidebarHeader"] button')
-                   || sb.querySelector('button[kind="headerNoPadding"]')
-                   || sb.querySelector('button[kind="header"]');
-            if (hdr) hdr.classList.add('hamburger-btn');
-        }
-        var sidebarOpen = sb && sb.getAttribute('aria-expanded') === 'true';
-        if (!sidebarOpen) {
-            var header = doc.querySelector('[data-testid="stHeader"]');
-            if (header) {
-                var firstBtn = header.querySelector('button');
-                if (firstBtn) firstBtn.classList.add('hamburger-btn');
-            }
-        }
-    }
-
-    scan();
-    doc._hamburgerInterval = setInterval(scan, 500);
-})();
-</script>
-""",
-        height=0,
-    )
