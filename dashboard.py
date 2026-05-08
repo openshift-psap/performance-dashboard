@@ -114,6 +114,31 @@ OVERVIEW_RELEASE_PAIRS = [
         "upstream": "vLLM-0.13.0",
         "additional": [],
     },
+    # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
+    {
+        "current": "vLLM-0.20.0",
+        "previous": "vLLM-0.19.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.19.0",
+        "previous": "vLLM-0.18.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.18.0",
+        "previous": "vLLM-0.16.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.16.0",
+        "previous": "vLLM-0.14.1",
+        "upstream": None,
+        "additional": [],
+    },
 ]
 
 # ±3 % dead-zone: changes within this range are "neutral" (neither win nor loss)
@@ -1757,6 +1782,8 @@ def render_overview_section(df):
     ov_previous = selected_pair["previous"]
     ov_upstream = selected_pair.get("upstream")
     ov_additional = selected_pair.get("additional", [])
+    # True when both sides are upstream vLLM releases (not RHAIIS vs RHAIIS)
+    is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith("vLLM-")
 
     st.markdown(
         f"Executive summary comparing **{ov_current}** against **{ov_previous}** (previous release)."
@@ -1930,7 +1957,10 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.markdown("---")
 
     # ── vLLM Parity Scorecard ───────────────────────────────────────
-    if not ov_upstream:
+    # Not shown for upstream vLLM-vs-vLLM comparisons (no RHAIIS baseline to compare against)
+    if is_upstream_comparison:
+        pass
+    elif not ov_upstream:
         st.markdown("### Upstream vLLM Parity")
         st.info("Upstream vLLM parity data is not available for this release pair.")
         st.markdown("---")
@@ -2277,6 +2307,9 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.markdown("---")
 
     # ── New in This Release ─────────────────────────────────────────
+    # Not shown for upstream vLLM-vs-vLLM comparisons ("new in release" is RHAIIS-specific)
+    if is_upstream_comparison:
+        return
     st.markdown("### New in This Release")
     items = ""
     for entry in data["new_models"]:
