@@ -254,7 +254,7 @@ def fetch_log_from_s3(uuid_str: str) -> tuple:
         return (False, "boto3 is required for S3 access.")
     except Exception as e:
         err = str(e)
-        if "NoSuchKey" in err or "404" in err or "Not Found" in err:
+        if any(k in err for k in ("NoSuchKey", "404", "Not Found", "AccessDenied")):
             return (False, f"Log not available for UUID: {uuid_str}")
         return (False, f"Failed to fetch log: {err}")
 
@@ -833,14 +833,14 @@ def _compute_overview_data(
         )
         awr = ((at - al) / at * 100) if at > 0 else 100.0
 
-        worst_m, worst_v = None, 0.0
+        worst_m, worst_v, worst_raw = None, 0.0, 0.0
         for r in ar:
             for mname, mc in metrics_cfg.items():
                 pct = r.get(f"{mname}_pct")
                 if pct is not None:
                     norm = pct if mc["higher_is_better"] else -pct
                     if norm < worst_v:
-                        worst_v, worst_m = norm, mname
+                        worst_v, worst_m, worst_raw = norm, mname, pct
 
         ah = "Healthy" if awr >= 90 else ("Warning" if awr >= 70 else "Regression")
         accel_rollup[accel] = {
@@ -850,6 +850,7 @@ def _compute_overview_data(
             "health": ah,
             "worst_metric": worst_m,
             "worst_val": worst_v,
+            "worst_raw_pct": worst_raw,
             "results": ar,
         }
 
@@ -1783,7 +1784,9 @@ def render_overview_section(df):
     ov_upstream = selected_pair.get("upstream")
     ov_additional = selected_pair.get("additional", [])
     # True when both sides are upstream vLLM releases (not RHAIIS vs RHAIIS)
-    is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith("vLLM-")
+    is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith(
+        "vLLM-"
+    )
 
     st.markdown(
         f"Executive summary comparing **{ov_current}** against **{ov_previous}** (previous release)."
@@ -2189,8 +2192,11 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     # ── Per-Accelerator Health Cards ────────────────────────────────
     st.markdown("### Performance by Accelerator")
     st.caption(
-        "Per-accelerator rollup averaged across all models and profiles — "
-        "status is determined by worst regression across all models."
+        "Per-accelerator rollup comparing the current release to the previous one. "
+        "**Avg Tput** is the mean throughput change across all combinations "
+        "(model × accelerator × profile). "
+        "**Win Rate** is the percentage of combinations where throughput improved. "
+        "Click any accelerator card to drill down into per-combo details."
     )
     accel_cols = st.columns(len(data["accel_rollup"]) or 1)
     for idx, (accel, info) in enumerate(data["accel_rollup"].items()):
@@ -2207,50 +2213,80 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             }[info["health"]]
             dots = _health_dots_html(info["health"])
 
-            worst_line = ""
-            if info["worst_metric"] and info["worst_val"] < 0:
-                worst_line = (
+            worst_label = _METRIC_SHORT.get(
+                info["worst_metric"], info["worst_metric"] or ""
+            )
+            worst_line = (
+                (
                     f'<div class="family-card-stat">'
-                    f"Worst: <b>{info['worst_metric']}</b> {info['worst_val']:+.1f} %"
+                    f"Worst: <b>{worst_label}</b> {info['worst_raw_pct']:+.1f} %"
                     f"</div>"
                 )
+                if info["worst_metric"]
+                else ""
+            )
 
-            # Per-model throughput breakdown for this accelerator
-            seen_models = {}
-            for r in info["results"]:
-                key = r["short_name"]
-                if key not in seen_models:
-                    seen_models[key] = []
+            wr_cls = (
+                "val-green"
+                if info["win_rate"] >= 90
+                else ("val-red" if info["win_rate"] < 70 else "")
+            )
+            tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
+
+            accel_families = sorted(
+                {_model_family(r["model"]) for r in info["results"]}
+            )
+            accel_profiles = sorted(
+                {
+                    _display_profile(r["profile"], r.get("custom_isl_osl", ""))
+                    for r in info["results"]
+                }
+            )
+            n_combos = len(info["results"])
+
+            detail_lines = ""
+            for r in sorted(
+                info["results"], key=lambda x: (x["short_name"], x["profile"])
+            ):
                 pct = r.get("Throughput_pct")
-                if pct is not None:
-                    seen_models[key].append(pct)
-            model_lines = ""
-            for mname, pcts in sorted(seen_models.items()):
-                avg = float(np.mean(pcts)) if pcts else 0
+                if pct is None:
+                    continue
                 icon = (
                     "🟢"
-                    if avg > NEUTRAL_THRESHOLD_PCT
-                    else ("🟡" if avg >= -NEUTRAL_THRESHOLD_PCT else "🔴")
+                    if pct > NEUTRAL_THRESHOLD_PCT
+                    else ("🟡" if pct >= -NEUTRAL_THRESHOLD_PCT else "🔴")
                 )
-                model_lines += f"• {icon} <b>{mname}</b>: {avg:+.1f} % throughput<br>"
+                prof = _display_profile(r["profile"], r.get("custom_isl_osl", ""))
+                detail_lines += (
+                    f"• {icon} <b>{r['short_name']}</b> "
+                    f"TP{r['tp']} · {prof}: "
+                    f"{pct:+.1f} %<br>"
+                )
 
-            tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
             st.markdown(
                 f"""<div class="overview-family-card {status_cls}"><details><summary>
 <div class="family-card-header">
 <span class="family-card-name">{_accel_display(accel)}</span>
 <span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
 </div>
-<div class="family-card-stat">{info["n_models"]} model(s) &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
-                    {worst_line}
-                    <div class="family-card-stat">Win Rate: <b>{info["win_rate"]:.0f} %</b></div>
-                </summary>
-                <div class="overview-card-detail">
-                    Per-model throughput delta:<br><br>
-                    {model_lines}
-                </div></details></div>""",
+<div class="family-card-stat">{info["n_models"]} model{"s" if info["n_models"] != 1 else ""} &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
+{worst_line}
+<div class="family-card-stat">Competitive Win Rate: <b class="{wr_cls}">{info["win_rate"]:.0f} %</b></div>
+</summary>
+<div class="overview-card-detail">
+<b>Coverage:</b> {", ".join(accel_families)} &mdash; {n_combos} combo{"s" if n_combos != 1 else ""} across {", ".join(accel_profiles)}<br><br>
+<b>Per-combo throughput delta (geometric mean):</b><br><br>
+{detail_lines}
+</div></details></div>""",
                 unsafe_allow_html=True,
             )
+    st.caption(
+        "**Worst** shows the single largest regression across Throughput, TTFT, and ITL "
+        "(the specific metric varies by accelerator). "
+        f"Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are excluded from win/loss (neutral). "
+        "**Status** is derived from win rate: "
+        "Healthy ≥ 90 %, Warning ≥ 70 %, Regression < 70 %."
+    )
 
     st.markdown("---")
 
@@ -6497,7 +6533,14 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         col1, col2 = st.columns([4, 1])
         with col1:
             st.markdown(
-                "💡 **Cost Methodology**: Based on PSAP AI Costs Dashboard methodology - throughput performance at optimal concurrency that meets PSAP latency SLOs."
+                "💡 **Cost Methodology**: Based on PSAP AI Costs Dashboard methodology - throughput performance "
+                "at optimal concurrency. Converts actual throughput numbers (under a latency constraint) "
+                "for a model + GPU combination into time to generate one million tokens, then into USD per "
+                "million tokens. The time-to-cost conversion uses hourly on-demand cloud-instance pricing, "
+                "which provides a convenient comparison point to API-provider costs (also quoted per million "
+                "tokens). **For GPU sizing guidance and an alternative cost model that estimates the number of "
+                "GPUs needed to meet throughput / SLO requirements and converts to on-prem vs. cloud costs, "
+                "see [GPU Infer](https://nb-qbits.github.io/gpuinfer/).**"
             )
         with col2, st.popover("ℹ️ Formulas"):
             st.markdown(
@@ -8695,6 +8738,11 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "dashboard_id": "7a3b910e7e827c",
                 "dashboard_name": "vllm-2b-dcgm-metrics-psap-rhaiis-h200",
             },
+            "H200_HERA": {
+                "dashboard_id": "7a3b910e7e827c",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-rhaiis-h200",
+                "extra_params": "&var-cluster_name=$__all",
+            },
             "MI300X": {
                 "dashboard_id": "amd-ods-az-amd-01",
                 "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
@@ -8708,12 +8756,20 @@ def render_filtered_data_section(filtered_df, use_expander=True):
         # Jan 1, 2026 00:00:00 UTC in milliseconds
         H200_DASHBOARD_CUTOFF_MS = 1767225600000
 
+        def _is_hera_run(run_name):
+            """Check if a run belongs to the H200 Hera cluster."""
+            if not isinstance(run_name, str):
+                return False
+            upper = run_name.upper()
+            return upper.startswith("H200-HERA-") or upper.startswith("H200_HERA-")
+
         def create_grafana_link(row):
             """Create Grafana dashboard link if timestamps are available."""
             start_time = row.get("guidellm_start_time_ms")
             end_time = row.get("guidellm_end_time_ms")
             uuid = row.get("uuid")
             accelerator = row.get("accelerator", "")
+            run_name = row.get("run", "")
 
             # Only create link if all required fields are present and not NaN
             if (
@@ -8728,9 +8784,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 start_ms = int(start_time)
                 end_ms = int(end_time)
 
-                # Determine which dashboard to use based on accelerator and date
-                if accelerator == "H200":
-                    # Use new dashboard for runs on or after Jan 1, 2026
+                # Determine which dashboard to use based on accelerator, cluster, and date
+                if _is_hera_run(run_name):
+                    dashboard_key = "H200_HERA"
+                elif accelerator == "H200":
                     if start_ms >= H200_DASHBOARD_CUTOFF_MS:
                         dashboard_key = "H200_NEW"
                     else:
@@ -8743,6 +8800,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 dashboard_config = GRAFANA_DASHBOARDS[dashboard_key]
                 dashboard_id = dashboard_config["dashboard_id"]
                 dashboard_name = dashboard_config["dashboard_name"]
+                extra_params = dashboard_config.get("extra_params", "")
 
                 # Build URL with accelerator-specific dashboard
                 base_url = "https://grafana-psap-obs.apps.ocp4.intlab.redhat.com"
@@ -8751,6 +8809,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                     f"?orgId=1&from={start_ms}&to={end_ms}"
                     f"&timezone=browser&var-deployment_uuid={uuid}"
                     f"&var-deployment_pod_name=$__all&var-rate_interval=1m"
+                    f"{extra_params}"
                 )
             return None
 
@@ -9091,7 +9150,10 @@ def render_confidentiality_notice():
         '<b style="color: #92400e;">Performance Data Disclaimer</b> — '
         "Red Hat Confidential. Disclosure requires signed NDA. "
         "External publication needs PSAP Inference Team approval "
-        '(<span style="color:#92400e;">@psap-inference</span> on #forum-psap).'
+        '(<span style="color:#92400e;">@psap-inference</span> on #forum-psap). '
+        "<b>For GPU sizing guidance and cost analysis, see "
+        '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
+        'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
         "</div>",
         unsafe_allow_html=True,
     )

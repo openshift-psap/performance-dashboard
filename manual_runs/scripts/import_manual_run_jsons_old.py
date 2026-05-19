@@ -22,6 +22,7 @@ def process_benchmark_section(
     tp_size,
     runtime_args,
     benchmark_index,
+    cluster=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -33,11 +34,15 @@ def process_benchmark_section(
         tp_size: Tensor parallelism size.
         runtime_args: Runtime configuration arguments.
         benchmark_index: Index of the benchmark run.
+        cluster: Optional cluster name (e.g., 'hera').
 
     Returns:
         dict: Processed benchmark metrics.
     """
-    full_model_name = f"{accelerator}-{model_name}-{tp_size}"
+    if cluster:
+        full_model_name = f"{accelerator}-{cluster}-{model_name}-{tp_size}"
+    else:
+        full_model_name = f"{accelerator}-{model_name}-{tp_size}"
 
     profile_args = benchmark_run.get("args", {}).get("profile", {})
     uuid = benchmark_run.get("run_id")
@@ -142,7 +147,7 @@ def process_benchmark_section(
 
 
 def parse_guidellm_json(
-    json_path, accelerator, model_name, version, tp_size, runtime_args
+    json_path, accelerator, model_name, version, tp_size, runtime_args, cluster=None
 ):
     """Parse GuideLL JSON benchmark results.
 
@@ -153,6 +158,7 @@ def parse_guidellm_json(
         version: Version of the inference server.
         tp_size: Tensor parallelism size.
         runtime_args: Runtime configuration arguments.
+        cluster: Optional cluster name (e.g., 'hera').
 
     Returns:
         list: List of processed benchmark results.
@@ -182,7 +188,14 @@ def parse_guidellm_json(
 
     for i, benchmark_run in enumerate(benchmarks):
         row_data = process_benchmark_section(
-            benchmark_run, accelerator, model_name, version, tp_size, runtime_args, i
+            benchmark_run,
+            accelerator,
+            model_name,
+            version,
+            tp_size,
+            runtime_args,
+            i,
+            cluster=cluster,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -222,6 +235,12 @@ def main():
         "--accelerator", required=True, help="Accelerator type (e.g., 'H100', 'A100')"
     )
     parser.add_argument(
+        "--cluster",
+        default=None,
+        help="Optional cluster name to distinguish runs on different clusters "
+        "(e.g., 'hera'). When set, the run column becomes <accelerator>-<cluster>-<model>-<tp>.",
+    )
+    parser.add_argument(
         "--runtime-args",
         required=True,
         help="Runtime arguments used for the inference server (e.g., 'tensor-parallel-size: 8; max-model-len: 8192; trust-remote-code: True')",
@@ -242,6 +261,7 @@ def main():
         args.version,
         args.tp,
         args.runtime_args,
+        cluster=args.cluster,
     )
 
     if new_data_df is not None and not new_data_df.empty:

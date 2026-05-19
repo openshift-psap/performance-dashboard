@@ -26,6 +26,7 @@ def process_benchmark_section(
     guidellm_start_time_ms,
     guidellm_end_time_ms,
     dp_size=None,
+    cluster=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -42,12 +43,16 @@ def process_benchmark_section(
         guidellm_start_time_ms: Aggregated start time in milliseconds.
         guidellm_end_time_ms: Aggregated end time in milliseconds.
         dp_size: Data parallelism size (None for TP runs).
+        cluster: Optional cluster name (e.g., 'hera') to distinguish runs on different clusters.
 
     Returns:
         dict: Processed benchmark metrics.
     """
     parallelism_tag = tp_size if tp_size is not None else dp_size
-    full_model_name = f"{accelerator}-{model_name}-{parallelism_tag}"
+    if cluster:
+        full_model_name = f"{accelerator}-{cluster}-{model_name}-{parallelism_tag}"
+    else:
+        full_model_name = f"{accelerator}-{model_name}-{parallelism_tag}"
 
     config = benchmark.get("config", {})
     uuid = config.get("run_id")
@@ -182,6 +187,7 @@ def parse_guidellm_json(
     image_tag,
     guidellm_version,
     dp_size=None,
+    cluster=None,
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -195,6 +201,7 @@ def parse_guidellm_json(
         image_tag: Container image tag used for the run.
         guidellm_version: Version of guidellm used to run the benchmark.
         dp_size: Data parallelism size (None for TP runs).
+        cluster: Optional cluster name (e.g., 'hera').
 
     Returns:
         DataFrame: Processed benchmark results.
@@ -256,6 +263,7 @@ def parse_guidellm_json(
             guidellm_start_time_ms,
             guidellm_end_time_ms,
             dp_size=dp_size,
+            cluster=cluster,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -312,6 +320,12 @@ def main():
         "--accelerator", required=True, help="Accelerator type (e.g., 'H200', 'MI300X')"
     )
     parser.add_argument(
+        "--cluster",
+        default=None,
+        help="Optional cluster name to distinguish runs on different clusters "
+        "(e.g., 'hera'). When set, the run column becomes <accelerator>-<cluster>-<model>-<tp>.",
+    )
+    parser.add_argument(
         "--runtime-args",
         required=True,
         help="Runtime arguments used for the inference server",
@@ -353,6 +367,7 @@ def main():
         args.image_tag,
         args.guidellm_version,
         dp_size=args.dp,
+        cluster=args.cluster,
     )
 
     if new_data_df is not None and not new_data_df.empty:
