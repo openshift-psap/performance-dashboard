@@ -4856,7 +4856,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 mcfg = metrics_config[metric_name]
                 col = mcfg["column"]
                 agg = mcfg["aggregation"]
-                mcfg["higher_is_better"]
+                _ = mcfg["higher_is_better"]
 
                 # Clean title: strip aggregation suffix, add "vs Concurrency"
                 display_title = metric_name.replace(" (Geometric Mean)", "").replace(
@@ -5068,7 +5068,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
             # --- Metric comparison buttons ---
             st.markdown(
-                "**📊 Click a metric below to open a detailed comparison popup:**"
+                "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
             )
             # Exclude "Peak Output Throughput" (same underlying graph as
             # Output Throughput since both use output_tok/sec vs concurrency)
@@ -5083,6 +5083,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         f"📊 {short}",
                         key=f"cmp_btn_{i}",
                         use_container_width=True,
+                        type="primary",
                     ):
                         st.session_state.compare_versions_summary_expanded = True
                         _show_metric_dialog(m_name)
@@ -8739,9 +8740,8 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "dashboard_name": "vllm-2b-dcgm-metrics-psap-rhaiis-h200",
             },
             "H200_HERA": {
-                "dashboard_id": "7a3b910e7e827c",
-                "dashboard_name": "vllm-2b-dcgm-metrics-psap-rhaiis-h200",
-                "extra_params": "&var-cluster_name=$__all",
+                "dashboard_id": "cd77e3aa2b40e0",
+                "dashboard_name": "vllm-2b-dcgm-metrics-rhaiis-ibm-dc-h200",
             },
             "MI300X": {
                 "dashboard_id": "amd-ods-az-amd-01",
@@ -9494,11 +9494,15 @@ def main():
 
             if "tp_sizes" in query_params:
                 try:
-                    url_tp_sizes = [
-                        int(tp.strip())
-                        for tp in query_params["tp_sizes"].split(",")
-                        if tp.strip().isdigit() and int(tp.strip()) in all_tp_sizes
-                    ]
+                    parsed = []
+                    for tp in query_params["tp_sizes"].split(","):
+                        val = float(tp.strip())
+                        int_val = int(val)
+                        if int_val in all_tp_sizes:
+                            parsed.append(int_val)
+                        elif val in all_tp_sizes:
+                            parsed.append(val)
+                    url_tp_sizes = parsed
                 except:
                     url_tp_sizes = []
 
@@ -10202,10 +10206,12 @@ def main():
             prev_selected_tp = st.session_state.get(prev_tp_key, None)
 
             # Check if models selection changed
+            # On first load (prev is None), don't treat URL-provided models as a "change"
+            # so we preserve the URL-based TP selection instead of selecting all.
             models_changed = (
                 (prev_selected_models != selected_models)
                 if prev_selected_models is not None
-                else (bool(selected_models))
+                else False
             )
 
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
