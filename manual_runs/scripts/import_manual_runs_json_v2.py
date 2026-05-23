@@ -48,7 +48,7 @@ def process_benchmark_section(
     Returns:
         dict: Processed benchmark metrics.
     """
-    parallelism_tag = tp_size if tp_size is not None else dp_size
+    parallelism_tag = f"tp{tp_size}" if tp_size is not None else f"dp{dp_size}"
     if cluster:
         full_model_name = f"{accelerator}-{cluster}-{model_name}-{parallelism_tag}"
     else:

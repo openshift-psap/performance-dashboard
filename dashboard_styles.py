@@ -931,6 +931,60 @@ def get_app_css():
         border-color: #e1e5e9 !important;
     }
 
+    /* ── Compare / graph action buttons ── */
+    @keyframes cmpBtnFadeIn {
+        from { opacity: 0; transform: translateY(6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    [class*="st-key-cmp_btn_"] button,
+    [class*="st-key-cmp_models_btn_"] button,
+    [class*="st-key-ca_btn_"] button {
+        background: linear-gradient(135deg, #4a6fa5 0%, #3b5998 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 0.6rem 1rem !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        letter-spacing: 0.01em !important;
+        box-shadow: 0 2px 6px rgba(59, 89, 152, 0.25) !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        cursor: pointer !important;
+        animation: cmpBtnFadeIn 0.4s ease-out both !important;
+    }
+    [class*="st-key-cmp_btn_0"] button,
+    [class*="st-key-cmp_models_btn_0"] button { animation-delay: 0s !important; }
+    [class*="st-key-cmp_btn_1"] button,
+    [class*="st-key-cmp_models_btn_1"] button { animation-delay: 0.06s !important; }
+    [class*="st-key-cmp_btn_2"] button,
+    [class*="st-key-cmp_models_btn_2"] button { animation-delay: 0.12s !important; }
+    [class*="st-key-cmp_btn_3"] button,
+    [class*="st-key-cmp_models_btn_3"] button { animation-delay: 0.18s !important; }
+    [class*="st-key-cmp_btn_4"] button,
+    [class*="st-key-cmp_models_btn_4"] button { animation-delay: 0.24s !important; }
+    [class*="st-key-cmp_btn_"] button:hover,
+    [class*="st-key-cmp_models_btn_"] button:hover,
+    [class*="st-key-ca_btn_"] button:hover {
+        background: linear-gradient(135deg, #3b5998 0%, #2d4373 100%) !important;
+        box-shadow: 0 4px 14px rgba(59, 89, 152, 0.40) !important;
+        transform: translateY(-2px) !important;
+        color: #ffffff !important;
+    }
+    [class*="st-key-cmp_btn_"] button:active,
+    [class*="st-key-cmp_models_btn_"] button:active,
+    [class*="st-key-ca_btn_"] button:active {
+        transform: translateY(0px) !important;
+        box-shadow: 0 1px 4px rgba(59, 89, 152, 0.25) !important;
+    }
+    [class*="st-key-cmp_btn_"] button p,
+    [class*="st-key-cmp_btn_"] button span,
+    [class*="st-key-cmp_models_btn_"] button p,
+    [class*="st-key-cmp_models_btn_"] button span,
+    [class*="st-key-ca_btn_"] button p,
+    [class*="st-key-ca_btn_"] button span {
+        color: #ffffff !important;
+    }
+
     </style>
     """
 
@@ -1171,6 +1225,29 @@ def get_dark_mode_css():
     .kpi-value {
         color: #58a6ff !important;
     }
+
+    /* Preserve graph button styling in dark mode */
+    [class*="st-key-cmp_btn_"] button,
+    [class*="st-key-cmp_models_btn_"] button,
+    [class*="st-key-ca_btn_"] button {
+        background: linear-gradient(135deg, #4a6fa5 0%, #3b5998 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+    [class*="st-key-cmp_btn_"] button:hover,
+    [class*="st-key-cmp_models_btn_"] button:hover,
+    [class*="st-key-ca_btn_"] button:hover {
+        background: linear-gradient(135deg, #3b5998 0%, #2d4373 100%) !important;
+        color: #ffffff !important;
+    }
+    [class*="st-key-cmp_btn_"] button p,
+    [class*="st-key-cmp_btn_"] button span,
+    [class*="st-key-cmp_models_btn_"] button p,
+    [class*="st-key-cmp_models_btn_"] button span,
+    [class*="st-key-ca_btn_"] button p,
+    [class*="st-key-ca_btn_"] button span {
+        color: #ffffff !important;
+    }
     </style>
     """
 
@@ -1279,6 +1356,29 @@ def get_light_mode_css():
         background-color: #ffffff !important;
         color: #1a1f36 !important;
         border: 1px solid #d1d5db !important;
+    }
+
+    /* Preserve graph button styling in light mode */
+    [class*="st-key-cmp_btn_"] button,
+    [class*="st-key-cmp_models_btn_"] button,
+    [class*="st-key-ca_btn_"] button {
+        background: linear-gradient(135deg, #4a6fa5 0%, #3b5998 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+    [class*="st-key-cmp_btn_"] button:hover,
+    [class*="st-key-cmp_models_btn_"] button:hover,
+    [class*="st-key-ca_btn_"] button:hover {
+        background: linear-gradient(135deg, #3b5998 0%, #2d4373 100%) !important;
+        color: #ffffff !important;
+    }
+    [class*="st-key-cmp_btn_"] button p,
+    [class*="st-key-cmp_btn_"] button span,
+    [class*="st-key-cmp_models_btn_"] button p,
+    [class*="st-key-cmp_models_btn_"] button span,
+    [class*="st-key-ca_btn_"] button p,
+    [class*="st-key-ca_btn_"] button span {
+        color: #ffffff !important;
     }
 
     /* Override metrics */
@@ -1599,6 +1699,41 @@ def get_light_mode_css():
     /* Ensure button text is visible */
     .stButton button span {
         color: #1a1f36 !important;
+    }
+
+    /* Re-apply graph button styling (after catch-all overrides) */
+    [class*="st-key-cmp_btn_"] button,
+    [class*="st-key-cmp_models_btn_"] button,
+    [class*="st-key-ca_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-cmp_models_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-ca_btn_"] button {
+        background: linear-gradient(135deg, #4a6fa5 0%, #3b5998 100%) !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 6px rgba(59, 89, 152, 0.25) !important;
+    }
+    [class*="st-key-cmp_btn_"] button:hover,
+    [class*="st-key-cmp_models_btn_"] button:hover,
+    [class*="st-key-ca_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-cmp_models_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-ca_btn_"] button:hover {
+        background: linear-gradient(135deg, #3b5998 0%, #2d4373 100%) !important;
+        color: #ffffff !important;
+        box-shadow: 0 4px 14px rgba(59, 89, 152, 0.40) !important;
+    }
+    [class*="st-key-cmp_btn_"] button p,
+    [class*="st-key-cmp_btn_"] button span,
+    [class*="st-key-cmp_models_btn_"] button p,
+    [class*="st-key-cmp_models_btn_"] button span,
+    [class*="st-key-ca_btn_"] button p,
+    [class*="st-key-ca_btn_"] button span,
+    .stButton [class*="st-key-cmp_btn_"] button span,
+    .stButton [class*="st-key-cmp_models_btn_"] button span,
+    .stButton [class*="st-key-ca_btn_"] button span {
+        color: #ffffff !important;
     }
 
     /* Re-apply specific colors for important elements */
