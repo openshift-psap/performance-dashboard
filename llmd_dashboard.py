@@ -3465,10 +3465,32 @@ def render_llmd_competitive_analysis_section(df):
                                     ms += 1
                             if mw > ml:
                                 model_wins += 1
+                                verdict = "win"
                             elif ml > mw:
                                 model_losses += 1
+                                verdict = "loss"
                             else:
                                 model_similar += 1
+                                verdict = "similar"
+                            if baseline not in group_scores:
+                                group_scores[baseline] = {}
+                            if competitor not in group_scores[baseline]:
+                                group_scores[baseline][competitor] = [
+                                    0,
+                                    0,
+                                    0,
+                                    [],
+                                ]
+                            group_scores[baseline][competitor][3].append(
+                                {
+                                    "model": row["Model"],
+                                    "profile": prof_label,
+                                    "verdict": verdict,
+                                    "wins": mw,
+                                    "losses": ml,
+                                    "similar": ms,
+                                }
+                            )
                         total = model_wins + model_losses + model_similar
                         if total == 0:
                             icon = "🟡"
@@ -3482,10 +3504,6 @@ def render_llmd_competitive_analysis_section(df):
                             f"{icon} {prof_label}: {model_wins} wins, "
                             f"{model_losses} losses, {model_similar} similar"
                         )
-                        if baseline not in group_scores:
-                            group_scores[baseline] = {}
-                        if competitor not in group_scores[baseline]:
-                            group_scores[baseline][competitor] = [0, 0, 0]
                         group_scores[baseline][competitor][0] += model_wins
                         group_scores[baseline][competitor][1] += model_losses
                         group_scores[baseline][competitor][2] += model_similar
@@ -3516,24 +3534,9 @@ def render_llmd_competitive_analysis_section(df):
                                     f"(C=1 excluded — not representative of "
                                     f"production workloads)."
                                 )
-                                summary_df = pd.DataFrame(summary_data)
-                                df_key = f"llmd_ca_{pair_key}_{label}"
-                                st.dataframe(
-                                    summary_df,
-                                    use_container_width=True,
-                                    hide_index=True,
-                                    column_config=column_config,
-                                    key=df_key,
-                                )
-                                st.markdown(
-                                    f"**Legend:** "
-                                    f"🟢 {baseline} outperforms {competitor} | "
-                                    f"🔴 {baseline} underperforms {competitor} | "
-                                    f"🟡 Similar Performance (< 5% difference)"
-                                )
 
                                 st.markdown(
-                                    "**Click a metric below to open a "
+                                    "**📊 Click a metric to open a "
                                     "detailed comparison graph:**"
                                 )
                                 btn_metrics = list(metrics_config.keys())
@@ -3557,6 +3560,24 @@ def render_llmd_competitive_analysis_section(df):
                                                 label,
                                             )
 
+                                summary_df = pd.DataFrame(summary_data)
+                                df_key = f"llmd_ca_{pair_key}_{label}"
+                                tbl_height = 38 + len(summary_df) * 35 + 2
+                                st.dataframe(
+                                    summary_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config=column_config,
+                                    key=df_key,
+                                    height=tbl_height,
+                                )
+                                st.markdown(
+                                    f"**Legend:** "
+                                    f"🟢 {baseline} outperforms {competitor} | "
+                                    f"🔴 {baseline} underperforms {competitor} | "
+                                    f"🟡 Similar Performance (< 5% difference)"
+                                )
+
             if group_scores:
                 with score_placeholder:
                     cols = st.columns(len(group_scores))
@@ -3575,7 +3596,11 @@ def render_llmd_competitive_analysis_section(df):
                         )
 
                         competitor_rows = ""
-                        for comp, (cw, cl, cs) in comp_dict.items():
+                        for comp, score_entry in comp_dict.items():
+                            cw, cl, cs = score_entry[0], score_entry[1], score_entry[2]
+                            model_details = (
+                                score_entry[3] if len(score_entry) > 3 else []
+                            )
                             c_decisive = cw + cl
                             cwr = (cw / c_decisive * 100) if c_decisive > 0 else None
                             if cwr is None:
@@ -3588,6 +3613,65 @@ def render_llmd_competitive_analysis_section(df):
                                     else ("val-amber" if cwr >= 40 else "val-red")
                                 )
                                 wr_text = f"{cwr:.0f}%"
+
+                            models_by_name = {}
+                            for md in model_details:
+                                name = md["model"]
+                                if name not in models_by_name:
+                                    models_by_name[name] = {}
+                                models_by_name[name][md["profile"]] = md["verdict"]
+
+                            all_profiles = sorted(
+                                {md["profile"] for md in model_details}
+                            )
+                            detail_lines = ""
+                            for name, prof_verdicts in sorted(models_by_name.items()):
+                                profile_cells = ""
+                                for p in all_profiles:
+                                    v = prof_verdicts.get(p)
+                                    if v is None:
+                                        profile_cells += (
+                                            "<td style='padding:2px 8px;"
+                                            "text-align:center;'>—</td>"
+                                        )
+                                    else:
+                                        icon = {
+                                            "win": "🟢",
+                                            "loss": "🔴",
+                                            "similar": "🟡",
+                                        }[v]
+                                        profile_cells += (
+                                            f"<td style='padding:2px 8px;"
+                                            f"text-align:center;'>{icon}</td>"
+                                        )
+                                detail_lines += (
+                                    f"<tr>"
+                                    f"<td style='padding:2px 6px;'>{name}</td>"
+                                    f"{profile_cells}"
+                                    f"</tr>"
+                                )
+
+                            detail_table = ""
+                            if detail_lines:
+                                header_cells = "".join(
+                                    f"<th style='padding:2px 8px;"
+                                    f"text-align:center;'>{p}</th>"
+                                    for p in all_profiles
+                                )
+                                detail_table = (
+                                    f"<div style='margin-top:0.5rem;"
+                                    f"font-size:0.85rem;'>"
+                                    f"<table style='width:100%;"
+                                    f"border-collapse:collapse;'>"
+                                    f"<tr style='border-bottom:1px solid "
+                                    f"rgba(0,0,0,0.15);'>"
+                                    f"<th style='padding:2px 6px;"
+                                    f"text-align:left;'>Model</th>"
+                                    f"{header_cells}"
+                                    f"</tr>"
+                                    f"{detail_lines}</table></div>"
+                                )
+
                             competitor_rows += (
                                 f'<div class="vllm-stat-row" '
                                 f'style="margin-top:0.5rem;">'
@@ -3610,7 +3694,7 @@ def render_llmd_competitive_analysis_section(df):
                                 f'<div class="vllm-stat-label">Similar</div>'
                                 f'<div class="vllm-stat-value val-amber">'
                                 f"{cs}</div></div>"
-                                f"</div>"
+                                f"</div>{detail_table}"
                             )
 
                         wr_cls_overall = (
@@ -3624,8 +3708,13 @@ def render_llmd_competitive_analysis_section(df):
                         with col:
                             st.markdown(
                                 f'<div class="vllm-scorecard vllm-hue-{hue}">'
+                                f'<details><summary style="cursor:pointer;'
+                                f'list-style:none;">'
                                 f'<div class="vllm-scorecard-title">'
-                                f"{bl} — Competitive Score</div>"
+                                f"{bl} vs {' / '.join(comp_dict.keys())}"
+                                f'<span style="float:right;font-size:0.8rem;'
+                                f'opacity:0.6;">▼ click for details</span>'
+                                f"</div>"
                                 f'<div class="vllm-stat-row">'
                                 f'<div class="vllm-stat">'
                                 f'<div class="vllm-stat-label">'
@@ -3647,9 +3736,18 @@ def render_llmd_competitive_analysis_section(df):
                                 f'<div class="vllm-stat-label">Similar</div>'
                                 f'<div class="vllm-stat-value val-amber">'
                                 f"{all_s}</div></div></div>"
+                                f"</summary>"
                                 f'<hr style="margin:0.6rem 0;border:none;'
                                 f'border-top:1px solid rgba(0,0,0,0.1);">'
-                                f"{competitor_rows}</div>",
+                                f"{competitor_rows}"
+                                f'<div style="margin-top:0.6rem;'
+                                f'font-size:0.8rem;opacity:0.7;">'
+                                f"🟢 {bl} wins majority of metrics "
+                                f"&nbsp;|&nbsp; "
+                                f"🔴 {bl} loses majority of metrics "
+                                f"&nbsp;|&nbsp; "
+                                f"🟡 Similar (tied or &lt;5% diff)</div>"
+                                f"</details></div>",
                                 unsafe_allow_html=True,
                             )
 
