@@ -206,6 +206,7 @@ data/*.json
 !data/sample*
 !data/README.md
 dummy-no-git/
+gpt-oss-dynamo-llmd/
 
 # Log files
 *.log

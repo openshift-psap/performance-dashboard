@@ -62,6 +62,15 @@ except ImportError:
     LLMD_AVAILABLE = False
     print("Warning: llmd_dashboard module not found. LLM-D view will be disabled.")
 
+# Import vLLM CPU dashboard
+try:
+    from cpu_dashboard import render_cpu_dashboard
+
+    CPU_AVAILABLE = True
+except ImportError:
+    CPU_AVAILABLE = False
+    print("Warning: cpu_dashboard module not found. vLLM CPU view will be disabled.")
+
 # Configure logging to stdout for container logs
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +83,7 @@ logger = logging.getLogger(__name__)
 S3_BUCKET = os.environ.get("S3_BUCKET")
 S3_KEY = os.environ.get("S3_KEY", "consolidated_dashboard.csv")
 S3_KEY_LLMD = os.environ.get("S3_KEY_LLMD", "llmd-dashboard.csv")
+S3_KEY_CPU = os.environ.get("S3_KEY_CPU", "cpu_dashboard.csv")
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
@@ -730,6 +740,7 @@ def _compute_overview_data(
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             pd_["intended concurrency"].dropna().unique()
         )
+        conc_for_geomean = {c for c in all_conc if c > 1}
         row = {
             "model": model,
             "short_name": _short_model_name(model),
@@ -739,7 +750,9 @@ def _compute_overview_data(
             "custom_isl_osl": cisl_osl,
         }
         for mname, mc in metrics_cfg.items():
-            pct, better, _, _, similar = compare_two_datasets(cd, pd_, mc, all_conc)
+            pct, better, _, _, similar = compare_two_datasets(
+                cd, pd_, mc, conc_for_geomean
+            )
             row[f"{mname}_pct"] = pct
             row[f"{mname}_better"] = better
             row[f"{mname}_similar"] = similar
@@ -922,12 +935,15 @@ def _compute_overview_data(
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             vd["intended concurrency"].dropna().unique()
         )
-        pct, better, _, _, similar = compare_two_datasets(cd, vd, tput_cfg, all_conc)
+        conc_for_geomean = {c for c in all_conc if c > 1}
+        pct, better, _, _, similar = compare_two_datasets(
+            cd, vd, tput_cfg, conc_for_geomean
+        )
         ttft_pct, ttft_better, _, _, ttft_similar = compare_two_datasets(
-            cd, vd, ttft_cfg, all_conc
+            cd, vd, ttft_cfg, conc_for_geomean
         )
         itl_pct, itl_better, _, _, itl_similar = compare_two_datasets(
-            cd, vd, itl_cfg, all_conc
+            cd, vd, itl_cfg, conc_for_geomean
         )
         profile_label = (
             format_custom_isl_osl(cisl_osl) if cisl_osl else clean_profile_name(profile)
@@ -1189,9 +1205,59 @@ def render_competitive_analysis_section(df):
             padding: 0.8rem 1.5rem;
             font-weight: 600;
             min-height: 50px;
+            transition: all 0.3s ease;
         }
         .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
             font-size: 1.4rem;
+            animation: none;
+        }
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="false"] {
+            animation: ca-tab-pulse 1.8s ease-in-out infinite;
+            cursor: pointer;
+            background-color: rgba(59, 89, 152, 0.15);
+            border: 1.5px solid rgba(59, 89, 152, 0.35);
+            border-radius: 8px;
+        }
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="false"]:hover {
+            animation: none;
+            transform: translateY(-3px) scale(1.03);
+            box-shadow: 0 6px 18px rgba(59, 89, 152, 0.4);
+            background-color: rgba(59, 89, 152, 0.25);
+            border-color: rgba(59, 89, 152, 0.5);
+        }
+        @keyframes ca-tab-pulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(59, 89, 152, 0.05);
+                transform: translateY(0);
+            }
+            50% {
+                box-shadow: 0 2px 14px 0 rgba(59, 89, 152, 0.45);
+                transform: translateY(-2px);
+            }
+        }
+        .st-key-ca_section [data-testid="stExpander"] {
+            animation: ca-expander-glow 2.5s ease-in-out infinite !important;
+            transition: all 0.3s ease !important;
+            border-radius: 8px !important;
+            border: 1.5px solid rgba(59, 89, 152, 0.2) !important;
+        }
+        .st-key-ca_section [data-testid="stExpander"]:hover {
+            animation: none !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 4px 14px rgba(59, 89, 152, 0.3) !important;
+            border-color: rgba(59, 89, 152, 0.5) !important;
+            background-color: rgba(59, 89, 152, 0.03) !important;
+        }
+        .st-key-ca_section [data-testid="stExpander"]:has(details[open]) {
+            animation: none !important;
+            box-shadow: none !important;
+            transform: none !important;
+            border-color: rgba(0, 0, 0, 0.1) !important;
+            background-color: transparent !important;
+        }
+        @keyframes ca-expander-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 89, 152, 0); }
+            50% { box-shadow: 0 0 8px 1px rgba(59, 89, 152, 0.2); }
         }
         </style>""",
         unsafe_allow_html=True,
@@ -1515,7 +1581,7 @@ def render_competitive_analysis_section(df):
                             )
                             all_common_conc.update(base_conc.intersection(comp_conc))
 
-                        conc_set = all_common_conc
+                        conc_set = {c for c in all_common_conc if c > 1}
 
                         summary_data = []
                         for model, tp in common_model_tp:
@@ -1647,7 +1713,8 @@ def render_competitive_analysis_section(df):
                                 st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
                                 st.caption(
                                     f"ℹ️ Geometric mean metrics use concurrency levels: "
-                                    f"{', '.join(str(c) for c in conc_list)}. "
+                                    f"{', '.join(str(c) for c in conc_list)} "
+                                    f"(C=1 excluded — not representative of production workloads). "
                                     f"Peak throughput uses all common concurrency levels."
                                 )
                                 summary_df = pd.DataFrame(summary_data)
@@ -1679,6 +1746,7 @@ def render_competitive_analysis_section(df):
                                             f"📊 {short}",
                                             key=btn_key,
                                             use_container_width=True,
+                                            type="primary",
                                         ):
                                             _show_ca_metric_dialog(
                                                 m_name,
@@ -4616,16 +4684,20 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if all_common_concurrencies_sorted:
             # Key includes filter selections so the widget resets when filters change
             conc_key = f"compare_summary_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            default_concurrencies = [
+                c for c in all_common_concurrencies_sorted if c > 1
+            ]
             selected_concurrencies = st.multiselect(
                 "Select Concurrency Level(s) for Geometric Mean",
                 options=all_common_concurrencies_sorted,
-                default=all_common_concurrencies_sorted,
+                default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both versions are shown. "
+                    "Concurrency 1 is excluded by default (not representative of production workloads). "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -4635,7 +4707,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             selected_conc_set = set(selected_concurrencies)
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
-                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
+                f"(C=1 excluded by default — not representative of production workloads). "
                 f"Peak throughput uses all common concurrency levels."
             )
         else:
@@ -4922,8 +4995,6 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     c1 = set(d1["intended concurrency"].dropna().unique())
                     c2 = set(d2["intended concurrency"].dropna().unique())
                     cc = c1.intersection(c2)
-                    if agg == "geom_mean":
-                        cc = cc.intersection(selected_conc_set)
                     if not cc:
                         continue
 
@@ -5057,8 +5128,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 if agg == "geom_mean":
                     conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
                     st.caption(
-                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
-                        "(filtered by geometric mean concurrency selection)."
+                        f"ℹ️ Graph shows all common concurrency levels. "
+                        f"Geometric mean uses: {conc_str}."
                     )
                 else:
                     st.caption(
@@ -5442,16 +5513,20 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
 
         if all_common_concurrencies_sorted:
             conc_key = f"compare_models_conc_{model_1}_{model_2}"
+            default_concurrencies = [
+                c for c in all_common_concurrencies_sorted if c > 1
+            ]
             selected_concurrencies = st.multiselect(
                 "Select Concurrency Level(s) for Geometric Mean",
                 options=all_common_concurrencies_sorted,
-                default=all_common_concurrencies_sorted,
+                default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
                 args=("compare_models_expanded",),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both models are shown. "
+                    "Concurrency 1 is excluded by default (not representative of production workloads). "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -5461,7 +5536,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
             selected_conc_set = set(selected_concurrencies)
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
-                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
+                f"(C=1 excluded by default — not representative of production workloads). "
                 f"Peak throughput uses all common concurrency levels."
             )
         else:
@@ -5682,8 +5758,6 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     c1 = set(d1["intended concurrency"].dropna().unique())
                     c2 = set(d2["intended concurrency"].dropna().unique())
                     cc = c1.intersection(c2)
-                    if agg == "geom_mean":
-                        cc = cc.intersection(selected_conc_set)
                     if not cc:
                         continue
 
@@ -5813,8 +5887,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                 if agg == "geom_mean":
                     conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
                     st.caption(
-                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
-                        "(filtered by geometric mean concurrency selection)."
+                        f"ℹ️ Graph shows all common concurrency levels. "
+                        f"Geometric mean uses: {conc_str}."
                     )
                 else:
                     st.caption(
@@ -9116,6 +9190,8 @@ def render_sidebar_header():
             view_options.append("MLPerf Dashboard")
         if LLMD_AVAILABLE:
             view_options.append("LLM-D Dashboard")
+        if CPU_AVAILABLE:
+            view_options.append("vLLM CPU Dashboard")
 
         if len(view_options) > 1:
             # Pre-populate the widget key so we never need the `index`
@@ -9143,6 +9219,14 @@ def render_sidebar_header():
 
 def render_confidentiality_notice():
     """Render the confidentiality notice."""
+    selected_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
+    gpu_infer_text = ""
+    if selected_view != "vLLM CPU Dashboard":
+        gpu_infer_text = (
+            "<b>For GPU sizing guidance and cost analysis, see "
+            '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
+            'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
+        )
     st.markdown(
         '<div style="background-color: rgba(245,158,11,0.08); border-left: 3px solid #f59e0b; '
         "padding: 6px 12px; border-radius: 8px; font-size: 0.82rem; line-height: 1.5; "
@@ -9151,9 +9235,7 @@ def render_confidentiality_notice():
         "Red Hat Confidential. Disclosure requires signed NDA. "
         "External publication needs PSAP Inference Team approval "
         '(<span style="color:#92400e;">@psap-inference</span> on #forum-psap). '
-        "<b>For GPU sizing guidance and cost analysis, see "
-        '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
-        'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
+        f"{gpu_infer_text}"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -9167,7 +9249,12 @@ initialize_session_state()
 # must not overwrite it here — that would undo the user's click.
 if "view" in st.query_params and "dashboard_view_selector" not in st.session_state:
     view_from_url = st.query_params["view"]
-    if view_from_url in ["RHAIIS Dashboard", "MLPerf Dashboard", "LLM-D Dashboard"]:
+    if view_from_url in [
+        "RHAIIS Dashboard",
+        "MLPerf Dashboard",
+        "LLM-D Dashboard",
+        "vLLM CPU Dashboard",
+    ]:
         st.session_state.selected_view = view_from_url
         st.session_state.dashboard_view_selector = view_from_url
 
@@ -9303,6 +9390,11 @@ if MLPERF_AVAILABLE and selected_view == "MLPerf Dashboard":
 # If LLM-D view is selected, render LLM-D dashboard and exit
 if LLMD_AVAILABLE and selected_view == "LLM-D Dashboard":
     render_llmd_dashboard("llmd-dashboard.csv")
+    st.stop()  # Stop execution here, don't load RHAIIS data
+
+# If vLLM CPU view is selected, render CPU dashboard and exit
+if CPU_AVAILABLE and selected_view == "vLLM CPU Dashboard":
+    render_cpu_dashboard("cpu_dashboard.csv")
     st.stop()  # Stop execution here, don't load RHAIIS data
 
 # Otherwise, continue with RHAIIS dashboard

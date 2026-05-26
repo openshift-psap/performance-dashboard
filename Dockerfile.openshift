@@ -17,9 +17,11 @@ COPY dashboard.py .
 COPY dashboard_styles.py .
 COPY mlperf_datacenter.py .
 COPY llmd_dashboard.py .
+COPY cpu_dashboard.py .
 COPY intelliconfig.py .
 COPY consolidated_dashboard.csv .
 COPY llmd-dashboard.csv .
+COPY cpu_dashboard.csv .
 
 # Copy all MLPerf data (version CSV files and dataset summaries)
 COPY mlperf-data/ ./mlperf-data/
