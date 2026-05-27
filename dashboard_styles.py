@@ -2126,7 +2126,7 @@ def initialize_session_state():
 def initialize_streamlit_config():
     """Initialize Streamlit configuration."""
     st.set_page_config(
-        page_title="Staging Performance Dashboard",
+        page_title="LLM Inference Performance Dashboard",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
