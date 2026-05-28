@@ -3750,7 +3750,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     go.Scatter(
                                         x=xs,
                                         y=ys,
-                                        mode="markers+lines",
+                                        mode="markers+lines+text",
                                         name=f"{version} | {hw.upper()} (TP={tp_size})",
                                         marker={
                                             "size": 10,
@@ -3758,6 +3758,9 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                             "line": {"width": 1, "color": "white"},
                                         },
                                         line={"color": color, "width": 2},
+                                        text=[str(c) for c in concs],
+                                        textposition="top center",
+                                        textfont={"size": 9},
                                         hovertext=hover_text,
                                         hoverinfo="text",
                                     )
@@ -3765,19 +3768,23 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 metric_titles = {
                     "tput_per_gpu": (
-                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Throughput = Total Tokens/s (prompt + output)",
                         "Total Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "output_tput_per_gpu": (
-                        "Note: Throughput is Output Tokens per second only",
+                        "Throughput = Output Tokens/s only",
                         "Output Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "input_tput_per_gpu": (
-                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Throughput = Input Tokens/s (prompt only)",
                         "Input Token Throughput per GPU (tok/s/gpu)",
                     ),
                 }
-                plot_title, y_axis_label = metric_titles[selected_throughput_key]
+                tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                plot_title = (
+                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"<br><sup>{tput_note}</sup>"
+                )
 
                 fig.update_layout(
                     title=plot_title,
@@ -3791,6 +3798,16 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "font": {"size": 12},
                     },
                     height=600,
+                )
+                fig.add_annotation(
+                    text="Numbers on points = number of concurrent requests",
+                    xref="paper",
+                    yref="paper",
+                    x=0.0,
+                    y=1.05,
+                    showarrow=False,
+                    font={"size": 11, "color": "gray"},
+                    xanchor="left",
                 )
 
                 st.plotly_chart(fig, use_container_width=True, theme=None)
@@ -3886,7 +3903,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     go.Scatter(
                                         x=xs,
                                         y=ys,
-                                        mode="markers+lines",
+                                        mode="markers+lines+text",
                                         name=f"{version} | {hw.upper()} (TP={tp_size})",
                                         marker={
                                             "size": 10,
@@ -3894,6 +3911,9 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                             "line": {"width": 1, "color": "white"},
                                         },
                                         line={"color": color, "width": 2},
+                                        text=[str(c) for c in concs],
+                                        textposition="top center",
+                                        textfont={"size": 9},
                                         hovertext=hover_text,
                                         hoverinfo="text",
                                     )
@@ -3901,19 +3921,23 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 metric_titles = {
                     "tput_per_gpu": (
-                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Throughput = Total Tokens/s (prompt + output)",
                         "Total Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "output_tput_per_gpu": (
-                        "Note: Throughput is Output Tokens per second only",
+                        "Throughput = Output Tokens/s only",
                         "Output Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "input_tput_per_gpu": (
-                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Throughput = Input Tokens/s (prompt only)",
                         "Input Token Throughput per GPU (tok/s/gpu)",
                     ),
                 }
-                plot_title, y_axis_label = metric_titles[selected_throughput_key]
+                tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                plot_title = (
+                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"<br><sup>{tput_note}</sup>"
+                )
 
                 fig.update_layout(
                     title=plot_title,
@@ -3927,6 +3951,16 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "font": {"size": 12},
                     },
                     height=600,
+                )
+                fig.add_annotation(
+                    text="Numbers on points = number of concurrent requests",
+                    xref="paper",
+                    yref="paper",
+                    x=0.0,
+                    y=1.05,
+                    showarrow=False,
+                    font={"size": 11, "color": "gray"},
+                    xanchor="left",
                 )
 
                 st.plotly_chart(fig, use_container_width=True, theme=None)
@@ -4225,11 +4259,15 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                     for _, r in subset.iterrows()
                 ]
 
+                conc_labels = [
+                    str(int(c)) for c in subset["intended concurrency"].tolist()
+                ]
+
                 fig.add_trace(
                     go.Scatter(
                         x=subset[x_col].tolist(),
                         y=subset[y_col].tolist(),
-                        mode="markers+lines",
+                        mode="markers+lines+text",
                         name=trace_name,
                         marker={
                             "size": 10,
@@ -4237,6 +4275,9 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                             "line": {"width": 1, "color": "white"},
                         },
                         line={"color": color, "width": 2},
+                        text=conc_labels,
+                        textposition="top center",
+                        textfont={"size": 9},
                         hovertext=hover_text,
                         hoverinfo="text",
                     )
@@ -4244,17 +4285,35 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
 
         import plotly.graph_objects as go
 
+        isl_osl_values = vdf[["prompt toks", "output toks"]].drop_duplicates()
+        if len(isl_osl_values) == 1:
+            isl_osl_label = f"{int(isl_osl_values.iloc[0]['prompt toks'])}/{int(isl_osl_values.iloc[0]['output toks'])}"
+        else:
+            isl_osl_label = ", ".join(
+                f"{int(r['prompt toks'])}/{int(r['output toks'])}"
+                for _, r in isl_osl_values.iterrows()
+            )
+
+        models_in_view = sorted(vdf["model"].unique())
+        models_label = ", ".join(
+            m.split("/")[-1] if "/" in m else m for m in models_in_view
+        )
+
+        tput_title_map = {
+            "total": "Throughput = Total Tokens/s (prompt + output)",
+            "output": "Throughput = Output Tokens/s only",
+            "input": "Throughput = Input Tokens/s (prompt only)",
+        }
+
         with tab1:
             st.markdown("### Token Throughput per GPU vs. End-to-end Latency")
             fig1 = go.Figure()
             _build_traces(fig1, "request_latency_median", "Latency", ".2f")
-            tput_title_map = {
-                "total": "Total Tokens per second (prompt + output tokens combined)",
-                "output": "Output Tokens per second only",
-                "input": "Input Tokens per second (prompt tokens only)",
-            }
             fig1.update_layout(
-                title="Note: Throughput is " + tput_title_map[tput_mode],
+                title=(
+                    f"{models_label} | ISL/OSL: {isl_osl_label}"
+                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
+                ),
                 xaxis_title="End-to-end Latency (s)",
                 yaxis_title=y_label,
                 template="plotly_white_light",
@@ -4263,6 +4322,16 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
             )
+            fig1.add_annotation(
+                text="Numbers on points = number of concurrent requests",
+                xref="paper",
+                yref="paper",
+                x=0.0,
+                y=1.05,
+                showarrow=False,
+                font={"size": 11, "color": "gray"},
+                xanchor="left",
+            )
             st.plotly_chart(fig1, use_container_width=True, theme=None)
 
         with tab2:
@@ -4270,7 +4339,10 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             fig2 = go.Figure()
             _build_traces(fig2, "median_intvty", "Interactivity", ".2f")
             fig2.update_layout(
-                title="Note: Throughput is " + tput_title_map[tput_mode],
+                title=(
+                    f"{models_label} | ISL/OSL: {isl_osl_label}"
+                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
+                ),
                 xaxis_title="Interactivity (tok/s/user)",
                 yaxis_title=y_label,
                 template="plotly_white_light",
@@ -4278,6 +4350,16 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 showlegend=True,
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
+            )
+            fig2.add_annotation(
+                text="Numbers on points = number of concurrent requests",
+                xref="paper",
+                yref="paper",
+                x=0.0,
+                y=1.05,
+                showarrow=False,
+                font={"size": 11, "color": "gray"},
+                xanchor="left",
             )
             st.plotly_chart(fig2, use_container_width=True, theme=None)
 
