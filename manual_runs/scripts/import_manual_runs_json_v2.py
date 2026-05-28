@@ -233,7 +233,9 @@ def parse_guidellm_json(
 
     # Check guidellm version
     metadata = data.get("metadata", {})
-    guidellm_version = metadata.get("guidellm_version", "unknown")
+    detected_version = metadata.get("guidellm_version")
+    if detected_version:
+        guidellm_version = detected_version
     print(f"Detected guidellm version: {guidellm_version}")
 
     all_run_data = []
