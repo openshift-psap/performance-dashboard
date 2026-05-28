@@ -24,7 +24,10 @@ python import_manual_runs_json_v2.py <json_file> \
   --runtime-args <server_args> \
   --image-tag <container_image> \
   --guidellm-version <guidellm_version> \
-  --csv-file <output_csv>
+  --csv-file <output_csv> \
+  --dataset <dataset_name> \
+  --spec-decoding <spec_decoding_method> \
+  --prefix-caching <yes|no>
 ```
 
 ## Arguments
@@ -40,6 +43,9 @@ python import_manual_runs_json_v2.py <json_file> \
 | `--image-tag`        | Yes      | Container image tag                             | `vllm/vllm-openai:v0.13.0`              |
 | `--guidellm-version` | Yes      | guidellm version used                           | `v0.5.1`, `v0.3.0`                      |
 | `--csv-file`         | No       | Output CSV path (default: `new_benchmarks.csv`) | `llama-70b-vllm.csv`                    |
+| `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
+| `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
+| `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
 
 ## Examples
 
@@ -73,6 +79,24 @@ python import_manual_runs_json_v2.py \
   --csv-file "llama-70b-trtllm.csv"
 ```
 
+### Real Dataset with Speculative Decoding and Prefix Caching
+
+```bash
+python import_manual_runs_json_v2.py \
+  gpt-oss-120b-sd-pc.json \
+  --model "openai/gpt-oss-120b" \
+  --version "vLLM-0.13.0" \
+  --tp 8 \
+  --accelerator "H200" \
+  --runtime-args "tensor-parallel-size: 8; max-model-len: 131072; gpu-memory-utilization: 0.9" \
+  --image-tag "vllm/vllm-openai:v0.13.0" \
+  --guidellm-version "v0.5.1" \
+  --dataset "mlperf-gpt-oss" \
+  --spec-decoding "eagle3" \
+  --prefix-caching "yes" \
+  --csv-file "gpt-oss-120b-sd-pc.csv"
+```
+
 ## Appending to Consolidated Dashboard
 
 After generating a CSV file, append it to the main dashboard (skip the header):
@@ -83,7 +107,7 @@ tail -n +2 my-benchmark.csv >> ../consolidated_dashboard.csv
 
 ## Output CSV Columns
 
-The script outputs 44 columns compatible with the performance dashboard:
+The script outputs 47 columns compatible with the performance dashboard:
 
 | #   | Column                    | Description                                          |
 | --- | ------------------------- | ---------------------------------------------------- |
@@ -131,6 +155,9 @@ The script outputs 44 columns compatible with the performance dashboard:
 | 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                        |
 | 43  | `image_tag`               | Container image used                                 |
 | 44  | `guidellm_version`        | guidellm version used                                |
+| 45  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
+| 46  | `spec_decoding`           | Speculative decoding method (empty if none)          |
+| 47  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
 
 ## Notes
 
