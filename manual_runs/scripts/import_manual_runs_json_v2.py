@@ -27,6 +27,9 @@ def process_benchmark_section(
     guidellm_end_time_ms,
     dp_size=None,
     cluster=None,
+    dataset="",
+    spec_decoding="",
+    prefix_caching="",
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -44,6 +47,9 @@ def process_benchmark_section(
         guidellm_end_time_ms: Aggregated end time in milliseconds.
         dp_size: Data parallelism size (None for TP runs).
         cluster: Optional cluster name (e.g., 'hera') to distinguish runs on different clusters.
+        dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
+        spec_decoding: Speculative decoding method (e.g., 'eagle3').
+        prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
 
     Returns:
         dict: Processed benchmark metrics.
@@ -175,6 +181,9 @@ def process_benchmark_section(
         "image_tag": image_tag,
         "guidellm_version": guidellm_version,
         "DP": dp_size,
+        "dataset": dataset,
+        "spec_decoding": spec_decoding,
+        "prefix_caching": prefix_caching,
     }
 
     return row
@@ -191,6 +200,9 @@ def parse_guidellm_json(
     guidellm_version,
     dp_size=None,
     cluster=None,
+    dataset="",
+    spec_decoding="",
+    prefix_caching="",
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -205,6 +217,9 @@ def parse_guidellm_json(
         guidellm_version: Version of guidellm used to run the benchmark.
         dp_size: Data parallelism size (None for TP runs).
         cluster: Optional cluster name (e.g., 'hera').
+        dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
+        spec_decoding: Speculative decoding method (e.g., 'eagle3').
+        prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
 
     Returns:
         DataFrame: Processed benchmark results.
@@ -269,6 +284,9 @@ def parse_guidellm_json(
             guidellm_end_time_ms,
             dp_size=dp_size,
             cluster=cluster,
+            dataset=dataset,
+            spec_decoding=spec_decoding,
+            prefix_caching=prefix_caching,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -346,6 +364,24 @@ def main():
         help="Version of guidellm used to run the benchmark (e.g., 'v0.5.x', 'v0.3.0')",
     )
     parser.add_argument(
+        "--dataset",
+        default="",
+        help="Dataset name for real-dataset runs (e.g., 'speedbench', 'sharegpt'). "
+        "Leave empty for synthetic ISL/OSL runs.",
+    )
+    parser.add_argument(
+        "--spec-decoding",
+        default="",
+        help="Speculative decoding method (e.g., 'eagle3'). "
+        "Leave empty if not using speculative decoding.",
+    )
+    parser.add_argument(
+        "--prefix-caching",
+        default="",
+        help="Whether prefix caching is enabled ('yes' or 'no'). "
+        "Leave empty if not applicable.",
+    )
+    parser.add_argument(
         "--csv-file",
         default="new_benchmarks.csv",
         help="Path to the output CSV file (default: new_benchmarks.csv)",
@@ -373,6 +409,9 @@ def main():
         args.guidellm_version,
         dp_size=args.dp,
         cluster=args.cluster,
+        dataset=args.dataset,
+        spec_decoding=args.spec_decoding,
+        prefix_caching=args.prefix_caching,
     )
 
     if new_data_df is not None and not new_data_df.empty:
@@ -432,6 +471,9 @@ def main():
             "image_tag",
             "guidellm_version",
             "DP",
+            "dataset",
+            "spec_decoding",
+            "prefix_caching",
         ]
 
         for col in fieldnames:

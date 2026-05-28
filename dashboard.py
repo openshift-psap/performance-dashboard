@@ -749,7 +749,14 @@ def _compute_overview_data(
     def _combos(d):
         return set(
             zip(
-                d["model"], d["TP"], d["accelerator"], d["profile"], d["custom_isl_osl"]
+                d["model"],
+                d["TP"],
+                d["accelerator"],
+                d["profile"],
+                d["custom_isl_osl"],
+                d["dataset"],
+                d["spec_decoding"],
+                d["prefix_caching"],
             )
         )
 
@@ -757,13 +764,16 @@ def _compute_overview_data(
 
     # Per-combo metric deltas (current vs previous)
     combo_results = []
-    for model, tp, accel, profile, cisl_osl in common_combos:
+    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache in common_combos:
         mask_c = (
             (df_curr["model"] == model)
             & (df_curr["TP"] == tp)
             & (df_curr["accelerator"] == accel)
             & (df_curr["profile"] == profile)
             & (df_curr["custom_isl_osl"] == cisl_osl)
+            & (df_curr["dataset"] == dset)
+            & (df_curr["spec_decoding"] == sdec)
+            & (df_curr["prefix_caching"] == pcache)
         )
         mask_p = (
             (df_prev["model"] == model)
@@ -771,6 +781,9 @@ def _compute_overview_data(
             & (df_prev["accelerator"] == accel)
             & (df_prev["profile"] == profile)
             & (df_prev["custom_isl_osl"] == cisl_osl)
+            & (df_prev["dataset"] == dset)
+            & (df_prev["spec_decoding"] == sdec)
+            & (df_prev["prefix_caching"] == pcache)
         )
         cd, pd_ = df_curr[mask_c], df_prev[mask_p]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
@@ -784,6 +797,9 @@ def _compute_overview_data(
             "accelerator": accel,
             "profile": profile,
             "custom_isl_osl": cisl_osl,
+            "dataset": dset,
+            "spec_decoding": sdec,
+            "prefix_caching": pcache,
         }
         for mname, mc in metrics_cfg.items():
             pct, better, _, _, similar = compare_two_datasets(
@@ -950,7 +966,7 @@ def _compute_overview_data(
     tput_cfg = metrics_cfg["Throughput"]
     ttft_cfg = metrics_cfg["TTFT P95"]
     itl_cfg = metrics_cfg["ITL P95"]
-    for model, tp, accel, profile, cisl_osl in common_vllm:
+    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache in common_vllm:
         if accel != "H200":
             continue
         mask_c = (
@@ -959,6 +975,9 @@ def _compute_overview_data(
             & (df_curr["accelerator"] == accel)
             & (df_curr["profile"] == profile)
             & (df_curr["custom_isl_osl"] == cisl_osl)
+            & (df_curr["dataset"] == dset)
+            & (df_curr["spec_decoding"] == sdec)
+            & (df_curr["prefix_caching"] == pcache)
         )
         mask_v = (
             (df_vllm["model"] == model)
@@ -966,6 +985,9 @@ def _compute_overview_data(
             & (df_vllm["accelerator"] == accel)
             & (df_vllm["profile"] == profile)
             & (df_vllm["custom_isl_osl"] == cisl_osl)
+            & (df_vllm["dataset"] == dset)
+            & (df_vllm["spec_decoding"] == sdec)
+            & (df_vllm["prefix_caching"] == pcache)
         )
         cd, vd = df_curr[mask_c], df_vllm[mask_v]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
@@ -1053,6 +1075,9 @@ def _compute_overview_data(
                     r["accelerator"],
                     r["profile"],
                     r.get("custom_isl_osl", ""),
+                    r.get("dataset", ""),
+                    r.get("spec_decoding", ""),
+                    r.get("prefix_caching", ""),
                 )
                 for _, r in rows.iterrows()
             }
@@ -1628,7 +1653,24 @@ def _render_three_way_comparison(
         for tab, label in zip(tabs, tab_labels):
             with tab:
                 summary_data, conc_list, prof_full = profile_tabs_data[label]
-                st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
+                tab_subtitle = ""
+                if label == "Real Dataset (0/0)":
+                    ds = st.session_state.get("selected_dataset_filter", "")
+                    sd = st.session_state.get("selected_spec_decoding_filter", [])
+                    pc = st.session_state.get("selected_prefix_caching_filter", [])
+                    if ds:
+                        tab_subtitle += f" | Dataset: {ds}"
+                    if sd:
+                        sd_str = (
+                            ", ".join(v if v else "None" for v in sd)
+                            if isinstance(sd, list)
+                            else sd
+                        )
+                        tab_subtitle += f" | Spec Decoding: {sd_str}"
+                    if pc:
+                        pc_str = ", ".join(pc) if isinstance(pc, list) else pc
+                        tab_subtitle += f" | Prefix Caching: {pc_str}"
+                st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}{tab_subtitle}**")
                 st.caption(
                     f"ℹ️ Geometric mean metrics use concurrency levels: "
                     f"{', '.join(str(c) for c in conc_list)} "
@@ -1878,9 +1920,27 @@ def render_competitive_analysis_section(df):
             " (Peak)", ""
         )
         st.markdown(f"#### {display_title} vs Concurrency")
+        dialog_subtitle = ""
+        if profile_short == "Real Dataset (0/0)":
+            ds = st.session_state.get("selected_dataset_filter", "")
+            sd = st.session_state.get("selected_spec_decoding_filter", [])
+            pc = st.session_state.get("selected_prefix_caching_filter", [])
+            if ds:
+                dialog_subtitle += f" &nbsp;|&nbsp; Dataset: **{ds}**"
+            if sd:
+                sd_str = (
+                    ", ".join(v if v else "None" for v in sd)
+                    if isinstance(sd, list)
+                    else sd
+                )
+                dialog_subtitle += f" &nbsp;|&nbsp; Spec Decoding: **{sd_str}**"
+            if pc:
+                pc_str = ", ".join(pc) if isinstance(pc, list) else pc
+                dialog_subtitle += f" &nbsp;|&nbsp; Prefix Caching: **{pc_str}**"
         st.markdown(
             f"**{baseline}** vs **{competitor}** &nbsp;|&nbsp; "
             f"**{ACCELERATOR}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
+            f"{dialog_subtitle}"
         )
 
         if baseline_fallback_ver:
@@ -2270,7 +2330,36 @@ def render_competitive_analysis_section(df):
                                 summary_data, conc_list, prof_full = profile_tabs_data[
                                     label
                                 ]
-                                st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
+                                tab_subtitle = ""
+                                if label == "Real Dataset (0/0)":
+                                    ds = st.session_state.get(
+                                        "selected_dataset_filter", ""
+                                    )
+                                    sd = st.session_state.get(
+                                        "selected_spec_decoding_filter", []
+                                    )
+                                    pc = st.session_state.get(
+                                        "selected_prefix_caching_filter", []
+                                    )
+                                    if ds:
+                                        tab_subtitle += f" | Dataset: {ds}"
+                                    if sd:
+                                        sd_str = (
+                                            ", ".join(v if v else "None" for v in sd)
+                                            if isinstance(sd, list)
+                                            else sd
+                                        )
+                                        tab_subtitle += f" | Spec Decoding: {sd_str}"
+                                    if pc:
+                                        pc_str = (
+                                            ", ".join(pc)
+                                            if isinstance(pc, list)
+                                            else pc
+                                        )
+                                        tab_subtitle += f" | Prefix Caching: {pc_str}"
+                                st.markdown(
+                                    f"**NVIDIA H200 GPU, ISL/OSL: {label}{tab_subtitle}**"
+                                )
                                 st.caption(
                                     f"ℹ️ Geometric mean metrics use concurrency levels: "
                                     f"{', '.join(str(c) for c in conc_list)} "
@@ -2884,12 +2973,20 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         st.markdown(f"**{_accel_display(accel)}**")
         seen = {}
         for r in info["results"]:
-            key = (r["short_name"], r["tp"], r["profile"], r.get("custom_isl_osl", ""))
+            key = (
+                r["short_name"],
+                r["tp"],
+                r["profile"],
+                r.get("custom_isl_osl", ""),
+                r.get("dataset", ""),
+                r.get("spec_decoding", ""),
+                r.get("prefix_caching", ""),
+            )
             if key not in seen:
                 seen[key] = r
 
         rows_html = ""
-        for (sname, tp, profile, cisl_osl), r in seen.items():
+        for (sname, tp, profile, cisl_osl, _dset, _sdec, _pcache), r in seen.items():
             profile_short = _display_profile(profile, cisl_osl)
             cells = ""
             for mname, hib, _ in heatmap_cols:
@@ -2921,7 +3018,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         name = _short_model_name(entry["model"])
         config_parts = [
             f"{ver} · {_accel_display(accel)} · {_display_profile(prof, cisl)}"
-            for ver, accel, prof, cisl in entry["configs"]
+            for ver, accel, prof, cisl, _dset, _sdec, _pc in entry["configs"]
         ]
         config_str = (
             f' <span style="opacity:0.7">({", ".join(config_parts)})</span>'
@@ -3105,6 +3202,17 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 lambda x: f" | DP={int(x)}" if pd.notna(x) else ""
             )
             filtered_df["run_identifier"] += dp_suffix
+
+        # Append spec_decoding / prefix_caching to trace key so different
+        # configurations of the same model appear as separate lines
+        if filtered_df["spec_decoding"].any():
+            filtered_df["run_identifier"] += filtered_df["spec_decoding"].apply(
+                lambda x: f" | SD={x}" if x else ""
+            )
+        if filtered_df["prefix_caching"].any():
+            filtered_df["run_identifier"] += filtered_df["prefix_caching"].apply(
+                lambda x: f" | PC={x}" if x else ""
+            )
 
         _sort_cols = ["model_short", "accelerator", "version", "TP"]
         if _has_dp_data:
@@ -4627,10 +4735,28 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
         tp_display = ", ".join([f"TP={tp}" for tp in sorted(selected_tps)])
         # Get short profile name for display
         profile_short = clean_profile_name(selected_profile)
+        trends_subtitle = ""
+        if profile_short == "Real Dataset (0/0)":
+            ds = st.session_state.get("selected_dataset_filter", "")
+            sd = st.session_state.get("selected_spec_decoding_filter", [])
+            pc = st.session_state.get("selected_prefix_caching_filter", [])
+            if ds:
+                trends_subtitle += f" | **Dataset:** {ds}"
+            if sd:
+                sd_str = (
+                    ", ".join(v if v else "None" for v in sd)
+                    if isinstance(sd, list)
+                    else sd
+                )
+                trends_subtitle += f" | **Spec Decoding:** {sd_str}"
+            if pc:
+                pc_str = ", ".join(pc) if isinstance(pc, list) else pc
+                trends_subtitle += f" | **Prefix Caching:** {pc_str}"
         st.markdown(f"### 📊 {selected_prefix} Performance Trends (Geometric Mean)")
         st.markdown(
             f"**Model:** {model_short} | **Accelerator:** {selected_accelerator} | "
             f"**Profile:** {profile_short} | **{tp_display}**"
+            f"{trends_subtitle}"
         )
 
         # Create the trend visualization with multiple TP lines
@@ -5033,6 +5159,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         # Secondary custom ISL/OSL pair filter
         selected_custom_pair = None
+        compare_dataset_filter = None
+        compare_spec_decoding_filter = None
+        compare_prefix_caching_filter = None
         if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
             custom_temp = df[
                 (df["profile"] == "Custom")
@@ -5049,6 +5178,59 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     on_change=keep_expander_open,
                     args=("compare_versions_summary_expanded",),
                 )
+
+                if selected_custom_pair == "0/0":
+                    real_temp = custom_temp[custom_temp["custom_isl_osl"] == "0/0"]
+                    cmp_datasets = sorted(d for d in real_temp["dataset"].unique() if d)
+                    if cmp_datasets:
+                        compare_dataset_filter = st.selectbox(
+                            "Select Dataset",
+                            cmp_datasets,
+                            key="compare_summary_dataset",
+                            on_change=keep_expander_open,
+                            args=("compare_versions_summary_expanded",),
+                        )
+                        spec_temp = real_temp[
+                            real_temp["dataset"] == compare_dataset_filter
+                        ]
+                        cmp_spec_options = sorted(
+                            spec_temp["spec_decoding"].unique().tolist()
+                        )
+                        if len(cmp_spec_options) > 1 or (
+                            len(cmp_spec_options) == 1 and cmp_spec_options[0] != ""
+                        ):
+                            compare_spec_decoding_filter = st.multiselect(
+                                "Speculative Decoding",
+                                cmp_spec_options,
+                                default=cmp_spec_options,
+                                format_func=lambda x: x if x else "None (Baseline)",
+                                key="compare_summary_spec_decoding",
+                                on_change=keep_expander_open,
+                                args=("compare_versions_summary_expanded",),
+                            )
+
+                        # Prefix caching filter — scoped to dataset + spec_decoding
+                        cmp_pc_temp = real_temp[
+                            real_temp["dataset"] == compare_dataset_filter
+                        ]
+                        if compare_spec_decoding_filter:
+                            cmp_pc_temp = cmp_pc_temp[
+                                cmp_pc_temp["spec_decoding"].isin(
+                                    compare_spec_decoding_filter
+                                )
+                            ]
+                        cmp_pc_options = sorted(
+                            p for p in cmp_pc_temp["prefix_caching"].unique() if p
+                        )
+                        if len(cmp_pc_options) > 1:
+                            compare_prefix_caching_filter = st.multiselect(
+                                "Prefix Caching",
+                                cmp_pc_options,
+                                default=cmp_pc_options,
+                                key="compare_summary_prefix_caching",
+                                on_change=keep_expander_open,
+                                args=("compare_versions_summary_expanded",),
+                            )
 
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
@@ -5068,6 +5250,23 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if selected_custom_pair:
             base_mask_v1 = base_mask_v1 & (df["custom_isl_osl"] == selected_custom_pair)
             base_mask_v2 = base_mask_v2 & (df["custom_isl_osl"] == selected_custom_pair)
+        if compare_dataset_filter is not None:
+            base_mask_v1 = base_mask_v1 & (df["dataset"] == compare_dataset_filter)
+            base_mask_v2 = base_mask_v2 & (df["dataset"] == compare_dataset_filter)
+        if compare_spec_decoding_filter:
+            base_mask_v1 = base_mask_v1 & df["spec_decoding"].isin(
+                compare_spec_decoding_filter
+            )
+            base_mask_v2 = base_mask_v2 & df["spec_decoding"].isin(
+                compare_spec_decoding_filter
+            )
+        if compare_prefix_caching_filter:
+            base_mask_v1 = base_mask_v1 & df["prefix_caching"].isin(
+                compare_prefix_caching_filter
+            )
+            base_mask_v2 = base_mask_v2 & df["prefix_caching"].isin(
+                compare_prefix_caching_filter
+            )
         df_v1 = df[base_mask_v1].copy()
         df_v2 = df[base_mask_v2].copy()
 
@@ -5222,10 +5421,33 @@ def render_compare_versions_summary_section(df, use_expander=True):
         elif "(" in selected_profile and ")" in selected_profile:
             profile_short = selected_profile.split("(")[-1].replace(")", "")
 
+        # Append dataset / spec-decoding / prefix-caching context for real-dataset runs
+        real_dataset_subtitle = ""
+        if compare_dataset_filter:
+            real_dataset_subtitle += (
+                f" &nbsp;|&nbsp; Dataset: **{compare_dataset_filter}**"
+            )
+        if compare_spec_decoding_filter:
+            sd_str = (
+                ", ".join(v if v else "None" for v in compare_spec_decoding_filter)
+                if isinstance(compare_spec_decoding_filter, list)
+                else compare_spec_decoding_filter
+            )
+            real_dataset_subtitle += f" &nbsp;|&nbsp; Spec Decoding: **{sd_str}**"
+        if compare_prefix_caching_filter:
+            pc_str = (
+                ", ".join(compare_prefix_caching_filter)
+                if isinstance(compare_prefix_caching_filter, list)
+                else compare_prefix_caching_filter
+            )
+            real_dataset_subtitle += f" &nbsp;|&nbsp; Prefix Caching: **{pc_str}**"
+
         # Display title with GPU and ISL/OSL info + "How are these calculated?" popover
         title_col, popover_col = st.columns([5, 1])
         with title_col:
-            st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
+            st.markdown(
+                f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}{real_dataset_subtitle}"
+            )
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
                 st.markdown("""
@@ -5440,6 +5662,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 st.markdown(
                     f"**{version_1}** vs **{version_2}** &nbsp;|&nbsp; "
                     f"**{selected_accelerator}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
+                    f"{real_dataset_subtitle}"
                 )
 
                 # Paired color palettes: warm tones for v1, cool tones for v2
@@ -5907,32 +6130,64 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.query_params.update(_cv_url_params)
 
 
-def render_compare_models_section(filtered_df, selected_profile, use_expander=True):
-    """⚖️ Compare Models Section - Compare two models across multiple metrics (Custom ISL/OSL only)."""
+def render_compare_configurations_section(
+    filtered_df, selected_profile, use_expander=True
+):
+    """⚖️ Compare Configurations Section - Compare two configurations across multiple metrics (Custom ISL/OSL only)."""
     if selected_profile != "Custom":
         return
 
     if use_expander:
-        if "compare_models_expanded" not in st.session_state:
-            st.session_state.compare_models_expanded = False
+        if "compare_configs_expanded" not in st.session_state:
+            st.session_state.compare_configs_expanded = False
         ctx = st.expander(
-            "⚖️ Compare Models",
-            expanded=st.session_state.compare_models_expanded,
+            "⚖️ Compare Configurations",
+            expanded=st.session_state.compare_configs_expanded,
         )
     else:
         ctx = contextlib.nullcontext()
     with ctx:
         if not use_expander:
-            st.subheader("⚖️ Compare Models")
+            st.subheader("⚖️ Compare Configurations")
         st.markdown(
-            "💡 **Compare performance between two models across all versions and metrics.**"
+            "💡 **Compare performance between two configurations across all versions and metrics.**"
         )
 
-        available_models = sorted(filtered_df["model"].unique().tolist())
+        _cfg_cols = ["model", "dataset", "spec_decoding", "prefix_caching"]
+        _cfg_df = (
+            filtered_df[_cfg_cols]
+            .fillna("")
+            .drop_duplicates()
+            .sort_values(_cfg_cols)
+            .reset_index(drop=True)
+        )
 
-        if len(available_models) < 2:
+        def _cfg_label(row):
+            short = row["model"].split("/")[-1] if "/" in row["model"] else row["model"]
+            parts = [short]
+            if row["dataset"]:
+                parts.append(row["dataset"])
+            if row["spec_decoding"]:
+                parts.append(f"SD={row['spec_decoding']}")
+            if row["prefix_caching"]:
+                parts.append(f"PC={row['prefix_caching']}")
+            return " | ".join(parts)
+
+        _cfg_df["_label"] = _cfg_df.apply(_cfg_label, axis=1)
+        config_labels = _cfg_df["_label"].tolist()
+        label_to_tuple = {
+            row["_label"]: (
+                row["model"],
+                row["dataset"],
+                row["spec_decoding"],
+                row["prefix_caching"],
+            )
+            for _, row in _cfg_df.iterrows()
+        }
+
+        if len(config_labels) < 2:
             st.warning(
-                "⚠️ Need at least 2 models in the filtered data to compare. "
+                "⚠️ Need at least 2 configurations in the filtered data to compare. "
                 "Please adjust your filters."
             )
             return
@@ -5940,40 +6195,50 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
         col1, col2 = st.columns(2)
 
         with col1:
-            model_1 = st.selectbox(
-                "Select Model 1 (Baseline)",
-                options=available_models,
+            config_1 = st.selectbox(
+                "Select Config 1 (Baseline)",
+                options=config_labels,
                 index=0,
-                key="compare_models_m1",
+                key="compare_configs_c1",
                 on_change=keep_expander_open,
-                args=("compare_models_expanded",),
+                args=("compare_configs_expanded",),
             )
 
         with col2:
-            model_2_options = [m for m in available_models if m != model_1]
-            model_2 = (
+            config_2_options = [c for c in config_labels if c != config_1]
+            config_2 = (
                 st.selectbox(
-                    "Select Model 2 (Comparison)",
-                    options=model_2_options,
-                    index=0 if model_2_options else None,
-                    key="compare_models_m2",
+                    "Select Config 2 (Comparison)",
+                    options=config_2_options,
+                    index=0 if config_2_options else None,
+                    key="compare_configs_c2",
                     on_change=keep_expander_open,
-                    args=("compare_models_expanded",),
+                    args=("compare_configs_expanded",),
                 )
-                if model_2_options
+                if config_2_options
                 else None
             )
 
-        if not model_2:
-            st.warning("⚠️ Please select a second model to compare.")
+        if not config_2:
+            st.warning("⚠️ Please select a second configuration to compare.")
             return
 
-        df_m1 = filtered_df[filtered_df["model"] == model_1].copy()
-        df_m2 = filtered_df[filtered_df["model"] == model_2].copy()
+        def _filter_by_config(src_df, cfg_tuple):
+            model, dataset, spec_dec, pref_cache = cfg_tuple
+            mask = src_df["model"] == model
+            mask &= src_df["dataset"].fillna("") == dataset
+            mask &= src_df["spec_decoding"].fillna("") == spec_dec
+            mask &= src_df["prefix_caching"].fillna("") == pref_cache
+            return src_df[mask].copy()
+
+        cfg1_tuple = label_to_tuple[config_1]
+        cfg2_tuple = label_to_tuple[config_2]
+        df_m1 = _filter_by_config(filtered_df, cfg1_tuple)
+        df_m2 = _filter_by_config(filtered_df, cfg2_tuple)
 
         if df_m1.empty or df_m2.empty:
             st.warning(
-                "⚠️ No data available for one of the selected models with the current filters."
+                "⚠️ No data available for one of the selected configurations with the current filters."
             )
             return
 
@@ -6013,7 +6278,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
         )
 
         if all_common_concurrencies_sorted:
-            conc_key = f"compare_models_conc_{model_1}_{model_2}"
+            conc_key = f"compare_configs_conc_{config_1}_{config_2}"
             default_concurrencies = [
                 c for c in all_common_concurrencies_sorted if c > 1
             ]
@@ -6023,7 +6288,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                 default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
-                args=("compare_models_expanded",),
+                args=("compare_configs_expanded",),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both models are shown. "
@@ -6044,12 +6309,28 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
         else:
             selected_conc_set = set()
 
-        model_1_short = model_1.split("/")[-1] if "/" in model_1 else model_1
-        model_2_short = model_2.split("/")[-1] if "/" in model_2 else model_2
+        def _diff_label(cfg_tuple, other_tuple):
+            """Build a short label highlighting what differs from the other config."""
+            model, dataset, spec_dec, pref_cache = cfg_tuple
+            o_model, o_dataset, o_spec_dec, o_pref_cache = other_tuple
+            short = model.split("/")[-1] if "/" in model else model
+            parts = [short] if model != o_model else []
+            if dataset and dataset != o_dataset:
+                parts.append(dataset)
+            if spec_dec and spec_dec != o_spec_dec:
+                parts.append(f"SD={spec_dec}")
+            if pref_cache and pref_cache != o_pref_cache:
+                parts.append(f"PC={pref_cache}")
+            if not parts:
+                parts = [short]
+            return " | ".join(parts)
+
+        config_1_short = _diff_label(cfg1_tuple, cfg2_tuple)
+        config_2_short = _diff_label(cfg2_tuple, cfg1_tuple)
 
         title_col, popover_col = st.columns([5, 1])
         with title_col:
-            st.markdown(f"### Comparing: {model_1_short} vs {model_2_short}")
+            st.markdown(f"### Comparing: {config_1_short} vs {config_2_short}")
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
                 st.markdown("""
@@ -6085,7 +6366,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                 **Status:** 🟢 Better (>=5% improvement) | 🟡 Similar (<5%) | 🔴 Worse (>=5% decline)
                     """)
 
-        st.markdown(f"**Comparing:** {model_1_short} vs {model_2_short}")
+        st.markdown(f"**Comparing:** {config_1_short} vs {config_2_short}")
 
         metrics_config = {
             "Peak Output Throughput": {
@@ -6131,8 +6412,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
         # Check for duplicate rows (same model/version/TP/concurrency)
         dup_warnings = []
         for _label, df_check, name in [
-            ("Model 1", df_m1, model_1_short),
-            ("Model 2", df_m2, model_2_short),
+            ("Model 1", df_m1, config_1_short),
+            ("Model 2", df_m2, config_2_short),
         ]:
             for version, tp in common_version_tp:
                 subset = df_check[
@@ -6177,11 +6458,11 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     sign = "+" if pct_diff > 0 else ""
                     if metric_config["show_concurrency"] and m1_peak is not None:
                         cell_text = (
-                            f"{model_1_short} ({sign}{pct_diff:.1f}%) "
+                            f"{config_1_short} ({sign}{pct_diff:.1f}%) "
                             f"peak@{m1_peak} vs {m2_peak}"
                         )
                     else:
-                        cell_text = f"{model_1_short} ({sign}{pct_diff:.1f}%)"
+                        cell_text = f"{config_1_short} ({sign}{pct_diff:.1f}%)"
 
                     if is_similar:
                         color = "🟡"
@@ -6198,8 +6479,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
             summary_df = pd.DataFrame(summary_data)
 
             # --- Metric comparison dialog (popup) ---
-            @st.dialog("Model Comparison — Metric Details", width="large")
-            def _show_model_metric_dialog(metric_name):
+            @st.dialog("Configuration Comparison — Metric Details", width="large")
+            def _show_config_metric_dialog(metric_name):
                 """Render a popup with interactive line graphs."""
                 mcfg = metrics_config[metric_name]
                 col = mcfg["column"]
@@ -6209,7 +6490,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     " (Peak)", ""
                 )
                 st.markdown(f"#### {display_title} vs Concurrency")
-                st.markdown(f"**{model_1_short}** vs **{model_2_short}**")
+                st.markdown(f"**{config_1_short}** vs **{config_2_short}**")
 
                 _palette_m1 = [
                     "#EF553B",
@@ -6312,12 +6593,12 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                             x=x_vals,
                             y=md["m1"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({model_1_short})",
+                            name=f"{md['label']} ({config_1_short})",
                             line={"color": c_m1, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {model_1_short}<br>"
+                                f"<b>{md['label']}</b> — {config_1_short}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6328,12 +6609,12 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                             x=x_vals,
                             y=md["m2"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({model_2_short})",
+                            name=f"{md['label']} ({config_2_short})",
                             line={"color": c_m2, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {model_2_short}<br>"
+                                f"<b>{md['label']}</b> — {config_2_short}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6374,15 +6655,15 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                 st.plotly_chart(
                     fig,
                     use_container_width=True,
-                    key=f"cmp_models_dlg_line_{metric_name}",
+                    key=f"cmp_configs_dlg_line_{metric_name}",
                     theme=None,
                 )
 
                 st.caption(
                     "💡 **Tip:** Click a legend entry to toggle it. "
                     "Double-click to isolate a single trace. "
-                    f"Warm colors (reds/oranges) = **{model_1_short}**, "
-                    f"cool colors (blues/greens) = **{model_2_short}**."
+                    f"Warm colors (reds/oranges) = **{config_1_short}**, "
+                    f"cool colors (blues/greens) = **{config_2_short}**."
                 )
 
                 if agg == "geom_mean":
@@ -6410,11 +6691,11 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     )
                     if st.button(
                         f"📊 {short}",
-                        key=f"cmp_models_btn_{i}",
+                        key=f"cmp_configs_btn_{i}",
                         use_container_width=True,
                     ):
-                        st.session_state.compare_models_expanded = True
-                        _show_model_metric_dialog(m_name)
+                        st.session_state.compare_configs_expanded = True
+                        _show_config_metric_dialog(m_name)
 
             st.markdown("")
 
@@ -6467,8 +6748,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
             st.markdown("---")
             st.markdown(
                 f"**Legend:** "
-                f"🟢 {model_1_short} performs better than {model_2_short} | "
-                f"🔴 {model_1_short} performs worse than {model_2_short} | "
+                f"🟢 {config_1_short} performs better than {config_2_short} | "
+                f"🔴 {config_1_short} performs worse than {config_2_short} | "
                 f"🟡 Similar Performance (< 5% difference)"
             )
 
@@ -6547,16 +6828,16 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
 
                     if higher_is_better:
                         if pct_diff > 5:
-                            return f"{model_1_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{config_1_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         elif pct_diff < -5:
-                            return f"{model_2_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{config_2_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
                     else:
                         if pct_diff < -5:
-                            return f"{model_1_short} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{config_1_short} has {abs(pct_diff):.1f}% lower {metric_name}"
                         elif pct_diff > 5:
-                            return f"{model_2_short} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{config_2_short} has {abs(pct_diff):.1f}% lower {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
 
@@ -6564,8 +6845,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     detail_rows = [
                         {
                             "Metric": "Peak Output Throughput (output tok/s)",
-                            model_1_short: f"{format_value(m1_peak_throughput)} tok/s at {m1_peak_conc} concurrent users",
-                            model_2_short: f"{format_value(m2_peak_throughput)} tok/s at {m2_peak_conc} concurrent users",
+                            config_1_short: f"{format_value(m1_peak_throughput)} tok/s at {m1_peak_conc} concurrent users",
+                            config_2_short: f"{format_value(m2_peak_throughput)} tok/s at {m2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 m1_peak_throughput,
                                 m2_peak_throughput,
@@ -6575,8 +6856,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                         },
                         {
                             "Metric": "Total Throughput (input + output tok/s)",
-                            model_1_short: f"{format_value(m1_total_throughput)} tok/s at {m1_peak_conc} concurrent users",
-                            model_2_short: f"{format_value(m2_total_throughput)} tok/s at {m2_peak_conc} concurrent users",
+                            config_1_short: f"{format_value(m1_total_throughput)} tok/s at {m1_peak_conc} concurrent users",
+                            config_2_short: f"{format_value(m2_total_throughput)} tok/s at {m2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 m1_total_throughput,
                                 m2_total_throughput,
@@ -6586,18 +6867,18 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                         },
                         {
                             "Metric": "Median E2E Latency at Peak Throughput",
-                            model_1_short: f"{format_value(m1_e2e_latency, 's', 0, round_up=True)}",
-                            model_2_short: f"{format_value(m2_e2e_latency, 's', 0, round_up=True)}",
+                            config_1_short: f"{format_value(m1_e2e_latency, 's', 0, round_up=True)}",
+                            config_2_short: f"{format_value(m2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
                                 m1_e2e_latency, m2_e2e_latency, False, "E2E latency"
                             ),
                         },
                         {
                             "Metric": "TTFT P95 at Peak Throughput",
-                            model_1_short: f"{format_value(m1_ttft / 1000, 's', 2, round_up=True)}"
+                            config_1_short: f"{format_value(m1_ttft / 1000, 's', 2, round_up=True)}"
                             if pd.notna(m1_ttft)
                             else "N/A",
-                            model_2_short: f"{format_value(m2_ttft / 1000, 's', 2, round_up=True)}"
+                            config_2_short: f"{format_value(m2_ttft / 1000, 's', 2, round_up=True)}"
                             if pd.notna(m2_ttft)
                             else "N/A",
                             "Difference/Winner": get_winner_text(
@@ -6606,8 +6887,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                         },
                         {
                             "Metric": "ITL P95 at Peak Throughput",
-                            model_1_short: f"{format_value(m1_itl, 'ms', 0, round_up=True)}",
-                            model_2_short: f"{format_value(m2_itl, 'ms', 0, round_up=True)}",
+                            config_1_short: f"{format_value(m1_itl, 'ms', 0, round_up=True)}",
+                            config_2_short: f"{format_value(m2_itl, 'ms', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
                                 m1_itl, m2_itl, False, "P95 ITL"
                             ),
@@ -9791,7 +10072,7 @@ if previous_view != selected_view and previous_view is not None:
     st.session_state.performance_plots_expanded = False
     st.session_state.pareto_expanded = False
     st.session_state.compare_versions_summary_expanded = False
-    st.session_state.compare_models_expanded = False
+    st.session_state.compare_configs_expanded = False
     st.session_state.model_comparison_expanded = False
     st.session_state.runtime_configs_expanded = False
     st.session_state.energy_expanded = False
@@ -9922,7 +10203,7 @@ def main():
             "🔄 Pareto Tradeoff Graphs": "pareto_custom",
             "🏆 Model Performance Comparison": "model_comparison",
             "⚖️ Compare Versions": "compare_versions",
-            "⚖️ Compare Models": "compare_models",
+            "⚖️ Compare Configurations": "compare_configs",
             "📈 Performance Trends": "performance_trends",
             "💰 Cost Analysis": "cost_analysis",
             "🌱 Energy Computation": "energy_carbon",
@@ -9964,9 +10245,9 @@ def main():
                 "cv_gpu": "compare_summary_accelerator",
                 "cv_profile": "compare_summary_profile",
             },
-            "compare_models": {
-                "cm_m1": "compare_models_m1",
-                "cm_m2": "compare_models_m2",
+            "compare_configs": {
+                "cm_c1": "compare_configs_c1",
+                "cm_c2": "compare_configs_c2",
             },
             "performance_trends": {
                 "tr_server": "trends_version_prefix",
@@ -10170,6 +10451,16 @@ def main():
         + df["output toks"].astype(int).astype(str),
         "",
     )
+
+    if "dataset" not in df.columns:
+        df["dataset"] = ""
+    if "spec_decoding" not in df.columns:
+        df["spec_decoding"] = ""
+    df["dataset"] = df["dataset"].fillna("").astype(str)
+    df["spec_decoding"] = df["spec_decoding"].fillna("").astype(str)
+    if "prefix_caching" not in df.columns:
+        df["prefix_caching"] = ""
+    df["prefix_caching"] = df["prefix_caching"].fillna("").astype(str)
 
     df["error_rate"] = (
         df["errored_requests"]
@@ -10542,6 +10833,72 @@ def main():
                     )
                     st.session_state.selected_custom_isl_osl = selected_custom_isl_osl
 
+            # Cascading filters for real-dataset runs (0/0)
+            selected_dataset_filter = None
+            selected_spec_decoding_filter = None
+            selected_prefix_caching_filter = None
+            if selected_profile == "Custom" and selected_custom_isl_osl == "0/0":
+                real_temp = custom_temp[custom_temp["custom_isl_osl"] == "0/0"]
+                available_datasets = sorted(
+                    d for d in real_temp["dataset"].unique() if d
+                )
+                if available_datasets:
+                    dataset_key = f"dataset_filter_{st.session_state.filter_change_key}"
+                    if (
+                        dataset_key not in st.session_state
+                        or st.session_state.get(dataset_key) not in available_datasets
+                    ):
+                        st.session_state[dataset_key] = available_datasets[0]
+                    selected_dataset_filter = st.selectbox(
+                        "Select Dataset",
+                        available_datasets,
+                        key=dataset_key,
+                    )
+                    st.session_state.selected_dataset_filter = selected_dataset_filter
+
+                    # Spec decoding filter — scoped to selected dataset
+                    spec_temp = real_temp[
+                        real_temp["dataset"] == selected_dataset_filter
+                    ]
+                    spec_options = sorted(spec_temp["spec_decoding"].unique().tolist())
+                    if len(spec_options) > 1 or (
+                        len(spec_options) == 1 and spec_options[0] != ""
+                    ):
+                        spec_key = (
+                            f"spec_decoding_filter_{st.session_state.filter_change_key}"
+                        )
+                        selected_spec_decoding_filter = st.multiselect(
+                            "Speculative Decoding",
+                            spec_options,
+                            default=spec_options,
+                            format_func=lambda x: x if x else "None (Baseline)",
+                            key=spec_key,
+                        )
+                        st.session_state.selected_spec_decoding_filter = (
+                            selected_spec_decoding_filter
+                        )
+
+                    # Prefix caching filter — scoped to selected dataset + spec_decoding
+                    pc_temp = real_temp[real_temp["dataset"] == selected_dataset_filter]
+                    if selected_spec_decoding_filter:
+                        pc_temp = pc_temp[
+                            pc_temp["spec_decoding"].isin(selected_spec_decoding_filter)
+                        ]
+                    pc_options = sorted(pc_temp["prefix_caching"].unique().tolist())
+                    pc_options = [p for p in pc_options if p]
+                    selected_prefix_caching_filter = None
+                    if len(pc_options) > 1:
+                        pc_key = f"prefix_caching_filter_{st.session_state.filter_change_key}"
+                        selected_prefix_caching_filter = st.multiselect(
+                            "Prefix Caching",
+                            pc_options,
+                            default=pc_options,
+                            key=pc_key,
+                        )
+                        st.session_state.selected_prefix_caching_filter = (
+                            selected_prefix_caching_filter
+                        )
+
             # Update baseline_profile to remember user's current selection
             # This ensures the selected profile is retained when other filters change
             if selected_profile is not None:
@@ -10551,7 +10908,8 @@ def main():
                     st.session_state.filters_were_cleared = False
 
         with filter_col3:
-            # Versions filter - filtered by selected accelerators AND currently selected profile
+            # Versions filter - filtered by selected accelerators, profile,
+            # and real-dataset cascading filters when active
             temp_df = df.copy()
             if selected_accelerators:
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
@@ -10559,6 +10917,21 @@ def main():
             # Filter versions by the currently selected profile
             if selected_profiles:
                 temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+
+            # Narrow to the selected real-dataset filters so only
+            # versions that actually have data for this combination appear
+            if selected_custom_isl_osl:
+                temp_df = temp_df[temp_df["custom_isl_osl"] == selected_custom_isl_osl]
+            if selected_dataset_filter is not None:
+                temp_df = temp_df[temp_df["dataset"] == selected_dataset_filter]
+            if selected_spec_decoding_filter:
+                temp_df = temp_df[
+                    temp_df["spec_decoding"].isin(selected_spec_decoding_filter)
+                ]
+            if selected_prefix_caching_filter:
+                temp_df = temp_df[
+                    temp_df["prefix_caching"].isin(selected_prefix_caching_filter)
+                ]
 
             versions = (
                 sorted(temp_df["version"].unique().tolist())
@@ -10704,7 +11077,8 @@ def main():
                             st.code(tree_text, language=None)
 
         with filter_col4:
-            # Models filter - filtered by selected accelerators, versions, AND currently selected profile
+            # Models filter - filtered by selected accelerators, versions, profile,
+            # and real-dataset cascading filters when active
             temp_df = df.copy()
             if selected_accelerators:
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
@@ -10714,6 +11088,20 @@ def main():
             # Filter models by the currently selected profile
             if selected_profiles:
                 temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
+
+            # Narrow to the selected real-dataset filters
+            if selected_custom_isl_osl:
+                temp_df = temp_df[temp_df["custom_isl_osl"] == selected_custom_isl_osl]
+            if selected_dataset_filter is not None:
+                temp_df = temp_df[temp_df["dataset"] == selected_dataset_filter]
+            if selected_spec_decoding_filter:
+                temp_df = temp_df[
+                    temp_df["spec_decoding"].isin(selected_spec_decoding_filter)
+                ]
+            if selected_prefix_caching_filter:
+                temp_df = temp_df[
+                    temp_df["prefix_caching"].isin(selected_prefix_caching_filter)
+                ]
 
             models = (
                 sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
@@ -10892,6 +11280,21 @@ def main():
             if selected_profile == "Custom" and selected_custom_isl_osl
             else True
         )
+        dataset_mask = (
+            (df["dataset"] == selected_dataset_filter)
+            if selected_dataset_filter is not None
+            else True
+        )
+        spec_decoding_mask = (
+            df["spec_decoding"].isin(selected_spec_decoding_filter)
+            if selected_spec_decoding_filter
+            else True
+        )
+        prefix_caching_mask = (
+            df["prefix_caching"].isin(selected_prefix_caching_filter)
+            if selected_prefix_caching_filter
+            else True
+        )
         tp_mask = df["TP"].isin(selected_tp) | df["TP"].isna()
         filtered_df = df[
             df["accelerator"].isin(selected_accelerators)
@@ -10900,6 +11303,9 @@ def main():
             & (df["profile"].isin(selected_profiles) if selected_profiles else True)
             & tp_mask
             & custom_mask
+            & dataset_mask
+            & spec_decoding_mask
+            & prefix_caching_mask
             & dp_mask
         ].copy()
 
@@ -10921,7 +11327,7 @@ def main():
         ):
             st.session_state.performance_plots_expanded = False
             st.session_state.model_comparison_expanded = False
-            st.session_state.compare_models_expanded = False
+            st.session_state.compare_configs_expanded = False
             st.session_state.runtime_configs_expanded = False
             st.session_state.energy_expanded = False
 
@@ -10961,7 +11367,7 @@ def main():
             section_list.append("🏆 Model Performance Comparison")
         section_list.append("⚖️ Compare Versions")
         if selected_profile == "Custom":
-            section_list.append("⚖️ Compare Models")
+            section_list.append("⚖️ Compare Configurations")
         if selected_profile != "Custom":
             section_list.append("📈 Performance Trends")
             section_list.append("💰 Cost Analysis")
@@ -10986,7 +11392,7 @@ def main():
                     "📊 Performance Plots",
                     "📈 Dataset Representation",
                     "⚖️ Compare Versions",
-                    "⚖️ Compare Models",
+                    "⚖️ Compare Configurations",
                 ],
             ),
             (
@@ -11061,8 +11467,8 @@ def main():
                 )
             elif sel == "⚖️ Compare Versions":
                 render_compare_versions_summary_section(df, use_expander=False)
-            elif sel == "⚖️ Compare Models":
-                render_compare_models_section(
+            elif sel == "⚖️ Compare Configurations":
+                render_compare_configurations_section(
                     filtered_df, selected_profile, use_expander=False
                 )
             elif sel == "📈 Performance Trends":
