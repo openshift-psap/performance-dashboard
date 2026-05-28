@@ -28,7 +28,6 @@ from dashboard_styles import (
     initialize_session_state,
     initialize_streamlit_config,
 )
-from intelliconfig import render_intelliconfig_section
 
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
@@ -62,6 +61,15 @@ except ImportError:
     LLMD_AVAILABLE = False
     print("Warning: llmd_dashboard module not found. LLM-D view will be disabled.")
 
+# Import vLLM CPU dashboard
+try:
+    from cpu_dashboard import render_cpu_dashboard
+
+    CPU_AVAILABLE = False
+except ImportError:
+    CPU_AVAILABLE = False
+    print("Warning: cpu_dashboard module not found. vLLM CPU view will be disabled.")
+
 # Configure logging to stdout for container logs
 logging.basicConfig(
     level=logging.INFO,
@@ -74,6 +82,7 @@ logger = logging.getLogger(__name__)
 S3_BUCKET = os.environ.get("S3_BUCKET")
 S3_KEY = os.environ.get("S3_KEY", "consolidated_dashboard.csv")
 S3_KEY_LLMD = os.environ.get("S3_KEY_LLMD", "llmd-dashboard.csv")
+S3_KEY_CPU = os.environ.get("S3_KEY_CPU", "cpu_dashboard.csv")
 S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
@@ -380,6 +389,42 @@ def compare_two_datasets(data_a, data_b, metric_config, user_conc_set):
     a_better = pct_diff > 0 if higher_is_better else pct_diff < 0
 
     return pct_diff, a_better, a_peak_conc, b_peak_conc, abs(pct_diff) < 5
+
+
+def _resolve_baseline_df(h200_df, baseline, fallback_version, profile_full):
+    """Build a baseline DataFrame using the preferred (fallback) version per model.
+
+    For each model, rows from ``fallback_version`` are used when available;
+    otherwise rows from ``baseline`` are used.  When the preferred version has
+    NaN TP for a model that has a known TP in the base version, the base TP is
+    carried over so downstream (model, TP) matching still works.
+    """
+    preferred = h200_df[
+        (h200_df["version"] == fallback_version) & (h200_df["profile"] == profile_full)
+    ].copy()
+    base = h200_df[
+        (h200_df["version"] == baseline) & (h200_df["profile"] == profile_full)
+    ]
+    if preferred.empty:
+        return base.copy()
+    if base.empty:
+        return preferred.copy()
+
+    base_tp_map = (
+        base.dropna(subset=["TP"])
+        .drop_duplicates(subset=["model"])
+        .set_index("model")["TP"]
+        .to_dict()
+    )
+    nan_tp_mask = preferred["TP"].isna()
+    if nan_tp_mask.any():
+        preferred.loc[nan_tp_mask, "TP"] = preferred.loc[nan_tp_mask, "model"].map(
+            base_tp_map
+        )
+
+    preferred_models = set(preferred["model"].unique())
+    fallback_rows = base[~base["model"].isin(preferred_models)]
+    return pd.concat([preferred, fallback_rows], ignore_index=True)
 
 
 def assign_profile_vectorized(df):
@@ -715,6 +760,7 @@ def _compute_overview_data(
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             pd_["intended concurrency"].dropna().unique()
         )
+        conc_for_geomean = {c for c in all_conc if c > 1}
         row = {
             "model": model,
             "short_name": _short_model_name(model),
@@ -724,7 +770,9 @@ def _compute_overview_data(
             "custom_isl_osl": cisl_osl,
         }
         for mname, mc in metrics_cfg.items():
-            pct, better, _, _, similar = compare_two_datasets(cd, pd_, mc, all_conc)
+            pct, better, _, _, similar = compare_two_datasets(
+                cd, pd_, mc, conc_for_geomean
+            )
             row[f"{mname}_pct"] = pct
             row[f"{mname}_better"] = better
             row[f"{mname}_similar"] = similar
@@ -907,12 +955,15 @@ def _compute_overview_data(
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             vd["intended concurrency"].dropna().unique()
         )
-        pct, better, _, _, similar = compare_two_datasets(cd, vd, tput_cfg, all_conc)
+        conc_for_geomean = {c for c in all_conc if c > 1}
+        pct, better, _, _, similar = compare_two_datasets(
+            cd, vd, tput_cfg, conc_for_geomean
+        )
         ttft_pct, ttft_better, _, _, ttft_similar = compare_two_datasets(
-            cd, vd, ttft_cfg, all_conc
+            cd, vd, ttft_cfg, conc_for_geomean
         )
         itl_pct, itl_better, _, _, itl_similar = compare_two_datasets(
-            cd, vd, itl_cfg, all_conc
+            cd, vd, itl_cfg, conc_for_geomean
         )
         profile_label = (
             format_custom_isl_osl(cisl_osl) if cisl_osl else clean_profile_name(profile)
@@ -1066,6 +1117,59 @@ def _hm_cell(pct, higher_is_better):
 
 CA_CONFIGURATIONS = [
     {
+        "label": "vLLM-0.21.0",
+        "description": (
+            "Performance comparison of **vLLM-0.21.0** "
+            "against **sglang-0.5.11** and **TRT-LLM** (1.3.0rc13, "
+            "gpt-oss-dev) on **NVIDIA H200**."
+        ),
+        "groups": [
+            {
+                "title": "vLLM vs SGLang",
+                "description": (
+                    "How **vLLM-0.21.0** compares to **sglang-0.5.11** "
+                    "on **NVIDIA H200**."
+                ),
+                "baselines": ["vLLM-0.21.0"],
+                "baseline_fallback": {
+                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                },
+                "competitors": ["sglang-0.5.11"],
+            },
+            {
+                "title": "vLLM vs TRT-LLM",
+                "description": (
+                    "How **vLLM-0.21.0** compares to **TRT-LLM** variants "
+                    "on **NVIDIA H200**."
+                ),
+                "baselines": ["vLLM-0.21.0"],
+                "baseline_fallback": {
+                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                },
+                "competitors": ["TRT-LLM-1.3.0rc13", "TRT-LLM-gpt-oss-dev"],
+            },
+            {
+                "title": "vLLM vs SGLang vs TRT-LLM (Common Models)",
+                "description": (
+                    "Three-way comparison of **vLLM-0.21.0** vs "
+                    "**sglang-0.5.11** vs **TRT-LLM** on models "
+                    "common to all three frameworks on **NVIDIA H200**. "
+                    "TRT-LLM uses 1.3.0rc13 for most models and "
+                    "gpt-oss-dev for gpt-oss-120b."
+                ),
+                "baselines": ["vLLM-0.21.0"],
+                "baseline_fallback": {
+                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                },
+                "competitors": ["sglang-0.5.11", "TRT-LLM"],
+                "competitor_versions": {
+                    "TRT-LLM": ["TRT-LLM-1.3.0rc13", "TRT-LLM-gpt-oss-dev"],
+                },
+                "three_way": True,
+            },
+        ],
+    },
+    {
         "label": "RHAIIS-3.4-EA2",
         "description": (
             "Performance comparison of **RHAIIS-3.4-EA2** "
@@ -1144,6 +1248,408 @@ def _available_ca_configs(df):
     ]
 
 
+def _render_ca_scorecard(score_placeholder, group_scores):
+    """Render the competitive analysis scorecard showing win/loss/similar counts.
+
+    Cards are clickable (``<details>``): clicking reveals a per-model
+    breakdown of wins, losses, and similar results.
+    """
+    if not group_scores:
+        return
+    with score_placeholder:
+        cols = st.columns(len(group_scores))
+        for col, (bl, comp_dict) in zip(cols, group_scores.items()):
+            all_w = sum(v[0] for v in comp_dict.values())
+            all_l = sum(v[1] for v in comp_dict.values())
+            all_s = sum(v[2] for v in comp_dict.values())
+            all_decisive = all_w + all_l
+            overall_wr = (all_w / all_decisive * 100) if all_decisive > 0 else None
+            hue = "green" if all_l == 0 else ("yellow" if all_w > all_l else "red")
+
+            competitor_rows = ""
+            for comp, score_entry in comp_dict.items():
+                cw, cl, cs = score_entry[0], score_entry[1], score_entry[2]
+                model_details = score_entry[3] if len(score_entry) > 3 else []
+                c_decisive = cw + cl
+                cwr = (cw / c_decisive * 100) if c_decisive > 0 else None
+                if cwr is None:
+                    wr_cls = "val-amber"
+                    wr_text = "—"
+                else:
+                    wr_cls = (
+                        "val-green"
+                        if cwr >= 60
+                        else ("val-amber" if cwr >= 40 else "val-red")
+                    )
+                    wr_text = f"{cwr:.0f}%"
+
+                models_by_name = {}
+                for md in model_details:
+                    name = md["model"]
+                    if name not in models_by_name:
+                        models_by_name[name] = {}
+                    models_by_name[name][md["profile"]] = md["verdict"]
+
+                profile_order = ["1k/1k", "8k/1k"]
+                detail_lines = ""
+                for name, prof_verdicts in sorted(models_by_name.items()):
+                    profile_cells = ""
+                    for p in profile_order:
+                        v = prof_verdicts.get(p)
+                        if v is None:
+                            profile_cells += (
+                                "<td style='padding:2px 8px;text-align:center;'>—</td>"
+                            )
+                        else:
+                            icon = {"win": "🟢", "loss": "🔴", "similar": "🟡"}[v]
+                            profile_cells += (
+                                f"<td style='padding:2px 8px;text-align:center;'>"
+                                f"{icon}</td>"
+                            )
+                    detail_lines += (
+                        f"<tr>"
+                        f"<td style='padding:2px 6px;'>{name}</td>"
+                        f"{profile_cells}"
+                        f"</tr>"
+                    )
+
+                detail_table = ""
+                if detail_lines:
+                    header_cells = "".join(
+                        f"<th style='padding:2px 8px;text-align:center;'>{p}</th>"
+                        for p in profile_order
+                    )
+                    detail_table = (
+                        f"<div style='margin-top:0.5rem;font-size:0.85rem;'>"
+                        f"<table style='width:100%;border-collapse:collapse;'>"
+                        f"<tr style='border-bottom:1px solid rgba(0,0,0,0.15);'>"
+                        f"<th style='padding:2px 6px;text-align:left;'>Model</th>"
+                        f"{header_cells}"
+                        f"</tr>"
+                        f"{detail_lines}</table></div>"
+                    )
+
+                competitor_rows += f"""<div class="vllm-stat-row" style="margin-top:0.5rem;">
+<div class="vllm-stat" style="flex:2;"><div class="vllm-stat-label" style="font-size:1rem;">vs {comp}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Win Rate</div><div class="vllm-stat-value {wr_cls}">{wr_text}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Wins</div><div class="vllm-stat-value val-green">{cw}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Losses</div><div class="vllm-stat-value val-red">{cl}</div></div>
+<div class="vllm-stat"><div class="vllm-stat-label">Similar</div><div class="vllm-stat-value val-amber">{cs}</div></div>
+</div>{detail_table}"""
+
+            wr_cls = (
+                "val-amber"
+                if overall_wr is None
+                else ("val-green" if overall_wr >= 60 else "val-red")
+            )
+            wr_text = "—" if overall_wr is None else f"{overall_wr:.0f}%"
+
+            with col:
+                st.markdown(
+                    f"""<div class="vllm-scorecard vllm-hue-{hue}">
+<details><summary style="cursor:pointer;list-style:none;">
+<div class="vllm-scorecard-title">{bl} vs {" / ".join(comp_dict.keys())}
+<span style="float:right;font-size:0.8rem;opacity:0.6;">▼ click for details</span>
+</div>
+<div class="vllm-stat-row">
+<div class="vllm-stat">
+<div class="vllm-stat-label">Overall Win Rate</div>
+<div class="vllm-stat-value {wr_cls}">{wr_text}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Model Wins</div>
+<div class="vllm-stat-value val-green">{all_w}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Model Losses</div>
+<div class="vllm-stat-value val-red">{all_l}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Similar</div>
+<div class="vllm-stat-value val-amber">{all_s}</div>
+</div>
+</div>
+</summary>
+<hr style="margin:0.6rem 0;border:none;border-top:1px solid rgba(0,0,0,0.1);">
+{competitor_rows}
+<div style="margin-top:0.6rem;font-size:0.8rem;opacity:0.7;">🟢 {bl} wins majority of metrics &nbsp;|&nbsp; 🔴 {bl} loses majority of metrics &nbsp;|&nbsp; 🟡 Similar (tied or &lt;5% diff)</div>
+</details>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+
+def _render_three_way_comparison(
+    h200_df,
+    group,
+    baseline_fallback,
+    profiles,
+    metrics_config,
+    column_config,
+    score_placeholder,
+    group_scores,
+):
+    """Render a side-by-side table comparing baseline against all competitors at once.
+
+    Only models common to every version (baseline + all competitors) are shown.
+    """
+    baseline = group["baselines"][0]
+    competitors = group["competitors"]
+    fallback_ver = baseline_fallback.get(baseline)
+    competitor_versions = group.get("competitor_versions", {})
+
+    profile_tabs_data = {}
+
+    for profile_full, profile_short in profiles:
+        if fallback_ver:
+            df_base = _resolve_baseline_df(
+                h200_df, baseline, fallback_ver, profile_full
+            )
+        else:
+            df_base = h200_df[
+                (h200_df["version"] == baseline) & (h200_df["profile"] == profile_full)
+            ].copy()
+
+        comp_dfs = {}
+        for comp in competitors:
+            versions_list = competitor_versions.get(comp)
+            if versions_list:
+                parts = [
+                    h200_df[
+                        (h200_df["version"] == v) & (h200_df["profile"] == profile_full)
+                    ]
+                    for v in versions_list
+                ]
+                merged = pd.concat(parts, ignore_index=True)
+                seen_models = set()
+                deduped_parts = []
+                for v in versions_list:
+                    part = merged[merged["version"] == v]
+                    new_rows = part[~part["model"].isin(seen_models)]
+                    deduped_parts.append(new_rows)
+                    seen_models.update(new_rows["model"].unique())
+                comp_dfs[comp] = pd.concat(deduped_parts, ignore_index=True)
+            else:
+                comp_dfs[comp] = h200_df[
+                    (h200_df["version"] == comp) & (h200_df["profile"] == profile_full)
+                ].copy()
+
+        if df_base.empty or any(cdf.empty for cdf in comp_dfs.values()):
+            continue
+
+        base_mt = set(zip(df_base["model"].tolist(), df_base["TP"].tolist()))
+        common_mt = base_mt
+        for cdf in comp_dfs.values():
+            cmt = set(zip(cdf["model"].tolist(), cdf["TP"].tolist()))
+            common_mt = common_mt.intersection(cmt)
+        common_mt = sorted(common_mt)
+
+        if not common_mt:
+            continue
+
+        all_common_conc: set = set()
+        for model, tp in common_mt:
+            conc_sets = [
+                set(
+                    df_base[(df_base["model"] == model) & (df_base["TP"] == tp)][
+                        "intended concurrency"
+                    ]
+                    .dropna()
+                    .unique()
+                )
+            ]
+            for cdf in comp_dfs.values():
+                conc_sets.append(
+                    set(
+                        cdf[(cdf["model"] == model) & (cdf["TP"] == tp)][
+                            "intended concurrency"
+                        ]
+                        .dropna()
+                        .unique()
+                    )
+                )
+            intersection = conc_sets[0]
+            for cs in conc_sets[1:]:
+                intersection = intersection.intersection(cs)
+            all_common_conc.update(intersection)
+
+        conc_set = {c for c in all_common_conc if c > 1}
+
+        all_versions = [baseline] + list(competitors)
+
+        summary_data = []
+        for model, tp in common_mt:
+            model_short = model.split("/")[-1] if "/" in model else model
+            tp_str = f"(TP={int(tp)})" if pd.notna(tp) else ""
+            row = {"Model": f"{model_short} {tp_str}"}
+
+            base_data = df_base[(df_base["model"] == model) & (df_base["TP"] == tp)]
+
+            for metric_name, mcfg in metrics_config.items():
+                col = mcfg["column"]
+                higher_is_better = mcfg["higher_is_better"]
+
+                version_vals = {}
+                for ver in all_versions:
+                    if ver == baseline:
+                        ver_data = base_data
+                    else:
+                        ver_data = comp_dfs[ver][
+                            (comp_dfs[ver]["model"] == model)
+                            & (comp_dfs[ver]["TP"] == tp)
+                        ]
+                    common_conc = set(
+                        ver_data["intended concurrency"].dropna().unique()
+                    ).intersection(conc_set)
+                    vals = (
+                        ver_data[ver_data["intended concurrency"].isin(common_conc)][
+                            col
+                        ]
+                        .dropna()
+                        .tolist()
+                    )
+                    if vals:
+                        version_vals[ver] = geometric_mean(vals)
+
+                if len(version_vals) < len(all_versions):
+                    row[metric_name] = "N/A"
+                    continue
+
+                if higher_is_better:
+                    best_ver = max(version_vals, key=version_vals.get)
+                else:
+                    best_ver = min(version_vals, key=version_vals.get)
+
+                best_val = version_vals[best_ver]
+                margins = []
+                for other in all_versions:
+                    if other == best_ver:
+                        continue
+                    other_val = version_vals[other]
+                    if other_val == 0:
+                        continue
+                    pct = abs((best_val - other_val) / other_val) * 100
+                    other_short = other.split("-")[0] if "-" in other else other
+                    margins.append(f"+{pct:.1f}% vs {other_short}")
+
+                color = "🟢" if best_ver == baseline else "🔴"
+
+                margin_str = ", ".join(margins)
+                row[metric_name] = f"{color} {best_ver} ({margin_str})"
+
+            summary_data.append(row)
+
+        if summary_data:
+            conc_list = sorted(int(c) for c in conc_set)
+            profile_tabs_data[profile_short] = (
+                summary_data,
+                conc_list,
+                profile_full,
+            )
+
+    if not profile_tabs_data:
+        st.info("No overlapping data found for this three-way comparison group.")
+        return
+
+    three_way_col_config = {"Model": st.column_config.TextColumn("Model")}
+    for metric_name in metrics_config:
+        three_way_col_config[metric_name] = st.column_config.TextColumn(metric_name)
+
+    pair_key = f"{baseline}_vs_{'_vs_'.join(competitors)}".replace(" ", "_")
+
+    summary_metrics = set(metrics_config.keys())
+    per_profile_verdicts = []
+    for prof_label, (prof_data, _conc, _pf) in profile_tabs_data.items():
+        model_wins, model_losses, model_similar = 0, 0, 0
+        for row in prof_data:
+            mw, ml = 0, 0
+            for m in summary_metrics:
+                cell = row.get(m, "")
+                if cell.startswith("🟢"):
+                    mw += 1
+                elif cell.startswith("🔴"):
+                    ml += 1
+            if mw > ml:
+                model_wins += 1
+                verdict = "win"
+            elif ml > mw:
+                model_losses += 1
+                verdict = "loss"
+            else:
+                model_similar += 1
+                verdict = "similar"
+            if baseline not in group_scores:
+                group_scores[baseline] = {}
+            score_key = " & ".join(competitors)
+            if score_key not in group_scores[baseline]:
+                group_scores[baseline][score_key] = [0, 0, 0, []]
+            group_scores[baseline][score_key][3].append(
+                {
+                    "model": row["Model"],
+                    "profile": prof_label,
+                    "verdict": verdict,
+                    "wins": mw,
+                    "losses": ml,
+                    "similar": len(summary_metrics) - mw - ml,
+                }
+            )
+        total = model_wins + model_losses + model_similar
+        if total == 0:
+            icon = "🟡"
+        elif model_wins > model_losses:
+            icon = "🟢"
+        elif model_losses > model_wins:
+            icon = "🔴"
+        else:
+            icon = "🟡"
+        per_profile_verdicts.append(
+            f"{icon} {prof_label}: {model_wins} wins, {model_losses} losses, {model_similar} similar"
+        )
+        group_scores[baseline][score_key][0] += model_wins
+        group_scores[baseline][score_key][1] += model_losses
+        group_scores[baseline][score_key][2] += model_similar
+
+    verdict_str = " | ".join(per_profile_verdicts)
+    all_models = set()
+    for _pl, (pdata, _c, _pf) in profile_tabs_data.items():
+        for row in pdata:
+            all_models.add(row["Model"])
+    models_str = ", ".join(sorted(all_models))
+    expander_label = (
+        f"{baseline} vs {' vs '.join(competitors)}  —  {verdict_str}  \n"
+        f"Models: {models_str}"
+    )
+
+    with st.expander(expander_label, expanded=False):
+        tab_labels = list(profile_tabs_data.keys())
+        tabs = st.tabs(tab_labels)
+        for tab, label in zip(tabs, tab_labels):
+            with tab:
+                summary_data, conc_list, prof_full = profile_tabs_data[label]
+                st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
+                st.caption(
+                    f"ℹ️ Geometric mean metrics use concurrency levels: "
+                    f"{', '.join(str(c) for c in conc_list)} "
+                    f"(C=1 excluded — not representative of production workloads)."
+                )
+                summary_df = pd.DataFrame(summary_data)
+                df_key = f"ca_3w_{pair_key}_{label}"
+                tbl_height = 38 + len(summary_df) * 35 + 2
+                st.dataframe(
+                    summary_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=three_way_col_config,
+                    key=df_key,
+                    height=tbl_height,
+                )
+                st.markdown(
+                    f"**Legend:** "
+                    f"🟢 {baseline} is the best performer | "
+                    f"🔴 A competitor outperforms {baseline}"
+                )
+
+
 def render_competitive_analysis_section(df):
     """Render the Competitive Analysis page.
 
@@ -1194,9 +1700,59 @@ def render_competitive_analysis_section(df):
             padding: 0.8rem 1.5rem;
             font-weight: 600;
             min-height: 50px;
+            transition: all 0.3s ease;
         }
         .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
             font-size: 1.4rem;
+            animation: none;
+        }
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="false"] {
+            animation: ca-tab-pulse 1.8s ease-in-out infinite;
+            cursor: pointer;
+            background-color: rgba(59, 89, 152, 0.15);
+            border: 1.5px solid rgba(59, 89, 152, 0.35);
+            border-radius: 8px;
+        }
+        .st-key-ca_section .stTabs [data-baseweb="tab-list"] button[aria-selected="false"]:hover {
+            animation: none;
+            transform: translateY(-3px) scale(1.03);
+            box-shadow: 0 6px 18px rgba(59, 89, 152, 0.4);
+            background-color: rgba(59, 89, 152, 0.25);
+            border-color: rgba(59, 89, 152, 0.5);
+        }
+        @keyframes ca-tab-pulse {
+            0%, 100% {
+                box-shadow: 0 0 0 0 rgba(59, 89, 152, 0.05);
+                transform: translateY(0);
+            }
+            50% {
+                box-shadow: 0 2px 14px 0 rgba(59, 89, 152, 0.45);
+                transform: translateY(-2px);
+            }
+        }
+        .st-key-ca_section [data-testid="stExpander"] {
+            animation: ca-expander-glow 2.5s ease-in-out infinite !important;
+            transition: all 0.3s ease !important;
+            border-radius: 8px !important;
+            border: 1.5px solid rgba(59, 89, 152, 0.2) !important;
+        }
+        .st-key-ca_section [data-testid="stExpander"]:hover {
+            animation: none !important;
+            transform: translateY(-2px) !important;
+            box-shadow: 0 4px 14px rgba(59, 89, 152, 0.3) !important;
+            border-color: rgba(59, 89, 152, 0.5) !important;
+            background-color: rgba(59, 89, 152, 0.03) !important;
+        }
+        .st-key-ca_section [data-testid="stExpander"]:has(details[open]) {
+            animation: none !important;
+            box-shadow: none !important;
+            transform: none !important;
+            border-color: rgba(0, 0, 0, 0.1) !important;
+            background-color: transparent !important;
+        }
+        @keyframes ca-expander-glow {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 89, 152, 0); }
+            50% { box-shadow: 0 0 8px 1px rgba(59, 89, 152, 0.2); }
         }
         </style>""",
         unsafe_allow_html=True,
@@ -1312,7 +1868,12 @@ def render_competitive_analysis_section(df):
 
     @st.dialog("Competitive Analysis — Metric Details", width="large")
     def _show_ca_metric_dialog(
-        metric_name, baseline, competitor, profile_full, profile_short
+        metric_name,
+        baseline,
+        competitor,
+        profile_full,
+        profile_short,
+        baseline_fallback_ver=None,
     ):
         mcfg = metrics_config[metric_name]
         col_name = mcfg["column"]
@@ -1326,9 +1887,14 @@ def render_competitive_analysis_section(df):
             f"**{ACCELERATOR}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
         )
 
-        df_base = h200_df[
-            (h200_df["version"] == baseline) & (h200_df["profile"] == profile_full)
-        ]
+        if baseline_fallback_ver:
+            df_base = _resolve_baseline_df(
+                h200_df, baseline, baseline_fallback_ver, profile_full
+            )
+        else:
+            df_base = h200_df[
+                (h200_df["version"] == baseline) & (h200_df["profile"] == profile_full)
+            ]
         df_comp = h200_df[
             (h200_df["version"] == competitor) & (h200_df["profile"] == profile_full)
         ]
@@ -1350,6 +1916,12 @@ def render_competitive_analysis_section(df):
             d1 = df_base[(df_base["model"] == m) & (df_base["TP"] == tp)]
             d2 = df_comp[(df_comp["model"] == m) & (df_comp["TP"] == tp)]
 
+            actual_base_ver = baseline
+            if baseline_fallback_ver and "version" in d1.columns:
+                src_versions = d1["version"].unique()
+                if len(src_versions) == 1:
+                    actual_base_ver = src_versions[0]
+
             c1 = set(d1["intended concurrency"].dropna().unique())
             c2 = set(d2["intended concurrency"].dropna().unique())
             cc = c1.intersection(c2)
@@ -1370,7 +1942,13 @@ def render_competitive_analysis_section(df):
                 continue
 
             per_model.append(
-                {"label": lbl, "conc": cc_sorted, "v1": v1_by_c, "v2": v2_by_c}
+                {
+                    "label": lbl,
+                    "conc": cc_sorted,
+                    "v1": v1_by_c,
+                    "v2": v2_by_c,
+                    "base_ver": actual_base_ver,
+                }
             )
 
         if not per_model:
@@ -1387,18 +1965,19 @@ def render_competitive_analysis_section(df):
             c_bl = _palette_baseline[idx % len(_palette_baseline)]
             c_cp = _palette_competitor[idx % len(_palette_competitor)]
             x_vals = [int(c) for c in md["conc"]]
+            bv = md.get("base_ver", baseline)
 
             fig.add_trace(
                 go.Scatter(
                     x=x_vals,
                     y=md["v1"],
                     mode="lines+markers",
-                    name=f"{md['label']} ({baseline})",
+                    name=f"{md['label']} ({bv})",
                     line={"color": c_bl, "width": 2.5},
                     marker={"size": 8},
                     legendgroup=md["label"],
                     hovertemplate=(
-                        f"<b>{md['label']}</b> — {baseline}<br>"
+                        f"<b>{md['label']}</b> — {bv}<br>"
                         "Concurrency: %{x}<br>"
                         "Value: %{y:,.2f}<extra></extra>"
                     ),
@@ -1455,10 +2034,13 @@ def render_competitive_analysis_section(df):
         dlg_key = f"ca_dlg_{metric_name}_{baseline}_{competitor}_{profile_short}"
         st.plotly_chart(fig, use_container_width=True, key=dlg_key, theme=None)
 
+        base_label = baseline
+        if baseline_fallback_ver:
+            base_label = f"{baseline} / {baseline_fallback_ver}"
         st.caption(
             "💡 **Tip:** Click a legend entry to toggle it. "
             "Double-click to isolate a single trace. "
-            f"Warm colors (reds/oranges) = **{baseline}**, "
+            f"Warm colors (reds/oranges) = **{base_label}**, "
             f"cool colors (blues/greens) = **{competitor}**."
         )
 
@@ -1472,15 +2054,40 @@ def render_competitive_analysis_section(df):
             group_scores = {}
             score_placeholder = st.container()
 
+            baseline_fallback = group.get("baseline_fallback", {})
+            is_three_way = group.get("three_way", False)
+
+            if is_three_way:
+                _render_three_way_comparison(
+                    h200_df,
+                    group,
+                    baseline_fallback,
+                    PROFILES,
+                    metrics_config,
+                    column_config,
+                    score_placeholder,
+                    group_scores,
+                )
+                group_has_data = True
+                _render_ca_scorecard(score_placeholder, group_scores)
+                st.markdown("---")
+                continue
+
             for baseline in group["baselines"]:
                 for competitor in group["competitors"]:
                     profile_tabs_data = {}
 
                     for profile_full, profile_short in PROFILES:
-                        df_base = h200_df[
-                            (h200_df["version"] == baseline)
-                            & (h200_df["profile"] == profile_full)
-                        ].copy()
+                        fallback_ver = baseline_fallback.get(baseline)
+                        if fallback_ver:
+                            df_base = _resolve_baseline_df(
+                                h200_df, baseline, fallback_ver, profile_full
+                            )
+                        else:
+                            df_base = h200_df[
+                                (h200_df["version"] == baseline)
+                                & (h200_df["profile"] == profile_full)
+                            ].copy()
                         df_comp = h200_df[
                             (h200_df["version"] == competitor)
                             & (h200_df["profile"] == profile_full)
@@ -1520,7 +2127,7 @@ def render_competitive_analysis_section(df):
                             )
                             all_common_conc.update(base_conc.intersection(comp_conc))
 
-                        conc_set = all_common_conc
+                        conc_set = {c for c in all_common_conc if c > 1}
 
                         summary_data = []
                         for model, tp in common_model_tp:
@@ -1605,10 +2212,32 @@ def render_competitive_analysis_section(df):
                                     ms += 1
                             if mw > ml:
                                 model_wins += 1
+                                verdict = "win"
                             elif ml > mw:
                                 model_losses += 1
+                                verdict = "loss"
                             else:
                                 model_similar += 1
+                                verdict = "similar"
+                            if baseline not in group_scores:
+                                group_scores[baseline] = {}
+                            if competitor not in group_scores[baseline]:
+                                group_scores[baseline][competitor] = [
+                                    0,
+                                    0,
+                                    0,
+                                    [],
+                                ]
+                            group_scores[baseline][competitor][3].append(
+                                {
+                                    "model": row["Model"],
+                                    "profile": prof_label,
+                                    "verdict": verdict,
+                                    "wins": mw,
+                                    "losses": ml,
+                                    "similar": ms,
+                                }
+                            )
                         total = model_wins + model_losses + model_similar
                         if total == 0:
                             icon = "🟡"
@@ -1621,10 +2250,6 @@ def render_competitive_analysis_section(df):
                         per_profile_verdicts.append(
                             f"{icon} {prof_label}: {model_wins} wins, {model_losses} losses, {model_similar} similar"
                         )
-                        if baseline not in group_scores:
-                            group_scores[baseline] = {}
-                        if competitor not in group_scores[baseline]:
-                            group_scores[baseline][competitor] = [0, 0, 0]
                         group_scores[baseline][competitor][0] += model_wins
                         group_scores[baseline][competitor][1] += model_losses
                         group_scores[baseline][competitor][2] += model_similar
@@ -1652,27 +2277,13 @@ def render_competitive_analysis_section(df):
                                 st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}**")
                                 st.caption(
                                     f"ℹ️ Geometric mean metrics use concurrency levels: "
-                                    f"{', '.join(str(c) for c in conc_list)}. "
+                                    f"{', '.join(str(c) for c in conc_list)} "
+                                    f"(C=1 excluded — not representative of production workloads). "
                                     f"Peak throughput uses all common concurrency levels."
-                                )
-                                summary_df = pd.DataFrame(summary_data)
-                                df_key = f"ca_{pair_key}_{label}"
-                                st.dataframe(
-                                    summary_df,
-                                    use_container_width=True,
-                                    hide_index=True,
-                                    column_config=column_config,
-                                    key=df_key,
-                                )
-                                st.markdown(
-                                    f"**Legend:** "
-                                    f"🟢 {baseline} performs better than {competitor} | "
-                                    f"🔴 {baseline} performs worse than {competitor} | "
-                                    f"🟡 Similar Performance (< 5% difference)"
                                 )
 
                                 st.markdown(
-                                    "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+                                    "**📊 Click a metric to open a detailed comparison graph:**"
                                 )
                                 btn_metrics = list(metrics_config.keys())
                                 btn_cols = st.columns(len(btn_metrics))
@@ -1692,74 +2303,30 @@ def render_competitive_analysis_section(df):
                                                 competitor,
                                                 prof_full,
                                                 label,
+                                                baseline_fallback_ver=baseline_fallback.get(
+                                                    baseline
+                                                ),
                                             )
 
-            if group_scores:
-                with score_placeholder:
-                    cols = st.columns(len(group_scores))
-                    for col, (bl, comp_dict) in zip(cols, group_scores.items()):
-                        all_w = sum(v[0] for v in comp_dict.values())
-                        all_l = sum(v[1] for v in comp_dict.values())
-                        all_s = sum(v[2] for v in comp_dict.values())
-                        all_decisive = all_w + all_l
-                        overall_wr = (
-                            (all_w / all_decisive * 100) if all_decisive > 0 else None
-                        )
-                        hue = (
-                            "green"
-                            if all_l == 0
-                            else ("yellow" if all_w > all_l else "red")
-                        )
-
-                        competitor_rows = ""
-                        for comp, (cw, cl, cs) in comp_dict.items():
-                            c_decisive = cw + cl
-                            cwr = (cw / c_decisive * 100) if c_decisive > 0 else None
-                            if cwr is None:
-                                wr_cls = "val-amber"
-                                wr_text = "—"
-                            else:
-                                wr_cls = (
-                                    "val-green"
-                                    if cwr >= 60
-                                    else ("val-amber" if cwr >= 40 else "val-red")
+                                summary_df = pd.DataFrame(summary_data)
+                                df_key = f"ca_{pair_key}_{label}"
+                                tbl_height = 38 + len(summary_df) * 35 + 2
+                                st.dataframe(
+                                    summary_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    column_config=column_config,
+                                    key=df_key,
+                                    height=tbl_height,
                                 )
-                                wr_text = f"{cwr:.0f}%"
-                            competitor_rows += f"""<div class="vllm-stat-row" style="margin-top:0.5rem;">
-<div class="vllm-stat" style="flex:2;"><div class="vllm-stat-label" style="font-size:1rem;">vs {comp}</div></div>
-<div class="vllm-stat"><div class="vllm-stat-label">Win Rate</div><div class="vllm-stat-value {wr_cls}">{wr_text}</div></div>
-<div class="vllm-stat"><div class="vllm-stat-label">Wins</div><div class="vllm-stat-value val-green">{cw}</div></div>
-<div class="vllm-stat"><div class="vllm-stat-label">Losses</div><div class="vllm-stat-value val-red">{cl}</div></div>
-<div class="vllm-stat"><div class="vllm-stat-label">Similar</div><div class="vllm-stat-value val-amber">{cs}</div></div>
-</div>"""
+                                st.markdown(
+                                    f"**Legend:** "
+                                    f"🟢 {baseline} performs better than {competitor} | "
+                                    f"🔴 {baseline} performs worse than {competitor} | "
+                                    f"🟡 Similar Performance (< 5% difference)"
+                                )
 
-                        with col:
-                            st.markdown(
-                                f"""<div class="vllm-scorecard vllm-hue-{hue}">
-<div class="vllm-scorecard-title">{bl} — Competitive Score</div>
-<div class="vllm-stat-row">
-<div class="vllm-stat">
-<div class="vllm-stat-label">Overall Win Rate</div>
-<div class="vllm-stat-value {"val-amber" if overall_wr is None else ("val-green" if overall_wr >= 60 else "val-red")}">{"—" if overall_wr is None else f"{overall_wr:.0f}%"}</div>
-</div>
-<div class="vllm-stat">
-<div class="vllm-stat-label">Model Wins</div>
-<div class="vllm-stat-value val-green">{all_w}</div>
-</div>
-<div class="vllm-stat">
-<div class="vllm-stat-label">Model Losses</div>
-<div class="vllm-stat-value val-red">{all_l}</div>
-</div>
-<div class="vllm-stat">
-<div class="vllm-stat-label">Similar</div>
-<div class="vllm-stat-value val-amber">{all_s}</div>
-</div>
-</div>
-<hr style="margin:0.6rem 0;border:none;border-top:1px solid rgba(0,0,0,0.1);">
-{competitor_rows}
-</div>""",
-                                unsafe_allow_html=True,
-                            )
+            _render_ca_scorecard(score_placeholder, group_scores)
 
             if not group_has_data:
                 st.info("No overlapping data found for this comparison group.")
@@ -2582,12 +3149,19 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         with col3:
             if x_axis == "intended concurrency":
                 concurrency_values = sorted(
-                    filtered_df_sorted["intended concurrency"]
+                    int(x)
+                    for x in filtered_df_sorted["intended concurrency"]
                     .dropna()
                     .unique()
                     .tolist()
                 )
                 if concurrency_values:
+                    if (
+                        "perf_plots_max_concurrency" in st.session_state
+                        and st.session_state["perf_plots_max_concurrency"]
+                        not in concurrency_values
+                    ):
+                        del st.session_state["perf_plots_max_concurrency"]
                     max_conc = st.selectbox(
                         "Show concurrency up to",
                         options=concurrency_values,
@@ -4609,16 +5183,20 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if all_common_concurrencies_sorted:
             # Key includes filter selections so the widget resets when filters change
             conc_key = f"compare_summary_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            default_concurrencies = [
+                c for c in all_common_concurrencies_sorted if c > 1
+            ]
             selected_concurrencies = st.multiselect(
                 "Select Concurrency Level(s) for Geometric Mean",
                 options=all_common_concurrencies_sorted,
-                default=all_common_concurrencies_sorted,
+                default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both versions are shown. "
+                    "Concurrency 1 is excluded by default (not representative of production workloads). "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -4628,7 +5206,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             selected_conc_set = set(selected_concurrencies)
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
-                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
+                f"(C=1 excluded by default — not representative of production workloads). "
                 f"Peak throughput uses all common concurrency levels."
             )
         else:
@@ -4915,8 +5494,6 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     c1 = set(d1["intended concurrency"].dropna().unique())
                     c2 = set(d2["intended concurrency"].dropna().unique())
                     cc = c1.intersection(c2)
-                    if agg == "geom_mean":
-                        cc = cc.intersection(selected_conc_set)
                     if not cc:
                         continue
 
@@ -5050,8 +5627,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 if agg == "geom_mean":
                     conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
                     st.caption(
-                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
-                        "(filtered by geometric mean concurrency selection)."
+                        f"ℹ️ Graph shows all common concurrency levels. "
+                        f"Geometric mean uses: {conc_str}."
                     )
                 else:
                     st.caption(
@@ -5435,16 +6012,20 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
 
         if all_common_concurrencies_sorted:
             conc_key = f"compare_models_conc_{model_1}_{model_2}"
+            default_concurrencies = [
+                c for c in all_common_concurrencies_sorted if c > 1
+            ]
             selected_concurrencies = st.multiselect(
                 "Select Concurrency Level(s) for Geometric Mean",
                 options=all_common_concurrencies_sorted,
-                default=all_common_concurrencies_sorted,
+                default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
                 args=("compare_models_expanded",),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both models are shown. "
+                    "Concurrency 1 is excluded by default (not representative of production workloads). "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -5454,7 +6035,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
             selected_conc_set = set(selected_concurrencies)
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
-                f"{', '.join(str(c) for c in sorted(selected_concurrencies))}. "
+                f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
+                f"(C=1 excluded by default — not representative of production workloads). "
                 f"Peak throughput uses all common concurrency levels."
             )
         else:
@@ -5675,8 +6257,6 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                     c1 = set(d1["intended concurrency"].dropna().unique())
                     c2 = set(d2["intended concurrency"].dropna().unique())
                     cc = c1.intersection(c2)
-                    if agg == "geom_mean":
-                        cc = cc.intersection(selected_conc_set)
                     if not cc:
                         continue
 
@@ -5806,8 +6386,8 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                 if agg == "geom_mean":
                     conc_str = ", ".join(str(int(c)) for c in sorted(selected_conc_set))
                     st.caption(
-                        f"ℹ️ Showing data at concurrency levels: {conc_str} "
-                        "(filtered by geometric mean concurrency selection)."
+                        f"ℹ️ Graph shows all common concurrency levels. "
+                        f"Geometric mean uses: {conc_str}."
                     )
                 else:
                     st.caption(
@@ -5817,7 +6397,7 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
 
             # --- Metric comparison buttons ---
             st.markdown(
-                "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+                "**📊 Click a metric below to open a detailed comparison popup:**"
             )
             btn_metrics = [m for m in metrics_config if m != "Peak Output Throughput"]
             btn_cols = st.columns(len(btn_metrics))
@@ -5830,7 +6410,6 @@ def render_compare_models_section(filtered_df, selected_profile, use_expander=Tr
                         f"📊 {short}",
                         key=f"cmp_models_btn_{i}",
                         use_container_width=True,
-                        type="primary",
                     ):
                         st.session_state.compare_models_expanded = True
                         _show_model_metric_dialog(m_name)
@@ -6059,7 +6638,8 @@ def render_model_performance_comparison_section(
     with ctx:
         # Get available concurrency levels from the data
         available_concurrencies = sorted(
-            filtered_df["intended concurrency"].dropna().unique().tolist()
+            int(x)
+            for x in filtered_df["intended concurrency"].dropna().unique().tolist()
         )
 
         if not available_concurrencies:
@@ -6074,6 +6654,12 @@ def render_model_performance_comparison_section(
             if not use_expander:
                 st.subheader("🏆 Model Performance Comparison")
         with dropdown_col:
+            if (
+                "model_comparison_concurrency" in st.session_state
+                and st.session_state["model_comparison_concurrency"]
+                not in available_concurrencies
+            ):
+                del st.session_state["model_comparison_concurrency"]
             selected_concurrency = st.selectbox(
                 "Concurrency",
                 options=available_concurrencies,
@@ -9103,6 +9689,8 @@ def render_sidebar_header():
             view_options.append("MLPerf Dashboard")
         if LLMD_AVAILABLE:
             view_options.append("LLM-D Dashboard")
+        if CPU_AVAILABLE:
+            view_options.append("vLLM CPU Dashboard")
 
         if len(view_options) > 1:
             # Pre-populate the widget key so we never need the `index`
@@ -9130,6 +9718,14 @@ def render_sidebar_header():
 
 def render_confidentiality_notice():
     """Render the confidentiality notice."""
+    selected_view = st.session_state.get("selected_view", "RHAIIS Dashboard")
+    gpu_infer_text = ""
+    if selected_view != "vLLM CPU Dashboard":
+        gpu_infer_text = (
+            "<b>For GPU sizing guidance and cost analysis, see "
+            '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
+            'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
+        )
     st.markdown(
         '<div style="background-color: rgba(245,158,11,0.08); border-left: 3px solid #f59e0b; '
         "padding: 6px 12px; border-radius: 8px; font-size: 0.82rem; line-height: 1.5; "
@@ -9138,9 +9734,7 @@ def render_confidentiality_notice():
         "Red Hat Confidential. Disclosure requires signed NDA. "
         "External publication needs PSAP Inference Team approval "
         '(<span style="color:#92400e;">@psap-inference</span> on #forum-psap). '
-        "<b>For GPU sizing guidance and cost analysis, see "
-        '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
-        'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
+        f"{gpu_infer_text}"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -9154,7 +9748,12 @@ initialize_session_state()
 # must not overwrite it here — that would undo the user's click.
 if "view" in st.query_params and "dashboard_view_selector" not in st.session_state:
     view_from_url = st.query_params["view"]
-    if view_from_url in ["RHAIIS Dashboard", "MLPerf Dashboard", "LLM-D Dashboard"]:
+    if view_from_url in [
+        "RHAIIS Dashboard",
+        "MLPerf Dashboard",
+        "LLM-D Dashboard",
+        "vLLM CPU Dashboard",
+    ]:
         st.session_state.selected_view = view_from_url
         st.session_state.dashboard_view_selector = view_from_url
 
@@ -9292,6 +9891,11 @@ if LLMD_AVAILABLE and selected_view == "LLM-D Dashboard":
     render_llmd_dashboard("llmd-dashboard.csv")
     st.stop()  # Stop execution here, don't load RHAIIS data
 
+# If vLLM CPU view is selected, render CPU dashboard and exit
+if CPU_AVAILABLE and selected_view == "vLLM CPU Dashboard":
+    render_cpu_dashboard("cpu_dashboard.csv")
+    st.stop()  # Stop execution here, don't load RHAIIS data
+
 # Otherwise, continue with RHAIIS dashboard
 DATA_FILE = "consolidated_dashboard.csv"
 
@@ -9323,7 +9927,6 @@ def main():
             "⚙️ Runtime Server Configs": "runtime_configs",
             "📋 View Logs": "view_logs",
             "📄 Filtered Data": "filtered_data",
-            "💡 IntelliConfig": "intelliconfig",
             "🔍 Competitive Analysis": "competitive_analysis",
         }
         SLUG_TO_SECTION = {v: k for k, v in SECTION_TO_SLUG.items()}
@@ -9678,7 +10281,6 @@ def main():
         "📈 Performance Trends",
         "🔄 Pareto Tradeoff Analysis",
         "🌱 Energy Computation",
-        "💡 IntelliConfig",
     }
     _active = st.session_state.get("active_section", "🏠 Overview")
     _show_global_filters = _active not in SECTIONS_WITHOUT_GLOBAL_FILTERS
@@ -10465,8 +11067,6 @@ def main():
                 )
             elif sel == "🌱 Energy Computation":
                 render_energy_carbon_methodology_section(df, use_expander=False)
-            elif sel == "💡 IntelliConfig":
-                render_intelliconfig_section(df)
             elif sel == "⚙️ Runtime Server Configs":
                 render_runtime_configs_section(filtered_df, use_expander=False)
             elif sel == "📋 View Logs":
@@ -10718,8 +11318,7 @@ _stc.html(
     var NO_COLLAPSE_SECTIONS = [
         "\U0001f3e0 Overview",
         "\U0001f50d Competitive Analysis",
-        "\U0001f4c8 Performance Trends",
-        "\U0001f4a1 IntelliConfig"
+        "\U0001f4c8 Performance Trends"
     ];
     var collapseEnabled = NO_COLLAPSE_SECTIONS.indexOf(currentSection) === -1;
 

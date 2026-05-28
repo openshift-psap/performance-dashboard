@@ -52,6 +52,8 @@ spec:
               value: "the location of the consolidated_dashboard.csv file"
             - name: S3_KEY_LLMD
               value: "the location of the llmd-dashboard.csv file"
+            - name: S3_KEY_CPU
+              value: "the location of the cpu_dashboard.csv file"
             - name: S3_REGION
               value: "the region of your bucket"
             # S3 Configuration for logs

@@ -1930,7 +1930,9 @@ def create_version_comparison(
             return None
 
         comparison_df["System_Display"] = comparison_df.apply(
-            lambda r: f"{r['Organization']} - {r['Accelerator']} x{r['Total Accelerators']}",
+            lambda r: (
+                f"{r['Organization']} - {r['Accelerator']} x{r['Total Accelerators']}"
+            ),
             axis=1,
         )
 
