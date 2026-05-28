@@ -4736,7 +4736,10 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
         # Get short profile name for display
         profile_short = clean_profile_name(selected_profile)
         trends_subtitle = ""
-        if profile_short == "Real Dataset (0/0)":
+        if (
+            selected_profile == "Custom"
+            and st.session_state.get("selected_custom_isl_osl") == "0/0"
+        ):
             ds = st.session_state.get("selected_dataset_filter", "")
             sd = st.session_state.get("selected_spec_decoding_filter", [])
             pc = st.session_state.get("selected_prefix_caching_filter", [])
