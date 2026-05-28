@@ -1670,9 +1670,15 @@ def get_light_mode_css():
         color: #1a1f36 !important;
     }
 
-    /* Re-apply compare-version graph button styling (after catch-all overrides) */
+    /* Re-apply compare-version & competitive-analysis graph button styling (after catch-all overrides) */
     [class*="st-key-cmp_btn_"] button,
-    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button {
+    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button,
+    [class*="st-key-llmd_cmp_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-llmd_cmp_btn_"] button,
+    [class*="st-key-ca_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-ca_btn_"] button,
+    [class*="st-key-llmd_ca_btn_"] button,
+    div[data-testid="stColumn"] [class*="st-key-llmd_ca_btn_"] button {
         background: linear-gradient(135deg, #4a6fa5 0%, #3b5998 100%) !important;
         color: #ffffff !important;
         border: none !important;
@@ -1680,14 +1686,25 @@ def get_light_mode_css():
         box-shadow: 0 2px 6px rgba(59, 89, 152, 0.25) !important;
     }
     [class*="st-key-cmp_btn_"] button:hover,
-    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button:hover {
+    div[data-testid="stColumn"] [class*="st-key-cmp_btn_"] button:hover,
+    [class*="st-key-llmd_cmp_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-llmd_cmp_btn_"] button:hover,
+    [class*="st-key-ca_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-ca_btn_"] button:hover,
+    [class*="st-key-llmd_ca_btn_"] button:hover,
+    div[data-testid="stColumn"] [class*="st-key-llmd_ca_btn_"] button:hover {
         background: linear-gradient(135deg, #3b5998 0%, #2d4373 100%) !important;
         color: #ffffff !important;
         box-shadow: 0 4px 14px rgba(59, 89, 152, 0.40) !important;
     }
     [class*="st-key-cmp_btn_"] button p,
     [class*="st-key-cmp_btn_"] button span,
-    .stButton [class*="st-key-cmp_btn_"] button span {
+    [class*="st-key-llmd_cmp_btn_"] button p,
+    [class*="st-key-llmd_cmp_btn_"] button span,
+    [class*="st-key-ca_btn_"] button p,
+    [class*="st-key-ca_btn_"] button span,
+    [class*="st-key-llmd_ca_btn_"] button p,
+    [class*="st-key-llmd_ca_btn_"] button span {
         color: #ffffff !important;
     }
 
