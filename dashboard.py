@@ -3603,36 +3603,26 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
         # Create a comprehensive color palette
         color_palette = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-            "#aec7e8",
-            "#ffbb78",
-            "#98df8a",
-            "#ff9896",
-            "#c5b0d5",
-            "#c49c94",
-            "#f7b6d2",
-            "#c7c7c7",
-            "#dbdb8d",
-            "#9edae5",
-            "#90EE90",
-            "#008000",
-            "#000000",
-            "#FF0000",
-            "#800080",
-            "#FFA500",
-            "#4285F4",
-            "#00CED1",
+            "#E6194B",
+            "#3CB44B",
+            "#4363D8",
+            "#F58231",
+            "#911EB4",
+            "#42D4F4",
+            "#F032E6",
+            "#FFE119",
+            "#469990",
+            "#9A6324",
+            "#800000",
+            "#000075",
+            "#BFEF45",
             "#FF1493",
-            "#32CD32",
+            "#7B68EE",
+            "#2E8B57",
+            "#DAA520",
+            "#00FF7F",
+            "#4B0082",
+            "#20B2AA",
         ]
 
         # Create unique color mapping for each version+accelerator+TP combination
@@ -4187,36 +4177,26 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
         )
 
         color_palette = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-            "#aec7e8",
-            "#ffbb78",
-            "#98df8a",
-            "#ff9896",
-            "#c5b0d5",
-            "#c49c94",
-            "#f7b6d2",
-            "#c7c7c7",
-            "#dbdb8d",
-            "#9edae5",
-            "#90EE90",
-            "#008000",
-            "#000000",
-            "#FF0000",
-            "#800080",
-            "#FFA500",
-            "#4285F4",
-            "#00CED1",
+            "#E6194B",
+            "#3CB44B",
+            "#4363D8",
+            "#F58231",
+            "#911EB4",
+            "#42D4F4",
+            "#F032E6",
+            "#FFE119",
+            "#469990",
+            "#9A6324",
+            "#800000",
+            "#000075",
+            "#BFEF45",
             "#FF1493",
-            "#32CD32",
+            "#7B68EE",
+            "#2E8B57",
+            "#DAA520",
+            "#00FF7F",
+            "#4B0082",
+            "#20B2AA",
         ]
 
         groups = (
@@ -10488,7 +10468,7 @@ def main():
                 "trends_versions_multi",
                 "trends_tp_multi",
             }
-            INT_LIST_SESSION_KEYS = {"trends_tp_multi"}
+            NUMERIC_LIST_SESSION_KEYS = {"trends_tp_multi"}
             INT_SESSION_KEYS = {
                 "perf_plots_max_concurrency",
                 "model_comparison_concurrency",
@@ -10506,8 +10486,14 @@ def main():
                                     parts = [
                                         v.strip() for v in raw.split(",") if v.strip()
                                     ]
-                                    if ss_key in INT_LIST_SESSION_KEYS:
-                                        parts = [int(v) for v in parts if v.isdigit()]
+                                    if ss_key in NUMERIC_LIST_SESSION_KEYS:
+                                        converted = []
+                                        for v in parts:
+                                            with contextlib.suppress(
+                                                ValueError, OverflowError
+                                            ):
+                                                converted.append(float(v))
+                                        parts = converted
                                     url_section_filters[ss_key] = parts
                                 elif ss_key in INT_SESSION_KEYS:
                                     with contextlib.suppress(ValueError):
