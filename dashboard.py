@@ -1173,7 +1173,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["sglang-0.5.11"],
             },
@@ -1185,7 +1185,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["TRT-LLM-1.3.0rc13", "TRT-LLM-gpt-oss-dev"],
             },
@@ -1200,7 +1200,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["sglang-0.5.11", "TRT-LLM"],
                 "competitor_versions": {
