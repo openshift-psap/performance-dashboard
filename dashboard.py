@@ -1143,6 +1143,7 @@ def _hm_cell(pct, higher_is_better):
 CA_CONFIGURATIONS = [
     {
         "label": "vLLM-0.21.0",
+        "hidden": True,
         "description": (
             "Performance comparison of **vLLM-0.21.0** "
             "against **sglang-0.5.11** and **TRT-LLM** (1.3.0rc13, "
@@ -1265,7 +1266,8 @@ def _available_ca_configs(df):
     return [
         cfg
         for cfg in CA_CONFIGURATIONS
-        if any(
+        if not cfg.get("hidden")
+        and any(
             any(bl in available_versions for bl in g["baselines"])
             and any(comp in available_versions for comp in g["competitors"])
             for g in cfg["groups"]
