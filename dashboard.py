@@ -3360,19 +3360,25 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
             # Map accelerator to hardware label
             hw = row.get("accelerator", "")
 
-            # Calculate throughput per GPU
-            tp = row.get("TP", 1)
-            if pd.isna(tp) or tp == 0:
-                tp = 1
+            # Calculate throughput per GPU using total GPU count (TP * DP)
+            raw_tp = row.get("TP", 1)
+            tp = int(raw_tp) if pd.notna(raw_tp) else 0
+
+            raw_dp = row.get("DP", 1)
+            dp = int(raw_dp) if pd.notna(raw_dp) else 1
+
+            total_gpus = max(tp, 1) * max(dp, 1)
 
             total_throughput = row.get("total_tok/sec", 0)
-            tput_per_gpu = total_throughput / tp if tp > 0 else 0
+            tput_per_gpu = total_throughput / total_gpus if total_gpus > 0 else 0
 
             output_throughput = row.get("output_tok/sec", 0)
-            output_tput_per_gpu = output_throughput / tp if tp > 0 else 0
+            output_tput_per_gpu = (
+                output_throughput / total_gpus if total_gpus > 0 else 0
+            )
 
             input_throughput = total_throughput - output_throughput
-            input_tput_per_gpu = input_throughput / tp if tp > 0 else 0
+            input_tput_per_gpu = input_throughput / total_gpus if total_gpus > 0 else 0
 
             # Calculate interactivity from tpot_median (tokens per output token)
             # tpot is in milliseconds, interactivity is tok/s/user
@@ -3398,9 +3404,20 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
                 else "Unknown"
             )
 
+            # Build a label that reflects the parallelism config
+            if tp == 0 and dp > 1:
+                parallelism_label = f"DP={dp}"
+            elif dp > 1 and tp > 0:
+                parallelism_label = f"TP={tp},DP={dp}"
+            else:
+                parallelism_label = f"TP={max(tp, 1)}"
+
             result = {
                 "hw": hw,
-                "tp": int(tp),
+                "tp": max(tp, 1),
+                "dp": dp,
+                "total_gpus": total_gpus,
+                "parallelism_label": parallelism_label,
                 "conc": row.get("intended concurrency", 0),
                 "model": row.get("model", "Unknown"),
                 "version": version,
@@ -3591,9 +3608,11 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 st.warning(f"No results found for accelerator: '{selected_hw}'")
                 return
 
-        # Get unique accelerators, TP sizes, and versions
+        # Get unique accelerators, parallelism configs, and versions
         unique_hw = sorted({r.get("hw", "unknown") for r in results})
-        unique_tps = sorted({r.get("tp", 1) for r in results})
+        unique_par_labels = sorted(
+            {r.get("parallelism_label", "TP=1") for r in results}
+        )
         unique_versions_in_results = sorted(
             {r.get("version", "Unknown") for r in results}
         )
@@ -3622,13 +3641,13 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
             "#20B2AA",
         ]
 
-        # Create unique color mapping for each version+accelerator+TP combination
+        # Create unique color mapping for each version+accelerator+parallelism combination
         hw_tp_version_color_map = {}
         color_idx = 0
         for version in sorted(unique_versions_in_results):
             for hw in sorted(unique_hw):
-                for tp in sorted(unique_tps):
-                    hw_tp_version_key = f"{version}_{hw.lower()}_{tp}"
+                for par_label in sorted(unique_par_labels):
+                    hw_tp_version_key = f"{version}_{hw.lower()}_{par_label}"
                     hw_tp_version_color_map[hw_tp_version_key] = color_palette[
                         color_idx % len(color_palette)
                     ]
@@ -3670,21 +3689,19 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, then by accelerator, then by TP size
+                # Group by version, accelerator, and parallelism config
                 for version in sorted(unique_versions_in_results):
                     for hw in sorted(unique_hw):
-                        for tp_size in sorted(unique_tps):
-                            # Filter results for this version, accelerator and TP combination
+                        for par_label in sorted(unique_par_labels):
                             hw_tp_version_results = [
                                 r
                                 for r in filtered_results
                                 if r.get("version", "Unknown") == version
                                 and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("tp", 1) == tp_size
+                                and r.get("parallelism_label", "TP=1") == par_label
                             ]
 
                             if hw_tp_version_results:
-                                # Sort by concurrency for proper line drawing
                                 hw_tp_version_results_sorted = sorted(
                                     hw_tp_version_results,
                                     key=lambda x: x.get("conc", 0),
@@ -3698,21 +3715,14 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     r.get(selected_throughput_key, 0)
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                models = [
-                                    r.get("model", "Unknown")
-                                    for r in hw_tp_version_results_sorted
-                                ]
                                 concs = [
                                     r.get("conc", "N/A")
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                isl_osls = [
-                                    r.get("isl_osl", "N/A")
-                                    for r in hw_tp_version_results_sorted
-                                ]
 
-                                # Get unique color for this version+accelerator+TP combination
-                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                hw_tp_version_key = (
+                                    f"{version}_{hw.lower()}_{par_label}"
+                                )
                                 color = hw_tp_version_color_map.get(
                                     hw_tp_version_key, "#999999"
                                 )
@@ -3729,13 +3739,11 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                 hover_text = [
                                     f"Version: {version}<br>"
                                     f"Accelerator: {hw.upper()}<br>"
-                                    f"TP Size: {tp_size}<br>"
+                                    f"Config: {par_label}<br>"
                                     f"Concurrent Requests: {conc} Users<br>"
                                     f"Latency: {x:.2f}s<br>"
                                     f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, isl_osl, model, x, y in zip(
-                                        concs, isl_osls, models, xs, ys
-                                    )
+                                    for conc, x, y in zip(concs, xs, ys)
                                 ]
 
                                 fig.add_trace(
@@ -3743,7 +3751,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                         x=xs,
                                         y=ys,
                                         mode="markers+lines+text",
-                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        name=f"{version} | {hw.upper()} ({par_label})",
                                         marker={
                                             "size": 10,
                                             "color": color,
@@ -3786,7 +3794,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (TP Size)",
+                        "title": "Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
@@ -3823,21 +3831,19 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, then by accelerator, then by TP size
+                # Group by version, accelerator, and parallelism config
                 for version in sorted(unique_versions_in_results):
                     for hw in sorted(unique_hw):
-                        for tp_size in sorted(unique_tps):
-                            # Filter results for this version, accelerator and TP combination
+                        for par_label in sorted(unique_par_labels):
                             hw_tp_version_results = [
                                 r
                                 for r in filtered_results
                                 if r.get("version", "Unknown") == version
                                 and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("tp", 1) == tp_size
+                                and r.get("parallelism_label", "TP=1") == par_label
                             ]
 
                             if hw_tp_version_results:
-                                # Sort by concurrency for proper line drawing
                                 hw_tp_version_results_sorted = sorted(
                                     hw_tp_version_results,
                                     key=lambda x: x.get("conc", 0),
@@ -3851,21 +3857,14 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     r.get(selected_throughput_key, 0)
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                models = [
-                                    r.get("model", "Unknown")
-                                    for r in hw_tp_version_results_sorted
-                                ]
                                 concs = [
                                     r.get("conc", "N/A")
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                isl_osls = [
-                                    r.get("isl_osl", "N/A")
-                                    for r in hw_tp_version_results_sorted
-                                ]
 
-                                # Get unique color for this version+accelerator+TP combination
-                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                hw_tp_version_key = (
+                                    f"{version}_{hw.lower()}_{par_label}"
+                                )
                                 color = hw_tp_version_color_map.get(
                                     hw_tp_version_key, "#999999"
                                 )
@@ -3882,13 +3881,11 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                 hover_text = [
                                     f"Version: {version}<br>"
                                     f"Accelerator: {hw.upper()}<br>"
-                                    f"TP Size: {tp_size}<br>"
+                                    f"Config: {par_label}<br>"
                                     f"Concurrent Requests: {conc} Users<br>"
                                     f"Interactivity: {x:.2f} tok/s/user<br>"
                                     f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, isl_osl, model, x, y in zip(
-                                        concs, isl_osls, models, xs, ys
-                                    )
+                                    for conc, x, y in zip(concs, xs, ys)
                                 ]
 
                                 fig.add_trace(
@@ -3896,7 +3893,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                         x=xs,
                                         y=ys,
                                         mode="markers+lines+text",
-                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        name=f"{version} | {hw.upper()} ({par_label})",
                                         marker={
                                             "size": 10,
                                             "color": color,
@@ -3939,7 +3936,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (TP Size)",
+                        "title": "Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
@@ -3969,7 +3966,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     "version",
                     "isl",
                     "osl",
-                    "tp",
+                    "parallelism_label",
                     "conc",
                     "tput_per_gpu",
                     "output_tput_per_gpu",
@@ -4004,7 +4001,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "hw": "Accelerator",
                         "isl": "ISL",
                         "osl": "OSL",
-                        "tp": "TP",
+                        "parallelism_label": "Config",
                         "conc": "Concurrency",
                     }
                 )
@@ -4032,8 +4029,9 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "OSL": st.column_config.NumberColumn(
                             "OSL", help="Output Sequence Length (output tokens)"
                         ),
-                        "TP": st.column_config.NumberColumn(
-                            "TP", help="Tensor Parallelism size"
+                        "Config": st.column_config.TextColumn(
+                            "Config",
+                            help="Parallelism configuration (TP/DP)",
                         ),
                         "Concurrency": st.column_config.NumberColumn(
                             "Concurrency", help="Number of concurrent requests"
@@ -4144,9 +4142,14 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             st.warning("No data for the selected version / accelerator combination.")
             return
 
-        vdf["tp_safe"] = vdf["TP"].fillna(1).replace(0, 1).astype(int)
+        vdf["tp_safe"] = vdf["TP"].fillna(1).astype(int).clip(lower=1)
+        if "DP" in vdf.columns:
+            vdf["dp_safe"] = vdf["DP"].fillna(1).astype(int).clip(lower=1)
+        else:
+            vdf["dp_safe"] = 1
+        vdf["total_gpus"] = vdf["tp_safe"] * vdf["dp_safe"]
         if tput_mode == "total":
-            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["tp_safe"]
+            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["total_gpus"]
             y_col, y_label = (
                 "tput_per_gpu",
                 "Total Token Throughput per GPU (tok/s/gpu)",
@@ -4154,7 +4157,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             metric_hover = "Total Throughput"
         elif tput_mode == "input":
             vdf["tput_per_gpu"] = (vdf["total_tok/sec"] - vdf["output_tok/sec"]) / vdf[
-                "tp_safe"
+                "total_gpus"
             ]
             y_col, y_label = (
                 "tput_per_gpu",
@@ -4162,7 +4165,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             )
             metric_hover = "Input Throughput"
         else:
-            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["tp_safe"]
+            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["total_gpus"]
             y_col, y_label = (
                 "tput_per_gpu",
                 "Output Token Throughput per GPU (tok/s/gpu)",
