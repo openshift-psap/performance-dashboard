@@ -92,7 +92,7 @@ S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 
 # ── Overview version configuration (single source of truth) ──────
 OVERVIEW_CURRENT = "RHAIIS-3.4-GA"
-OVERVIEW_PREVIOUS = "RHAIIS-3.4-EA2"
+OVERVIEW_PREVIOUS = "RHAIIS-3.3"
 OVERVIEW_UPSTREAM = "vLLM-0.18.0"
 OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
 
@@ -100,6 +100,12 @@ OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    {
+        "current": "RHAIIS-3.4-GA",
+        "previous": "RHAIIS-3.3",
+        "upstream": "vLLM-0.18.0",
+        "additional": ["vLLM-0.17.1"],
+    },
     {
         "current": "RHAIIS-3.4-GA",
         "previous": "RHAIIS-3.4-EA2",
@@ -740,6 +746,11 @@ def _compute_overview_data(
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
+        "E2E Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
     }
 
     df_curr = df[df["version"] == CURRENT].copy()
@@ -1021,6 +1032,12 @@ def _compute_overview_data(
                 "itl_pct": itl_pct,
                 "itl_better": itl_better,
                 "itl_similar": itl_similar,
+                "accelerator": accel,
+                "profile_raw": profile,
+                "custom_isl_osl": cisl_osl,
+                "dataset": dset,
+                "spec_decoding": sdec,
+                "prefix_caching": pcache,
             }
         )
 
@@ -1128,22 +1145,10 @@ def _compute_overview_data(
     }
 
 
-def _health_dots_html(health):
-    """Return traffic-light dot HTML for a health status string."""
-    if health == "Healthy":
-        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-green"></span>'
-    elif health == "Warning":
-        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-amber"></span><span class="health-dot dot-grey"></span>'
-    else:
-        dots = '<span class="health-dot dot-red"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span>'
-    return f'<span class="health-dots">{dots}</span>'
-
-
 def _hm_cell(pct, higher_is_better):
     """Return styled heatmap cell HTML for a % delta."""
     if pct is None:
         return '<span class="hm-cell hm-neutral">N/A</span>'
-    # Normalise: positive = good
     norm = pct if higher_is_better else -pct
     sign = "+" if pct > 0 else ""
     label = f"{sign}{pct:.1f} %"
@@ -1154,6 +1159,17 @@ def _hm_cell(pct, higher_is_better):
     else:
         cls = "hm-regress-strong"
     return f'<span class="hm-cell {cls}">{label}</span>'
+
+
+def _health_dots_html(health):
+    """Return traffic-light dot HTML for a health status string."""
+    if health == "Healthy":
+        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-green"></span>'
+    elif health == "Warning":
+        dots = '<span class="health-dot dot-grey"></span><span class="health-dot dot-amber"></span><span class="health-dot dot-grey"></span>'
+    else:
+        dots = '<span class="health-dot dot-red"></span><span class="health-dot dot-grey"></span><span class="health-dot dot-grey"></span>'
+    return f'<span class="health-dots">{dots}</span>'
 
 
 CA_CONFIGURATIONS = [
@@ -1173,7 +1189,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["sglang-0.5.11"],
             },
@@ -1185,7 +1201,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["TRT-LLM-1.3.0rc13", "TRT-LLM-gpt-oss-dev"],
             },
@@ -1200,7 +1216,7 @@ CA_CONFIGURATIONS = [
                 ),
                 "baselines": ["vLLM-0.21.0"],
                 "baseline_fallback": {
-                    "vLLM-0.21.0": "vLLM-0.21.0-competitive",
+                    "vLLM-0.21.0": "vLLM-0.21.0-optimized",
                 },
                 "competitors": ["sglang-0.5.11", "TRT-LLM"],
                 "competitor_versions": {
@@ -2514,7 +2530,7 @@ combinations.<br><br>
 </div>
 </summary>
 <div class="overview-card-detail">
-Single largest degradation across Throughput, P95 TTFT, or
+Single largest degradation across Throughput, E2E Latency, P95 TTFT, or
 P95 ITL (normalised: negative = regression).<br><br>
 <b>Where:</b> {wr_detail}
 </div></details></div>""",
@@ -2661,10 +2677,228 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             icon = _vllm_indicator(pct, better, similar)
             return f'<td style="text-align:right">{icon} {pct:+.1f} %</td>'
 
-        vllm_table_rows = ""
-        for r in sorted(
+        _vllm_dialog_metrics = {
+            "Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "Total Throughput": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "End-to-End Latency": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "TTFT P95": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "ITL P95": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+        }
+
+        @st.dialog("vLLM Parity — Metric Details", width="large")
+        def _show_vllm_compare_dialog(r):
+            short_name = r["short_name"]
+            profile_display = r["profile"]
+
+            mask_common = (
+                (df["model"] == r["model"])
+                & (df["TP"] == r["tp"])
+                & (df["accelerator"] == r["accelerator"])
+                & (df["profile"] == r["profile_raw"])
+                & (df["custom_isl_osl"] == r["custom_isl_osl"])
+                & (df["dataset"] == r["dataset"])
+                & (df["spec_decoding"] == r["spec_decoding"])
+                & (df["prefix_caching"] == r["prefix_caching"])
+            )
+            df_v1 = df[mask_common & (df["version"] == ov_current)]
+            df_v2 = df[mask_common & (df["version"] == ov_upstream)]
+
+            if df_v1.empty or df_v2.empty:
+                st.warning("No data available for this comparison.")
+                return
+
+            v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+            v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+            common_conc = sorted(v1_conc & v2_conc)
+            if not common_conc:
+                st.warning("No common concurrency levels found between versions.")
+                return
+
+            conc_for_geomean = {c for c in common_conc if c > 1}
+
+            summary_rows = []
+            for mname, mcfg in _vllm_dialog_metrics.items():
+                pct, better, _, _, similar = compare_two_datasets(
+                    df_v1,
+                    df_v2,
+                    mcfg,
+                    conc_for_geomean,
+                )
+                if pct is not None:
+                    sign = "+" if pct > 0 else ""
+                    status = "🟡" if similar else ("🟢" if better else "🔴")
+                    cell_text = f"{status} {ov_current} ({sign}{pct:.1f}%)"
+                else:
+                    cell_text = "N/A"
+                summary_rows.append(
+                    {"Metric": mname, f"{ov_current} vs {ov_upstream}": cell_text}
+                )
+
+            st.markdown(
+                f"**Comparing:** {ov_current} vs {ov_upstream} &nbsp;|&nbsp; "
+                f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+            )
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Metric": st.column_config.TextColumn("Metric"),
+                    f"{ov_current} vs {ov_upstream}": st.column_config.TextColumn(
+                        f"{ov_current} vs {ov_upstream}",
+                    ),
+                },
+            )
+
+            st.markdown(
+                "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+            )
+            btn_cols = st.columns(len(_vllm_dialog_metrics))
+            for i, mname in enumerate(_vllm_dialog_metrics):
+                with btn_cols[i]:
+                    if st.button(
+                        f"📊 {mname}",
+                        key=f"vllm_dlg_btn_{i}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state._vllm_dlg_selected_metric = mname
+
+            selected_metric = st.session_state.get("_vllm_dlg_selected_metric")
+            if selected_metric and selected_metric in _vllm_dialog_metrics:
+                mcfg = _vllm_dialog_metrics[selected_metric]
+                col_name = mcfg["column"]
+
+                st.markdown(f"#### {selected_metric} vs Concurrency")
+                st.markdown(
+                    f"**{ov_current}** vs **{ov_upstream}** &nbsp;|&nbsp; "
+                    f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+                )
+
+                v1_vals, v2_vals = [], []
+                for c in common_conc:
+                    g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                    g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                    v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                    v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
+
+                if col_name == "ttft_p95":
+                    v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                    v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+                x_vals = [int(c) for c in common_conc]
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v1_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ov_current})",
+                        line={"color": "#EF553B", "width": 2.5},
+                        marker={"size": 8},
+                        hovertemplate=(
+                            f"<b>{short_name}</b> — {ov_current}<br>"
+                            "Concurrency: %{x}<br>"
+                            "Value: %{y:,.2f}<extra></extra>"
+                        ),
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v2_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ov_upstream})",
+                        line={"color": "#636EFA", "width": 2.5},
+                        marker={"size": 8},
+                        hovertemplate=(
+                            f"<b>{short_name}</b> — {ov_upstream}<br>"
+                            "Concurrency: %{x}<br>"
+                            "Value: %{y:,.2f}<extra></extra>"
+                        ),
+                    )
+                )
+
+                if "tok/sec" in col_name:
+                    y_title = "Tokens / sec"
+                elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                        "font": {"size": 11},
+                        "itemclick": "toggle",
+                        "itemdoubleclick": "toggleothers",
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": x_vals,
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"vllm_dlg_{selected_metric}",
+                    theme=None,
+                )
+
+                st.caption(
+                    "💡 **Tip:** Click a legend entry to toggle it. "
+                    "Double-click to isolate a single trace. "
+                    f"Warm colors (reds/oranges) = **{ov_current}**, "
+                    f"cool colors (blues/greens) = **{ov_upstream}**."
+                )
+                conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
+                st.caption(
+                    f"ℹ️ Graph shows all common concurrency levels. "
+                    f"Geometric mean uses: {conc_str}."
+                )
+
+        sorted_vllm = sorted(
             data["vllm_results"], key=lambda x: x["pct"] or 0, reverse=True
-        ):
+        )
+
+        vllm_table_rows = ""
+        behind_rows = []
+        for idx, r in enumerate(sorted_vllm):
+            is_behind = (
+                not r.get("better")
+                and not r.get("similar")
+                and r.get("pct") is not None
+            )
             vllm_table_rows += (
                 f"<tr>"
                 f'<td style="text-align:left"><b>{r["short_name"]}</b></td>'
@@ -2675,6 +2909,8 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 f"{_vllm_metric_cell(r.get('itl_pct'), r.get('itl_better'), r.get('itl_similar'))}"
                 f"</tr>"
             )
+            if is_behind:
+                behind_rows.append((idx, r))
 
         st.markdown(
             f"""<div class="vllm-scorecard vllm-hue-{hue}"><details><summary>
@@ -2737,6 +2973,18 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         </div></details></div>""",
             unsafe_allow_html=True,
         )
+
+        if behind_rows:
+            st.caption("Compare models behind parity:")
+            cols = st.columns(len(behind_rows) + max(len(behind_rows), 2))
+            for i, (idx, r) in enumerate(behind_rows):
+                with cols[i]:
+                    if st.button(
+                        f"📊 {r['short_name']}",
+                        key=f"vllm_cmp_{idx}",
+                        help=f"{r['short_name']} (TP{r['tp']}) {r['profile']}",
+                    ):
+                        _show_vllm_compare_dialog(r)
 
         st.markdown("---")
 
@@ -2964,17 +3212,256 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     )
 
     heatmap_cols = [
+        ("Throughput", True, "Mean Output Throughput (tok/s)"),
+        ("E2E Latency", False, "Median E2E Latency (s)"),
         ("TTFT P95", False, "P95 TTFT (ms)"),
         ("ITL P95", False, "P95 ITL (ms)"),
-        ("Throughput", True, "Mean Output Throughput (tok/s)"),
     ]
 
+    _hm_dialog_metrics = {
+        "Output Throughput": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "Total Throughput": {
+            "column": "total_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "End-to-End Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "TTFT P95": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P95": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
+    @st.dialog("Version Comparison — Metric Details", width="large")
+    def _show_hm_compare_dialog(
+        model, tp, accel, profile, cisl_osl, dset, sdec, pcache
+    ):
+        short_name = _short_model_name(model)
+        profile_display = _display_profile(profile, cisl_osl)
+
+        mask_common = (
+            (df["model"] == model)
+            & (df["TP"] == tp)
+            & (df["accelerator"] == accel)
+            & (df["profile"] == profile)
+            & (df["custom_isl_osl"] == cisl_osl)
+            & (df["dataset"] == dset)
+            & (df["spec_decoding"] == sdec)
+            & (df["prefix_caching"] == pcache)
+        )
+        df_v1 = df[mask_common & (df["version"] == ov_current)]
+        df_v2 = df[mask_common & (df["version"] == ov_previous)]
+
+        if df_v1.empty or df_v2.empty:
+            st.warning("No data available for this comparison.")
+            return
+
+        v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+        v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+        common_conc = sorted(v1_conc & v2_conc)
+        if not common_conc:
+            st.warning("No common concurrency levels found between versions.")
+            return
+
+        conc_for_geomean = {c for c in common_conc if c > 1}
+
+        # Summary table (matches compare versions section format)
+        summary_rows = []
+        for mname, mcfg in _hm_dialog_metrics.items():
+            pct, better, _, _, similar = compare_two_datasets(
+                df_v1,
+                df_v2,
+                mcfg,
+                conc_for_geomean,
+            )
+            if pct is not None:
+                sign = "+" if pct > 0 else ""
+                status = "🟡" if similar else ("🟢" if better else "🔴")
+                cell_text = f"{status} {ov_current} ({sign}{pct:.1f}%)"
+            else:
+                cell_text = "N/A"
+            summary_rows.append(
+                {"Metric": mname, f"{ov_current} vs {ov_previous}": cell_text}
+            )
+
+        st.markdown(f"#### {short_name} (TP{tp}) {profile_display}")
+        st.markdown(
+            f"**Comparing:** {ov_current} vs {ov_previous} &nbsp;|&nbsp; "
+            f"**{_accel_display(accel)}**"
+        )
+        st.dataframe(
+            pd.DataFrame(summary_rows),
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Metric": st.column_config.TextColumn("Metric"),
+                f"{ov_current} vs {ov_previous}": st.column_config.TextColumn(
+                    f"{ov_current} vs {ov_previous}",
+                ),
+            },
+        )
+
+        # Metric buttons + per-metric line charts (same pattern as compare versions)
+        st.markdown(
+            "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+        )
+        btn_cols = st.columns(len(_hm_dialog_metrics))
+        for i, mname in enumerate(_hm_dialog_metrics):
+            with btn_cols[i]:
+                if st.button(
+                    f"📊 {mname}",
+                    key=f"hm_dlg_btn_{i}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    st.session_state._hm_dlg_selected_metric = mname
+
+        selected_metric = st.session_state.get("_hm_dlg_selected_metric")
+        if selected_metric and selected_metric in _hm_dialog_metrics:
+            mcfg = _hm_dialog_metrics[selected_metric]
+            col_name = mcfg["column"]
+
+            display_title = selected_metric
+            st.markdown(f"#### {display_title} vs Concurrency")
+            st.markdown(
+                f"**{ov_current}** vs **{ov_previous}** &nbsp;|&nbsp; "
+                f"**{_accel_display(accel)}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+            )
+
+            v1_vals, v2_vals = [], []
+            for c in common_conc:
+                g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
+
+            # Convert TTFT P95 from ms to seconds
+            if col_name == "ttft_p95":
+                v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+            x_vals = [int(c) for c in common_conc]
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v1_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ov_current})",
+                    line={"color": "#EF553B", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ov_current}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v2_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ov_previous})",
+                    line={"color": "#636EFA", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ov_previous}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+            if "tok/sec" in col_name:
+                y_title = "Tokens / sec"
+            elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                y_title = "Seconds"
+            else:
+                y_title = "Milliseconds"
+
+            fig.update_layout(
+                height=600,
+                xaxis_title="Concurrency",
+                yaxis_title=y_title,
+                margin={"t": 30, "b": 60},
+                hovermode="x unified",
+                legend={
+                    "orientation": "v",
+                    "yanchor": "top",
+                    "y": 1,
+                    "xanchor": "left",
+                    "x": 1.02,
+                    "font": {"size": 11},
+                    "itemclick": "toggle",
+                    "itemdoubleclick": "toggleothers",
+                },
+                xaxis={
+                    "type": "category",
+                    "categoryorder": "array",
+                    "categoryarray": x_vals,
+                },
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"hm_dlg_{selected_metric}",
+                theme=None,
+            )
+
+            st.caption(
+                "💡 **Tip:** Click a legend entry to toggle it. "
+                "Double-click to isolate a single trace. "
+                f"Warm colors (reds/oranges) = **{ov_current}**, "
+                f"cool colors (blues/greens) = **{ov_previous}**."
+            )
+            conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
+            st.caption(
+                f"ℹ️ Graph shows all common concurrency levels. "
+                f"Geometric mean uses: {conc_str}."
+            )
+
+    # Column widths: Model | metric columns | compare button
+    _hm_n_metrics = len(heatmap_cols)
+    _hm_widths = [3.5] + [1.5] * _hm_n_metrics + [0.5]
+
+    _accel_colors = {
+        "H200": "#22c55e",
+        "MI300X": "#f97316",
+        "B200": "#3b82f6",
+        "B300": "#8b5cf6",
+        "TPU": "#ef4444",
+        "Spyre": "#ec4899",
+    }
+    _accel_default_color = "#6b7280"
+
     for accel, info in data["accel_rollup"].items():
-        st.markdown(f"**{_accel_display(accel)}**")
+        _accel_clr = _accel_colors.get(accel, _accel_default_color)
+        st.markdown(
+            f'<div style="border-left:4px solid {_accel_clr};padding:0.4rem 0.8rem;'
+            f"margin:1rem 0 0.5rem 0;background:linear-gradient(90deg,{_accel_clr}11,transparent);"
+            f'border-radius:0 6px 6px 0;font-weight:700;font-size:1rem;color:#1a1f36">'
+            f"{_accel_display(accel)}</div>",
+            unsafe_allow_html=True,
+        )
         seen = {}
         for r in info["results"]:
             key = (
-                r["short_name"],
+                r["model"],
                 r["tp"],
                 r["profile"],
                 r.get("custom_isl_osl", ""),
@@ -2985,26 +3472,69 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             if key not in seen:
                 seen[key] = r
 
-        rows_html = ""
-        for (sname, tp, profile, cisl_osl, _dset, _sdec, _pcache), r in seen.items():
-            profile_short = _display_profile(profile, cisl_osl)
-            cells = ""
-            for mname, hib, _ in heatmap_cols:
-                cells += f"<td>{_hm_cell(r.get(f'{mname}_pct'), hib)}</td>"
-            rows_html += f"<tr><td>{sname} (TP{tp}) {profile_short}</td>{cells}</tr>"
-
-        col_headers = "".join(f"<th>{label}</th>" for _, _, label in heatmap_cols)
-        st.markdown(
-            f"""<div style="overflow-x:auto">
-            <table class="heatmap-table">
-                <thead><tr>
-                    <th style="min-width:200px">Model</th>
-                    {col_headers}
-                </tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table></div>""",
+        # Header row
+        _hdr_base = (
+            "font-weight:600;color:#6b7280;font-size:0.88rem;"
+            "border-bottom:2px solid #e5e7eb;"
+            "display:flex;align-items:flex-end;min-height:2.8rem;padding-bottom:0.4rem"
+        )
+        hdr = st.columns(_hm_widths)
+        hdr[0].markdown(
+            f'<div style="{_hdr_base}">Model</div>',
             unsafe_allow_html=True,
         )
+        for j, (_, _, label) in enumerate(heatmap_cols):
+            hdr[j + 1].markdown(
+                f'<div style="{_hdr_base};justify-content:center;text-align:center">{label}</div>',
+                unsafe_allow_html=True,
+            )
+        hdr[-1].markdown(
+            f'<div style="{_hdr_base}">&nbsp;</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Data rows
+        _n_rows = len(seen)
+        for i, (
+            (_model_key, tp, profile, cisl_osl, _dset, _sdec, _pcache),
+            r,
+        ) in enumerate(seen.items()):
+            sname = r["short_name"]
+            profile_short = _display_profile(profile, cisl_osl)
+            if i > 0:
+                st.markdown(
+                    '<hr style="margin:0;border:none;border-top:1px solid #e5e7eb">',
+                    unsafe_allow_html=True,
+                )
+            row_cols = st.columns(_hm_widths)
+            row_cols[0].markdown(
+                f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
+                f'padding:0.45rem 0">'
+                f"{sname} (TP{tp}) {profile_short}</div>",
+                unsafe_allow_html=True,
+            )
+            for j, (mname, hib, _) in enumerate(heatmap_cols):
+                row_cols[j + 1].markdown(
+                    f'<div style="text-align:center">'
+                    f"{_hm_cell(r.get(f'{mname}_pct'), hib)}</div>",
+                    unsafe_allow_html=True,
+                )
+            with row_cols[-1]:
+                if st.button(
+                    "📊",
+                    key=f"hm_cmp_{accel}_{i}",
+                    help=f"Compare {sname} (TP{tp}) {profile_short}",
+                ):
+                    _show_hm_compare_dialog(
+                        r["model"],
+                        tp,
+                        accel,
+                        profile,
+                        cisl_osl,
+                        _dset,
+                        _sdec,
+                        _pcache,
+                    )
 
     st.markdown("---")
 
@@ -3363,19 +3893,25 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
             # Map accelerator to hardware label
             hw = row.get("accelerator", "")
 
-            # Calculate throughput per GPU
-            tp = row.get("TP", 1)
-            if pd.isna(tp) or tp == 0:
-                tp = 1
+            # Calculate throughput per GPU using total GPU count (TP * DP)
+            raw_tp = row.get("TP", 1)
+            tp = int(raw_tp) if pd.notna(raw_tp) else 0
+
+            raw_dp = row.get("DP", 1)
+            dp = int(raw_dp) if pd.notna(raw_dp) else 1
+
+            total_gpus = max(tp, 1) * max(dp, 1)
 
             total_throughput = row.get("total_tok/sec", 0)
-            tput_per_gpu = total_throughput / tp if tp > 0 else 0
+            tput_per_gpu = total_throughput / total_gpus if total_gpus > 0 else 0
 
             output_throughput = row.get("output_tok/sec", 0)
-            output_tput_per_gpu = output_throughput / tp if tp > 0 else 0
+            output_tput_per_gpu = (
+                output_throughput / total_gpus if total_gpus > 0 else 0
+            )
 
             input_throughput = total_throughput - output_throughput
-            input_tput_per_gpu = input_throughput / tp if tp > 0 else 0
+            input_tput_per_gpu = input_throughput / total_gpus if total_gpus > 0 else 0
 
             # Calculate interactivity from tpot_median (tokens per output token)
             # tpot is in milliseconds, interactivity is tok/s/user
@@ -3401,9 +3937,20 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
                 else "Unknown"
             )
 
+            # Build a label that reflects the parallelism config
+            if tp == 0 and dp > 1:
+                parallelism_label = f"DP={dp}"
+            elif dp > 1 and tp > 0:
+                parallelism_label = f"TP={tp},DP={dp}"
+            else:
+                parallelism_label = f"TP={max(tp, 1)}"
+
             result = {
                 "hw": hw,
-                "tp": int(tp),
+                "tp": max(tp, 1),
+                "dp": dp,
+                "total_gpus": total_gpus,
+                "parallelism_label": parallelism_label,
                 "conc": row.get("intended concurrency", 0),
                 "model": row.get("model", "Unknown"),
                 "version": version,
@@ -3594,54 +4141,46 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 st.warning(f"No results found for accelerator: '{selected_hw}'")
                 return
 
-        # Get unique accelerators, TP sizes, and versions
+        # Get unique accelerators, parallelism configs, and versions
         unique_hw = sorted({r.get("hw", "unknown") for r in results})
-        unique_tps = sorted({r.get("tp", 1) for r in results})
+        unique_par_labels = sorted(
+            {r.get("parallelism_label", "TP=1") for r in results}
+        )
         unique_versions_in_results = sorted(
             {r.get("version", "Unknown") for r in results}
         )
 
         # Create a comprehensive color palette
         color_palette = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-            "#aec7e8",
-            "#ffbb78",
-            "#98df8a",
-            "#ff9896",
-            "#c5b0d5",
-            "#c49c94",
-            "#f7b6d2",
-            "#c7c7c7",
-            "#dbdb8d",
-            "#9edae5",
-            "#90EE90",
-            "#008000",
-            "#000000",
-            "#FF0000",
-            "#800080",
-            "#FFA500",
-            "#4285F4",
-            "#00CED1",
+            "#E6194B",
+            "#3CB44B",
+            "#4363D8",
+            "#F58231",
+            "#911EB4",
+            "#42D4F4",
+            "#F032E6",
+            "#FFE119",
+            "#469990",
+            "#9A6324",
+            "#800000",
+            "#000075",
+            "#BFEF45",
             "#FF1493",
-            "#32CD32",
+            "#7B68EE",
+            "#2E8B57",
+            "#DAA520",
+            "#00FF7F",
+            "#4B0082",
+            "#20B2AA",
         ]
 
-        # Create unique color mapping for each version+accelerator+TP combination
+        # Create unique color mapping for each version+accelerator+parallelism combination
         hw_tp_version_color_map = {}
         color_idx = 0
         for version in sorted(unique_versions_in_results):
             for hw in sorted(unique_hw):
-                for tp in sorted(unique_tps):
-                    hw_tp_version_key = f"{version}_{hw.lower()}_{tp}"
+                for par_label in sorted(unique_par_labels):
+                    hw_tp_version_key = f"{version}_{hw.lower()}_{par_label}"
                     hw_tp_version_color_map[hw_tp_version_key] = color_palette[
                         color_idx % len(color_palette)
                     ]
@@ -3683,21 +4222,19 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, then by accelerator, then by TP size
+                # Group by version, accelerator, and parallelism config
                 for version in sorted(unique_versions_in_results):
                     for hw in sorted(unique_hw):
-                        for tp_size in sorted(unique_tps):
-                            # Filter results for this version, accelerator and TP combination
+                        for par_label in sorted(unique_par_labels):
                             hw_tp_version_results = [
                                 r
                                 for r in filtered_results
                                 if r.get("version", "Unknown") == version
                                 and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("tp", 1) == tp_size
+                                and r.get("parallelism_label", "TP=1") == par_label
                             ]
 
                             if hw_tp_version_results:
-                                # Sort by concurrency for proper line drawing
                                 hw_tp_version_results_sorted = sorted(
                                     hw_tp_version_results,
                                     key=lambda x: x.get("conc", 0),
@@ -3711,21 +4248,14 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     r.get(selected_throughput_key, 0)
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                models = [
-                                    r.get("model", "Unknown")
-                                    for r in hw_tp_version_results_sorted
-                                ]
                                 concs = [
                                     r.get("conc", "N/A")
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                isl_osls = [
-                                    r.get("isl_osl", "N/A")
-                                    for r in hw_tp_version_results_sorted
-                                ]
 
-                                # Get unique color for this version+accelerator+TP combination
-                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                hw_tp_version_key = (
+                                    f"{version}_{hw.lower()}_{par_label}"
+                                )
                                 color = hw_tp_version_color_map.get(
                                     hw_tp_version_key, "#999999"
                                 )
@@ -3742,27 +4272,28 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                 hover_text = [
                                     f"Version: {version}<br>"
                                     f"Accelerator: {hw.upper()}<br>"
-                                    f"TP Size: {tp_size}<br>"
+                                    f"Config: {par_label}<br>"
                                     f"Concurrent Requests: {conc} Users<br>"
                                     f"Latency: {x:.2f}s<br>"
                                     f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, isl_osl, model, x, y in zip(
-                                        concs, isl_osls, models, xs, ys
-                                    )
+                                    for conc, x, y in zip(concs, xs, ys)
                                 ]
 
                                 fig.add_trace(
                                     go.Scatter(
                                         x=xs,
                                         y=ys,
-                                        mode="markers+lines",
-                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        mode="markers+lines+text",
+                                        name=f"{version} | {hw.upper()} ({par_label})",
                                         marker={
                                             "size": 10,
                                             "color": color,
                                             "line": {"width": 1, "color": "white"},
                                         },
                                         line={"color": color, "width": 2},
+                                        text=[str(c) for c in concs],
+                                        textposition="top center",
+                                        textfont={"size": 9},
                                         hovertext=hover_text,
                                         hoverinfo="text",
                                     )
@@ -3770,19 +4301,23 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 metric_titles = {
                     "tput_per_gpu": (
-                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Throughput = Total Tokens/s (prompt + output)",
                         "Total Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "output_tput_per_gpu": (
-                        "Note: Throughput is Output Tokens per second only",
+                        "Throughput = Output Tokens/s only",
                         "Output Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "input_tput_per_gpu": (
-                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Throughput = Input Tokens/s (prompt only)",
                         "Input Token Throughput per GPU (tok/s/gpu)",
                     ),
                 }
-                plot_title, y_axis_label = metric_titles[selected_throughput_key]
+                tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                plot_title = (
+                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"<br><sup>{tput_note}</sup>"
+                )
 
                 fig.update_layout(
                     title=plot_title,
@@ -3792,10 +4327,20 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (TP Size)",
+                        "title": "Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
+                )
+                fig.add_annotation(
+                    text="Numbers on points = number of concurrent requests",
+                    xref="paper",
+                    yref="paper",
+                    x=0.0,
+                    y=1.05,
+                    showarrow=False,
+                    font={"size": 11, "color": "gray"},
+                    xanchor="left",
                 )
 
                 st.plotly_chart(fig, use_container_width=True, theme=None)
@@ -3819,21 +4364,19 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, then by accelerator, then by TP size
+                # Group by version, accelerator, and parallelism config
                 for version in sorted(unique_versions_in_results):
                     for hw in sorted(unique_hw):
-                        for tp_size in sorted(unique_tps):
-                            # Filter results for this version, accelerator and TP combination
+                        for par_label in sorted(unique_par_labels):
                             hw_tp_version_results = [
                                 r
                                 for r in filtered_results
                                 if r.get("version", "Unknown") == version
                                 and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("tp", 1) == tp_size
+                                and r.get("parallelism_label", "TP=1") == par_label
                             ]
 
                             if hw_tp_version_results:
-                                # Sort by concurrency for proper line drawing
                                 hw_tp_version_results_sorted = sorted(
                                     hw_tp_version_results,
                                     key=lambda x: x.get("conc", 0),
@@ -3847,21 +4390,14 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                     r.get(selected_throughput_key, 0)
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                models = [
-                                    r.get("model", "Unknown")
-                                    for r in hw_tp_version_results_sorted
-                                ]
                                 concs = [
                                     r.get("conc", "N/A")
                                     for r in hw_tp_version_results_sorted
                                 ]
-                                isl_osls = [
-                                    r.get("isl_osl", "N/A")
-                                    for r in hw_tp_version_results_sorted
-                                ]
 
-                                # Get unique color for this version+accelerator+TP combination
-                                hw_tp_version_key = f"{version}_{hw.lower()}_{tp_size}"
+                                hw_tp_version_key = (
+                                    f"{version}_{hw.lower()}_{par_label}"
+                                )
                                 color = hw_tp_version_color_map.get(
                                     hw_tp_version_key, "#999999"
                                 )
@@ -3878,27 +4414,28 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                                 hover_text = [
                                     f"Version: {version}<br>"
                                     f"Accelerator: {hw.upper()}<br>"
-                                    f"TP Size: {tp_size}<br>"
+                                    f"Config: {par_label}<br>"
                                     f"Concurrent Requests: {conc} Users<br>"
                                     f"Interactivity: {x:.2f} tok/s/user<br>"
                                     f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, isl_osl, model, x, y in zip(
-                                        concs, isl_osls, models, xs, ys
-                                    )
+                                    for conc, x, y in zip(concs, xs, ys)
                                 ]
 
                                 fig.add_trace(
                                     go.Scatter(
                                         x=xs,
                                         y=ys,
-                                        mode="markers+lines",
-                                        name=f"{version} | {hw.upper()} (TP={tp_size})",
+                                        mode="markers+lines+text",
+                                        name=f"{version} | {hw.upper()} ({par_label})",
                                         marker={
                                             "size": 10,
                                             "color": color,
                                             "line": {"width": 1, "color": "white"},
                                         },
                                         line={"color": color, "width": 2},
+                                        text=[str(c) for c in concs],
+                                        textposition="top center",
+                                        textfont={"size": 9},
                                         hovertext=hover_text,
                                         hoverinfo="text",
                                     )
@@ -3906,19 +4443,23 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 metric_titles = {
                     "tput_per_gpu": (
-                        "Note: Throughput is Total Tokens per second (prompt + output tokens combined)",
+                        "Throughput = Total Tokens/s (prompt + output)",
                         "Total Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "output_tput_per_gpu": (
-                        "Note: Throughput is Output Tokens per second only",
+                        "Throughput = Output Tokens/s only",
                         "Output Token Throughput per GPU (tok/s/gpu)",
                     ),
                     "input_tput_per_gpu": (
-                        "Note: Throughput is Input Tokens per second (prompt tokens only)",
+                        "Throughput = Input Tokens/s (prompt only)",
                         "Input Token Throughput per GPU (tok/s/gpu)",
                     ),
                 }
-                plot_title, y_axis_label = metric_titles[selected_throughput_key]
+                tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                plot_title = (
+                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"<br><sup>{tput_note}</sup>"
+                )
 
                 fig.update_layout(
                     title=plot_title,
@@ -3928,10 +4469,20 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (TP Size)",
+                        "title": "Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
+                )
+                fig.add_annotation(
+                    text="Numbers on points = number of concurrent requests",
+                    xref="paper",
+                    yref="paper",
+                    x=0.0,
+                    y=1.05,
+                    showarrow=False,
+                    font={"size": 11, "color": "gray"},
+                    xanchor="left",
                 )
 
                 st.plotly_chart(fig, use_container_width=True, theme=None)
@@ -3948,7 +4499,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     "version",
                     "isl",
                     "osl",
-                    "tp",
+                    "parallelism_label",
                     "conc",
                     "tput_per_gpu",
                     "output_tput_per_gpu",
@@ -3983,7 +4534,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "hw": "Accelerator",
                         "isl": "ISL",
                         "osl": "OSL",
-                        "tp": "TP",
+                        "parallelism_label": "Config",
                         "conc": "Concurrency",
                     }
                 )
@@ -4011,8 +4562,9 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                         "OSL": st.column_config.NumberColumn(
                             "OSL", help="Output Sequence Length (output tokens)"
                         ),
-                        "TP": st.column_config.NumberColumn(
-                            "TP", help="Tensor Parallelism size"
+                        "Config": st.column_config.TextColumn(
+                            "Config",
+                            help="Parallelism configuration (TP/DP)",
                         ),
                         "Concurrency": st.column_config.NumberColumn(
                             "Concurrency", help="Number of concurrent requests"
@@ -4123,9 +4675,14 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             st.warning("No data for the selected version / accelerator combination.")
             return
 
-        vdf["tp_safe"] = vdf["TP"].fillna(1).replace(0, 1).astype(int)
+        vdf["tp_safe"] = vdf["TP"].fillna(1).astype(int).clip(lower=1)
+        if "DP" in vdf.columns:
+            vdf["dp_safe"] = vdf["DP"].fillna(1).astype(int).clip(lower=1)
+        else:
+            vdf["dp_safe"] = 1
+        vdf["total_gpus"] = vdf["tp_safe"] * vdf["dp_safe"]
         if tput_mode == "total":
-            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["tp_safe"]
+            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["total_gpus"]
             y_col, y_label = (
                 "tput_per_gpu",
                 "Total Token Throughput per GPU (tok/s/gpu)",
@@ -4133,7 +4690,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             metric_hover = "Total Throughput"
         elif tput_mode == "input":
             vdf["tput_per_gpu"] = (vdf["total_tok/sec"] - vdf["output_tok/sec"]) / vdf[
-                "tp_safe"
+                "total_gpus"
             ]
             y_col, y_label = (
                 "tput_per_gpu",
@@ -4141,7 +4698,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             )
             metric_hover = "Input Throughput"
         else:
-            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["tp_safe"]
+            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["total_gpus"]
             y_col, y_label = (
                 "tput_per_gpu",
                 "Output Token Throughput per GPU (tok/s/gpu)",
@@ -4153,36 +4710,26 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
         )
 
         color_palette = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-            "#aec7e8",
-            "#ffbb78",
-            "#98df8a",
-            "#ff9896",
-            "#c5b0d5",
-            "#c49c94",
-            "#f7b6d2",
-            "#c7c7c7",
-            "#dbdb8d",
-            "#9edae5",
-            "#90EE90",
-            "#008000",
-            "#000000",
-            "#FF0000",
-            "#800080",
-            "#FFA500",
-            "#4285F4",
-            "#00CED1",
+            "#E6194B",
+            "#3CB44B",
+            "#4363D8",
+            "#F58231",
+            "#911EB4",
+            "#42D4F4",
+            "#F032E6",
+            "#FFE119",
+            "#469990",
+            "#9A6324",
+            "#800000",
+            "#000075",
+            "#BFEF45",
             "#FF1493",
-            "#32CD32",
+            "#7B68EE",
+            "#2E8B57",
+            "#DAA520",
+            "#00FF7F",
+            "#4B0082",
+            "#20B2AA",
         ]
 
         groups = (
@@ -4230,11 +4777,15 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                     for _, r in subset.iterrows()
                 ]
 
+                conc_labels = [
+                    str(int(c)) for c in subset["intended concurrency"].tolist()
+                ]
+
                 fig.add_trace(
                     go.Scatter(
                         x=subset[x_col].tolist(),
                         y=subset[y_col].tolist(),
-                        mode="markers+lines",
+                        mode="markers+lines+text",
                         name=trace_name,
                         marker={
                             "size": 10,
@@ -4242,6 +4793,9 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                             "line": {"width": 1, "color": "white"},
                         },
                         line={"color": color, "width": 2},
+                        text=conc_labels,
+                        textposition="top center",
+                        textfont={"size": 9},
                         hovertext=hover_text,
                         hoverinfo="text",
                     )
@@ -4249,17 +4803,35 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
 
         import plotly.graph_objects as go
 
+        isl_osl_values = vdf[["prompt toks", "output toks"]].drop_duplicates()
+        if len(isl_osl_values) == 1:
+            isl_osl_label = f"{int(isl_osl_values.iloc[0]['prompt toks'])}/{int(isl_osl_values.iloc[0]['output toks'])}"
+        else:
+            isl_osl_label = ", ".join(
+                f"{int(r['prompt toks'])}/{int(r['output toks'])}"
+                for _, r in isl_osl_values.iterrows()
+            )
+
+        models_in_view = sorted(vdf["model"].unique())
+        models_label = ", ".join(
+            m.split("/")[-1] if "/" in m else m for m in models_in_view
+        )
+
+        tput_title_map = {
+            "total": "Throughput = Total Tokens/s (prompt + output)",
+            "output": "Throughput = Output Tokens/s only",
+            "input": "Throughput = Input Tokens/s (prompt only)",
+        }
+
         with tab1:
             st.markdown("### Token Throughput per GPU vs. End-to-end Latency")
             fig1 = go.Figure()
             _build_traces(fig1, "request_latency_median", "Latency", ".2f")
-            tput_title_map = {
-                "total": "Total Tokens per second (prompt + output tokens combined)",
-                "output": "Output Tokens per second only",
-                "input": "Input Tokens per second (prompt tokens only)",
-            }
             fig1.update_layout(
-                title="Note: Throughput is " + tput_title_map[tput_mode],
+                title=(
+                    f"{models_label} | ISL/OSL: {isl_osl_label}"
+                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
+                ),
                 xaxis_title="End-to-end Latency (s)",
                 yaxis_title=y_label,
                 template="plotly_white_light",
@@ -4268,6 +4840,16 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
             )
+            fig1.add_annotation(
+                text="Numbers on points = number of concurrent requests",
+                xref="paper",
+                yref="paper",
+                x=0.0,
+                y=1.05,
+                showarrow=False,
+                font={"size": 11, "color": "gray"},
+                xanchor="left",
+            )
             st.plotly_chart(fig1, use_container_width=True, theme=None)
 
         with tab2:
@@ -4275,7 +4857,10 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             fig2 = go.Figure()
             _build_traces(fig2, "median_intvty", "Interactivity", ".2f")
             fig2.update_layout(
-                title="Note: Throughput is " + tput_title_map[tput_mode],
+                title=(
+                    f"{models_label} | ISL/OSL: {isl_osl_label}"
+                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
+                ),
                 xaxis_title="Interactivity (tok/s/user)",
                 yaxis_title=y_label,
                 template="plotly_white_light",
@@ -4283,6 +4868,16 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
                 showlegend=True,
                 legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
                 height=600,
+            )
+            fig2.add_annotation(
+                text="Numbers on points = number of concurrent requests",
+                xref="paper",
+                yref="paper",
+                x=0.0,
+                y=1.05,
+                showarrow=False,
+                font={"size": 11, "color": "gray"},
+                xanchor="left",
             )
             st.plotly_chart(fig2, use_container_width=True, theme=None)
 
@@ -10406,7 +11001,7 @@ def main():
                 "trends_versions_multi",
                 "trends_tp_multi",
             }
-            INT_LIST_SESSION_KEYS = {"trends_tp_multi"}
+            NUMERIC_LIST_SESSION_KEYS = {"trends_tp_multi"}
             INT_SESSION_KEYS = {
                 "perf_plots_max_concurrency",
                 "model_comparison_concurrency",
@@ -10424,8 +11019,14 @@ def main():
                                     parts = [
                                         v.strip() for v in raw.split(",") if v.strip()
                                     ]
-                                    if ss_key in INT_LIST_SESSION_KEYS:
-                                        parts = [int(v) for v in parts if v.isdigit()]
+                                    if ss_key in NUMERIC_LIST_SESSION_KEYS:
+                                        converted = []
+                                        for v in parts:
+                                            with contextlib.suppress(
+                                                ValueError, OverflowError
+                                            ):
+                                                converted.append(float(v))
+                                        parts = converted
                                     url_section_filters[ss_key] = parts
                                 elif ss_key in INT_SESSION_KEYS:
                                     with contextlib.suppress(ValueError):
