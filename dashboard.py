@@ -91,7 +91,7 @@ S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 
 # ── Overview version configuration (single source of truth) ──────
 OVERVIEW_CURRENT = "RHAIIS-3.4-GA"
-OVERVIEW_PREVIOUS = "RHAIIS-3.4-EA2"
+OVERVIEW_PREVIOUS = "RHAIIS-3.3"
 OVERVIEW_UPSTREAM = "vLLM-0.18.0"
 OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
 
@@ -99,6 +99,12 @@ OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    {
+        "current": "RHAIIS-3.4-GA",
+        "previous": "RHAIIS-3.3",
+        "upstream": "vLLM-0.18.0",
+        "additional": ["vLLM-0.17.1"],
+    },
     {
         "current": "RHAIIS-3.4-GA",
         "previous": "RHAIIS-3.4-EA2",
@@ -724,6 +730,11 @@ def _compute_overview_data(
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
+        "E2E Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
     }
 
     df_curr = df[df["version"] == CURRENT].copy()
@@ -1005,6 +1016,12 @@ def _compute_overview_data(
                 "itl_pct": itl_pct,
                 "itl_better": itl_better,
                 "itl_similar": itl_similar,
+                "accelerator": accel,
+                "profile_raw": profile,
+                "custom_isl_osl": cisl_osl,
+                "dataset": dset,
+                "spec_decoding": sdec,
+                "prefix_caching": pcache,
             }
         )
 
@@ -2663,10 +2680,228 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             icon = _vllm_indicator(pct, better, similar)
             return f'<td style="text-align:right">{icon} {pct:+.1f} %</td>'
 
-        vllm_table_rows = ""
-        for r in sorted(
+        _vllm_dialog_metrics = {
+            "Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "Total Throughput": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "End-to-End Latency": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "TTFT P95": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "ITL P95": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+        }
+
+        @st.dialog("vLLM Parity — Metric Details", width="large")
+        def _show_vllm_compare_dialog(r):
+            short_name = r["short_name"]
+            profile_display = r["profile"]
+
+            mask_common = (
+                (df["model"] == r["model"])
+                & (df["TP"] == r["tp"])
+                & (df["accelerator"] == r["accelerator"])
+                & (df["profile"] == r["profile_raw"])
+                & (df["custom_isl_osl"] == r["custom_isl_osl"])
+                & (df["dataset"] == r["dataset"])
+                & (df["spec_decoding"] == r["spec_decoding"])
+                & (df["prefix_caching"] == r["prefix_caching"])
+            )
+            df_v1 = df[mask_common & (df["version"] == ov_current)]
+            df_v2 = df[mask_common & (df["version"] == ov_upstream)]
+
+            if df_v1.empty or df_v2.empty:
+                st.warning("No data available for this comparison.")
+                return
+
+            v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+            v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+            common_conc = sorted(v1_conc & v2_conc)
+            if not common_conc:
+                st.warning("No common concurrency levels found between versions.")
+                return
+
+            conc_for_geomean = {c for c in common_conc if c > 1}
+
+            summary_rows = []
+            for mname, mcfg in _vllm_dialog_metrics.items():
+                pct, better, _, _, similar = compare_two_datasets(
+                    df_v1,
+                    df_v2,
+                    mcfg,
+                    conc_for_geomean,
+                )
+                if pct is not None:
+                    sign = "+" if pct > 0 else ""
+                    status = "🟡" if similar else ("🟢" if better else "🔴")
+                    cell_text = f"{status} {ov_current} ({sign}{pct:.1f}%)"
+                else:
+                    cell_text = "N/A"
+                summary_rows.append(
+                    {"Metric": mname, f"{ov_current} vs {ov_upstream}": cell_text}
+                )
+
+            st.markdown(
+                f"**Comparing:** {ov_current} vs {ov_upstream} &nbsp;|&nbsp; "
+                f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+            )
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Metric": st.column_config.TextColumn("Metric"),
+                    f"{ov_current} vs {ov_upstream}": st.column_config.TextColumn(
+                        f"{ov_current} vs {ov_upstream}",
+                    ),
+                },
+            )
+
+            st.markdown(
+                "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+            )
+            btn_cols = st.columns(len(_vllm_dialog_metrics))
+            for i, mname in enumerate(_vllm_dialog_metrics):
+                with btn_cols[i]:
+                    if st.button(
+                        f"📊 {mname}",
+                        key=f"vllm_dlg_btn_{i}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state._vllm_dlg_selected_metric = mname
+
+            selected_metric = st.session_state.get("_vllm_dlg_selected_metric")
+            if selected_metric and selected_metric in _vllm_dialog_metrics:
+                mcfg = _vllm_dialog_metrics[selected_metric]
+                col_name = mcfg["column"]
+
+                st.markdown(f"#### {selected_metric} vs Concurrency")
+                st.markdown(
+                    f"**{ov_current}** vs **{ov_upstream}** &nbsp;|&nbsp; "
+                    f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+                )
+
+                v1_vals, v2_vals = [], []
+                for c in common_conc:
+                    r1 = df_v1[df_v1["intended concurrency"] == c][col_name].values
+                    r2 = df_v2[df_v2["intended concurrency"] == c][col_name].values
+                    v1_vals.append(float(r1[0]) if len(r1) > 0 else None)
+                    v2_vals.append(float(r2[0]) if len(r2) > 0 else None)
+
+                if col_name == "ttft_p95":
+                    v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                    v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+                x_vals = [int(c) for c in common_conc]
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v1_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ov_current})",
+                        line={"color": "#EF553B", "width": 2.5},
+                        marker={"size": 8},
+                        hovertemplate=(
+                            f"<b>{short_name}</b> — {ov_current}<br>"
+                            "Concurrency: %{x}<br>"
+                            "Value: %{y:,.2f}<extra></extra>"
+                        ),
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v2_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ov_upstream})",
+                        line={"color": "#636EFA", "width": 2.5},
+                        marker={"size": 8},
+                        hovertemplate=(
+                            f"<b>{short_name}</b> — {ov_upstream}<br>"
+                            "Concurrency: %{x}<br>"
+                            "Value: %{y:,.2f}<extra></extra>"
+                        ),
+                    )
+                )
+
+                if "tok/sec" in col_name:
+                    y_title = "Tokens / sec"
+                elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                        "font": {"size": 11},
+                        "itemclick": "toggle",
+                        "itemdoubleclick": "toggleothers",
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": x_vals,
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"vllm_dlg_{selected_metric}",
+                    theme=None,
+                )
+
+                st.caption(
+                    "💡 **Tip:** Click a legend entry to toggle it. "
+                    "Double-click to isolate a single trace. "
+                    f"Warm colors (reds/oranges) = **{ov_current}**, "
+                    f"cool colors (blues/greens) = **{ov_upstream}**."
+                )
+                conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
+                st.caption(
+                    f"ℹ️ Graph shows all common concurrency levels. "
+                    f"Geometric mean uses: {conc_str}."
+                )
+
+        sorted_vllm = sorted(
             data["vllm_results"], key=lambda x: x["pct"] or 0, reverse=True
-        ):
+        )
+
+        vllm_table_rows = ""
+        behind_rows = []
+        for idx, r in enumerate(sorted_vllm):
+            is_behind = (
+                not r.get("better")
+                and not r.get("similar")
+                and r.get("pct") is not None
+            )
             vllm_table_rows += (
                 f"<tr>"
                 f'<td style="text-align:left"><b>{r["short_name"]}</b></td>'
@@ -2677,6 +2912,8 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 f"{_vllm_metric_cell(r.get('itl_pct'), r.get('itl_better'), r.get('itl_similar'))}"
                 f"</tr>"
             )
+            if is_behind:
+                behind_rows.append((idx, r))
 
         st.markdown(
             f"""<div class="vllm-scorecard vllm-hue-{hue}"><details><summary>
@@ -2739,6 +2976,18 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         </div></details></div>""",
             unsafe_allow_html=True,
         )
+
+        if behind_rows:
+            st.caption("Compare models behind parity:")
+            cols = st.columns(len(behind_rows) + max(len(behind_rows), 2))
+            for i, (idx, r) in enumerate(behind_rows):
+                with cols[i]:
+                    if st.button(
+                        f"📊 {r['short_name']}",
+                        key=f"vllm_cmp_{idx}",
+                        help=f"{r['short_name']} (TP{r['tp']}) {r['profile']}",
+                    ):
+                        _show_vllm_compare_dialog(r)
 
         st.markdown("---")
 
@@ -2966,13 +3215,248 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     )
 
     heatmap_cols = [
+        ("Throughput", True, "Mean Output Throughput (tok/s)"),
+        ("E2E Latency", False, "Median E2E Latency (s)"),
         ("TTFT P95", False, "P95 TTFT (ms)"),
         ("ITL P95", False, "P95 ITL (ms)"),
-        ("Throughput", True, "Mean Output Throughput (tok/s)"),
     ]
 
+    _hm_dialog_metrics = {
+        "Output Throughput": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "Total Throughput": {
+            "column": "total_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "End-to-End Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "TTFT P95": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P95": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
+    @st.dialog("Version Comparison — Metric Details", width="large")
+    def _show_hm_compare_dialog(
+        model, tp, accel, profile, cisl_osl, dset, sdec, pcache
+    ):
+        short_name = _short_model_name(model)
+        profile_display = _display_profile(profile, cisl_osl)
+
+        mask_common = (
+            (df["model"] == model)
+            & (df["TP"] == tp)
+            & (df["accelerator"] == accel)
+            & (df["profile"] == profile)
+            & (df["custom_isl_osl"] == cisl_osl)
+            & (df["dataset"] == dset)
+            & (df["spec_decoding"] == sdec)
+            & (df["prefix_caching"] == pcache)
+        )
+        df_v1 = df[mask_common & (df["version"] == ov_current)]
+        df_v2 = df[mask_common & (df["version"] == ov_previous)]
+
+        if df_v1.empty or df_v2.empty:
+            st.warning("No data available for this comparison.")
+            return
+
+        v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+        v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+        common_conc = sorted(v1_conc & v2_conc)
+        if not common_conc:
+            st.warning("No common concurrency levels found between versions.")
+            return
+
+        conc_for_geomean = {c for c in common_conc if c > 1}
+
+        summary_rows = []
+        for mname, mcfg in _hm_dialog_metrics.items():
+            pct, better, _, _, similar = compare_two_datasets(
+                df_v1,
+                df_v2,
+                mcfg,
+                conc_for_geomean,
+            )
+            if pct is not None:
+                sign = "+" if pct > 0 else ""
+                status = "🟡" if similar else ("🟢" if better else "🔴")
+                cell_text = f"{status} {ov_current} ({sign}{pct:.1f}%)"
+            else:
+                cell_text = "N/A"
+            summary_rows.append(
+                {"Metric": mname, f"{ov_current} vs {ov_previous}": cell_text}
+            )
+
+        st.markdown(f"#### {short_name} (TP{tp}) {profile_display}")
+        st.markdown(
+            f"**Comparing:** {ov_current} vs {ov_previous} &nbsp;|&nbsp; "
+            f"**{_accel_display(accel)}**"
+        )
+        st.dataframe(
+            pd.DataFrame(summary_rows),
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Metric": st.column_config.TextColumn("Metric"),
+                f"{ov_current} vs {ov_previous}": st.column_config.TextColumn(
+                    f"{ov_current} vs {ov_previous}",
+                ),
+            },
+        )
+
+        st.markdown(
+            "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+        )
+        btn_cols = st.columns(len(_hm_dialog_metrics))
+        for i, mname in enumerate(_hm_dialog_metrics):
+            with btn_cols[i]:
+                if st.button(
+                    f"📊 {mname}",
+                    key=f"hm_dlg_btn_{i}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    st.session_state._hm_dlg_selected_metric = mname
+
+        selected_metric = st.session_state.get("_hm_dlg_selected_metric")
+        if selected_metric and selected_metric in _hm_dialog_metrics:
+            mcfg = _hm_dialog_metrics[selected_metric]
+            col_name = mcfg["column"]
+
+            st.markdown(f"#### {selected_metric} vs Concurrency")
+            st.markdown(
+                f"**{ov_current}** vs **{ov_previous}** &nbsp;|&nbsp; "
+                f"**{_accel_display(accel)}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
+            )
+
+            v1_vals, v2_vals = [], []
+            for c in common_conc:
+                r1 = df_v1[df_v1["intended concurrency"] == c][col_name].values
+                r2 = df_v2[df_v2["intended concurrency"] == c][col_name].values
+                v1_vals.append(float(r1[0]) if len(r1) > 0 else None)
+                v2_vals.append(float(r2[0]) if len(r2) > 0 else None)
+
+            if col_name == "ttft_p95":
+                v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+            x_vals = [int(c) for c in common_conc]
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v1_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ov_current})",
+                    line={"color": "#EF553B", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ov_current}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v2_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ov_previous})",
+                    line={"color": "#636EFA", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ov_previous}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+            if "tok/sec" in col_name:
+                y_title = "Tokens / sec"
+            elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                y_title = "Seconds"
+            else:
+                y_title = "Milliseconds"
+
+            fig.update_layout(
+                height=600,
+                xaxis_title="Concurrency",
+                yaxis_title=y_title,
+                margin={"t": 30, "b": 60},
+                hovermode="x unified",
+                legend={
+                    "orientation": "v",
+                    "yanchor": "top",
+                    "y": 1,
+                    "xanchor": "left",
+                    "x": 1.02,
+                    "font": {"size": 11},
+                    "itemclick": "toggle",
+                    "itemdoubleclick": "toggleothers",
+                },
+                xaxis={
+                    "type": "category",
+                    "categoryorder": "array",
+                    "categoryarray": x_vals,
+                },
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"hm_dlg_{selected_metric}",
+                theme=None,
+            )
+
+            st.caption(
+                "💡 **Tip:** Click a legend entry to toggle it. "
+                "Double-click to isolate a single trace. "
+                f"Warm colors (reds/oranges) = **{ov_current}**, "
+                f"cool colors (blues/greens) = **{ov_previous}**."
+            )
+            conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
+            st.caption(
+                f"ℹ️ Graph shows all common concurrency levels. "
+                f"Geometric mean uses: {conc_str}."
+            )
+
+    # Column widths: Model | metric columns | compare button
+    _hm_n_metrics = len(heatmap_cols)
+    _hm_widths = [3.5] + [1.5] * _hm_n_metrics + [0.5]
+
+    _accel_colors = {
+        "H200": "#22c55e",
+        "MI300X": "#f97316",
+        "B200": "#3b82f6",
+        "B300": "#8b5cf6",
+        "TPU": "#ef4444",
+        "Spyre": "#ec4899",
+    }
+    _accel_default_color = "#6b7280"
+
     for accel, info in data["accel_rollup"].items():
-        st.markdown(f"**{_accel_display(accel)}**")
+        _accel_clr = _accel_colors.get(accel, _accel_default_color)
+        st.markdown(
+            f'<div style="border-left:4px solid {_accel_clr};padding:0.4rem 0.8rem;'
+            f"margin:1rem 0 0.5rem 0;background:linear-gradient(90deg,{_accel_clr}11,transparent);"
+            f'border-radius:0 6px 6px 0;font-weight:700;font-size:1rem;color:#1a1f36">'
+            f"{_accel_display(accel)}</div>",
+            unsafe_allow_html=True,
+        )
         seen = {}
         for r in info["results"]:
             key = (
@@ -2987,26 +3471,67 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             if key not in seen:
                 seen[key] = r
 
-        rows_html = ""
-        for (sname, tp, profile, cisl_osl, _dset, _sdec, _pc), r in seen.items():
-            profile_short = _display_profile(profile, cisl_osl)
-            cells = ""
-            for mname, hib, _ in heatmap_cols:
-                cells += f"<td>{_hm_cell(r.get(f'{mname}_pct'), hib)}</td>"
-            rows_html += f"<tr><td>{sname} (TP{tp}) {profile_short}</td>{cells}</tr>"
-
-        col_headers = "".join(f"<th>{label}</th>" for _, _, label in heatmap_cols)
-        st.markdown(
-            f"""<div style="overflow-x:auto">
-            <table class="heatmap-table">
-                <thead><tr>
-                    <th style="min-width:200px">Model</th>
-                    {col_headers}
-                </tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table></div>""",
+        # Header row
+        _hdr_base = (
+            "font-weight:600;color:#6b7280;font-size:0.88rem;"
+            "border-bottom:2px solid #e5e7eb;"
+            "display:flex;align-items:flex-end;min-height:2.8rem;padding-bottom:0.4rem"
+        )
+        hdr = st.columns(_hm_widths)
+        hdr[0].markdown(
+            f'<div style="{_hdr_base}">Model</div>',
             unsafe_allow_html=True,
         )
+        for j, (_, _, label) in enumerate(heatmap_cols):
+            hdr[j + 1].markdown(
+                f'<div style="{_hdr_base};justify-content:center;text-align:center">{label}</div>',
+                unsafe_allow_html=True,
+            )
+        hdr[-1].markdown(
+            f'<div style="{_hdr_base}">&nbsp;</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Data rows
+        _n_rows = len(seen)
+        for i, ((sname, tp, profile, cisl_osl, _dset, _sdec, _pc), r) in enumerate(
+            seen.items()
+        ):
+            profile_short = _display_profile(profile, cisl_osl)
+            if i > 0:
+                st.markdown(
+                    '<hr style="margin:0;border:none;border-top:1px solid #e5e7eb">',
+                    unsafe_allow_html=True,
+                )
+            row_cols = st.columns(_hm_widths)
+            row_cols[0].markdown(
+                f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
+                f'padding:0.45rem 0">'
+                f"{sname} (TP{tp}) {profile_short}</div>",
+                unsafe_allow_html=True,
+            )
+            for j, (mname, hib, _) in enumerate(heatmap_cols):
+                row_cols[j + 1].markdown(
+                    f'<div style="text-align:center">'
+                    f"{_hm_cell(r.get(f'{mname}_pct'), hib)}</div>",
+                    unsafe_allow_html=True,
+                )
+            with row_cols[-1]:
+                if st.button(
+                    "📊",
+                    key=f"hm_cmp_{accel}_{i}",
+                    help=f"Compare {sname} (TP{tp}) {profile_short}",
+                ):
+                    _show_hm_compare_dialog(
+                        r["model"],
+                        tp,
+                        accel,
+                        profile,
+                        cisl_osl,
+                        _dset,
+                        _sdec,
+                        _pc,
+                    )
 
     st.markdown("---")
 
