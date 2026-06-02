@@ -2536,7 +2536,7 @@ combinations.<br><br>
 </div>
 </summary>
 <div class="overview-card-detail">
-Single largest degradation across Throughput, P95 TTFT, or
+Single largest degradation across Throughput, E2E Latency, P95 TTFT, or
 P95 ITL (normalised: negative = regression).<br><br>
 <b>Where:</b> {wr_detail}
 </div></details></div>""",
@@ -2800,10 +2800,10 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
                 v1_vals, v2_vals = [], []
                 for c in common_conc:
-                    r1 = df_v1[df_v1["intended concurrency"] == c][col_name].values
-                    r2 = df_v2[df_v2["intended concurrency"] == c][col_name].values
-                    v1_vals.append(float(r1[0]) if len(r1) > 0 else None)
-                    v2_vals.append(float(r2[0]) if len(r2) > 0 else None)
+                    g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                    g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                    v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                    v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
 
                 if col_name == "ttft_p95":
                     v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
@@ -3344,10 +3344,10 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
             v1_vals, v2_vals = [], []
             for c in common_conc:
-                r1 = df_v1[df_v1["intended concurrency"] == c][col_name].values
-                r2 = df_v2[df_v2["intended concurrency"] == c][col_name].values
-                v1_vals.append(float(r1[0]) if len(r1) > 0 else None)
-                v2_vals.append(float(r2[0]) if len(r2) > 0 else None)
+                g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
 
             if col_name == "ttft_p95":
                 v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
@@ -3460,7 +3460,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         seen = {}
         for r in info["results"]:
             key = (
-                r["short_name"],
+                r["model"],
                 r["tp"],
                 r["profile"],
                 r.get("custom_isl_osl", ""),
@@ -3494,9 +3494,10 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
         # Data rows
         _n_rows = len(seen)
-        for i, ((sname, tp, profile, cisl_osl, _dset, _sdec, _pc), r) in enumerate(
+        for i, ((_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc), r) in enumerate(
             seen.items()
         ):
+            sname = r["short_name"]
             profile_short = _display_profile(profile, cisl_osl)
             if i > 0:
                 st.markdown(
