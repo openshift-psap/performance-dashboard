@@ -458,20 +458,51 @@ def get_app_css():
         color: #1a1f36;
     }
     .vllm-scorecard { position: relative; }
-    .vllm-scorecard details { cursor: pointer; }
-    .vllm-scorecard details summary { list-style: none; }
-    .vllm-scorecard details summary::-webkit-details-marker { display: none; }
-    .vllm-scorecard details summary::after {
-        content: "ℹ️";
-        position: absolute;
-        top: 0.8rem;
-        right: 1rem;
-        font-size: 0.75rem;
-        opacity: 0.4;
-        transition: opacity 0.15s;
+
+    /* ── Merged scorecard + expander card ── */
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-marker) {
+        border-radius: 12px;
+        padding: 0;
+        margin: 0.75rem 0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        gap: 0 !important;
+        overflow: hidden;
     }
-    .vllm-scorecard:hover details summary::after { opacity: 0.8; }
-    .vllm-scorecard details[open] summary::after { opacity: 1; }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-green) {
+        border: 1px solid #bbf7d0;
+        background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-yellow) {
+        border: 1px solid #fde68a;
+        background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-red) {
+        border: 1px solid #fca5a5;
+        background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%);
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-marker) .vllm-scorecard {
+        border: none !important;
+        background: none !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        margin: 0 !important;
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-marker) [data-testid="stExpander"] {
+        border: none !important;
+        background: transparent !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-green) [data-testid="stExpander"] > details > summary {
+        border-top: 1px solid #bbf7d040;
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-yellow) [data-testid="stExpander"] > details > summary {
+        border-top: 1px solid #fde68a40;
+    }
+    div[data-testid="stVerticalBlock"]:has(.vllm-merge-red) [data-testid="stExpander"] > details > summary {
+        border-top: 1px solid #fca5a540;
+    }
 
     .vllm-parity-table {
         width: 100%;
@@ -2125,9 +2156,15 @@ def initialize_session_state():
 
 def initialize_streamlit_config():
     """Initialize Streamlit configuration."""
+    from pathlib import Path
+
+    from PIL import Image
+
+    logo_path = Path(__file__).parent / "assets" / "RedHat-logo.png"
+    page_icon = Image.open(logo_path) if logo_path.exists() else "📊"
     st.set_page_config(
         page_title="Staging Performance Dashboard",
-        page_icon="📊",
+        page_icon=page_icon,
         layout="wide",
         initial_sidebar_state="expanded",
     )
