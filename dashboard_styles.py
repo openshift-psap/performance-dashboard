@@ -2158,10 +2158,15 @@ def initialize_streamlit_config():
     """Initialize Streamlit configuration."""
     from pathlib import Path
 
-    from PIL import Image
+    page_icon = "📊"
+    try:
+        from PIL import Image
 
-    logo_path = Path(__file__).parent / "assets" / "RedHat-logo.png"
-    page_icon = Image.open(logo_path) if logo_path.exists() else "📊"
+        logo_path = Path(__file__).parent / "assets" / "RedHat-logo.png"
+        if logo_path.exists():
+            page_icon = Image.open(logo_path)
+    except ImportError:
+        pass
     st.set_page_config(
         page_title="Staging Performance Dashboard",
         page_icon=page_icon,
