@@ -11849,6 +11849,10 @@ def main():
             tracking_key = "previous_models_for_tp_tracking"
             prev_selected_models = st.session_state.get(tracking_key, None)
 
+            # Track previous available TP sizes to detect filter-driven changes
+            avail_tp_key = "previous_available_tp_sizes"
+            prev_available_tp = st.session_state.get(avail_tp_key, None)
+
             # Get previous TP selection
             prev_tp_key = f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
             prev_selected_tp = st.session_state.get(prev_tp_key, None)
@@ -11862,6 +11866,13 @@ def main():
                 else False
             )
 
+            # Detect TP sizes that reappeared due to filter changes (e.g. adding back an accelerator)
+            newly_available_tp = []
+            if prev_available_tp is not None:
+                newly_available_tp = [
+                    tp for tp in tp_sizes if tp not in prev_available_tp
+                ]
+
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
             ):
@@ -11874,7 +11885,10 @@ def main():
                 tp_default = tp_sizes
             elif prev_selected_tp is not None:
                 # Models didn't change - preserve user's manual TP selections (filtered to available)
-                tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
+                # Also auto-select any TP sizes that reappeared from filter changes
+                tp_default = [
+                    tp for tp in prev_selected_tp if tp in tp_sizes
+                ] + newly_available_tp
             elif st.session_state.get("_persisted_tp", None) is not None:
                 tp_default = [
                     tp for tp in st.session_state["_persisted_tp"] if tp in tp_sizes
@@ -11903,8 +11917,9 @@ def main():
                 )
                 st.rerun()
 
-            # Update the tracking variable with current selection
+            # Update tracking variables with current selection
             st.session_state[tracking_key] = selected_models
+            st.session_state[avail_tp_key] = tp_sizes
 
         if st.session_state.get("clear_all_filters", False):
             st.session_state.clear_all_filters = False
