@@ -8143,7 +8143,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         percentile_info = percentile_map[percentile_choice]
         percentile_label = percentile_choice.split(" ")[0]
 
-        latency_col1, latency_col2 = st.columns(2)
+        latency_col1, latency_col2, latency_col3 = st.columns(3)
 
         with latency_col1:
             itl_threshold = st.number_input(
@@ -8163,6 +8163,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 help=f"Time To First Token {percentile_label} threshold",
             )
             ttft_threshold = ttft_threshold_s * 1000
+
+        with latency_col3:
+            max_concurrency = st.number_input(
+                "Max Concurrency",
+                min_value=1,
+                value=300,
+                step=50,
+                help="Only consider concurrency levels up to this value for cost calculations",
+            )
 
         st.markdown("")
 
@@ -8245,8 +8254,31 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             ttft_threshold=2000,
             percentile_suffix="p95",
             debug_info=None,
+            max_concurrency=300,
         ):
             """Find the best concurrency level that meets PSAP latency SLOs and return performance at that level."""
+            if "intended concurrency" in group.columns:
+                group = group[group["intended concurrency"] <= max_concurrency]
+            if group.empty:
+                return pd.Series(
+                    {
+                        "output_tok/sec": np.nan,
+                        "throughput_version": f"No data ≤ {max_concurrency} concurrency",
+                        "throughput_tp": np.nan,
+                        "ttft_p95": np.nan,
+                        "ttft_version": f"No data ≤ {max_concurrency} concurrency",
+                        "ttft_tp": np.nan,
+                        "itl_p95": np.nan,
+                        "itl_version": f"No data ≤ {max_concurrency} concurrency",
+                        "itl_tp": np.nan,
+                        "efficiency_ratio": np.nan,
+                        "efficiency_version": f"No data ≤ {max_concurrency} concurrency",
+                        "efficiency_tp": np.nan,
+                        "error_rate": np.nan,
+                        "optimal_concurrency": np.nan,
+                    }
+                )
+
             itl_col = f"itl_{percentile_suffix}"
             ttft_col = f"ttft_{percentile_suffix}"
 
@@ -8470,6 +8502,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 ttft_threshold,
                 percentile_info["suffix"],
                 debug_info,
+                max_concurrency=max_concurrency,
             )
 
             result_dict = result_series.to_dict()
@@ -8623,6 +8656,20 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                     cost_col1, cost_col2 = st.columns(2)
 
+                    # Sort models so the cheapest/fastest appears at the top
+                    time_order = (
+                        cost_df.groupby("model_tp_label")["ttmt_minutes"]
+                        .min()
+                        .sort_values(ascending=False)
+                        .index.tolist()
+                    )
+                    cost_order = (
+                        cost_df.groupby("model_tp_label")["cpmt_total"]
+                        .min()
+                        .sort_values(ascending=False)
+                        .index.tolist()
+                    )
+
                     with cost_col1:
                         # Time to Million Tokens chart
                         fig_time = px.bar(
@@ -8645,7 +8692,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "cpmt_total": ":.3f",
                             },
                         )
-                        fig_time.update_layout(height=400, showlegend=True)
+                        fig_time.update_layout(
+                            height=400,
+                            showlegend=True,
+                            barmode="group",
+                            yaxis={
+                                "categoryorder": "array",
+                                "categoryarray": time_order,
+                            },
+                        )
                         st.plotly_chart(fig_time, use_container_width=True, theme=None)
                         st.caption(
                             "📊 Multiple accelerator types used for results, see 'Formulas' for calculation details. Click legend items to show/hide accelerator types."
@@ -8673,7 +8728,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "ttmt_minutes": ":.1f",
                             },
                         )
-                        fig_cost.update_layout(height=400, showlegend=True)
+                        fig_cost.update_layout(
+                            height=400,
+                            showlegend=True,
+                            barmode="group",
+                            yaxis={
+                                "categoryorder": "array",
+                                "categoryarray": cost_order,
+                            },
+                        )
                         st.plotly_chart(fig_cost, use_container_width=True, theme=None)
 
                     # Cost efficiency ranking table
