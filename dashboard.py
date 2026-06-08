@@ -9150,6 +9150,74 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     "deepseek-ai/DeepSeek-V3.2": 551.83,
                 },
             },
+            "RHAIIS-3.3": {
+                "Profile A: Balanced (1k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 630.2,
+                    "meta-llama/Llama-3.3-70B-Instruct": 624.1,
+                    "openai/gpt-oss-120b": {1: 605.1, 4: 431.5},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 572.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 549.1,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 548.5,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 542.8,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 630.2,
+                    "meta-llama/Llama-3.3-70B-Instruct": 624.1,
+                    "openai/gpt-oss-120b": {1: 605.1, 4: 431.5},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 572.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 549.1,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 548.5,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 542.8,
+                },
+                "Profile D: Prefill Heavy (8k/1k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 655.2,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 652.7,
+                    "openai/gpt-oss-120b": {1: 624.9, 4: 531.9},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 618.9,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 617.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 601.6,
+                    "deepseek-ai/DeepSeek-R1-0528": 577.7,
+                },
+            },
+            "RHAIIS-3.4-GA": {
+                "Profile A: Balanced (1k/1k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 636.5,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 624.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 600.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 585.6,
+                    "openai/gpt-oss-120b": {1: 566.1, 4: 417.2},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 560.7,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 556.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 535.9,
+                    "deepseek-ai/DeepSeek-V3.2": 530.3,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 636.5,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 624.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 600.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 585.6,
+                    "openai/gpt-oss-120b": {1: 566.1, 4: 417.2},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 560.7,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 556.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 535.9,
+                    "deepseek-ai/DeepSeek-V3.2": 530.3,
+                },
+                "Profile D: Prefill Heavy (8k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 653.0,
+                    "meta-llama/Llama-3.3-70B-Instruct": 634.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 603.3,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 586.8,
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 586.5,
+                    "openai/gpt-oss-120b": {1: 582.9, 4: 470.5},
+                    "nvidia/Llama-3.3-70B-Instruct-FP8": 580.9,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 569.5,
+                    "deepseek-ai/DeepSeek-R1-0528": 560.0,
+                    "deepseek-ai/DeepSeek-V3.2": 544.7,
+                },
+            },
         },
         "MI300X": {
             "RHAIIS-3.2.5": {
@@ -9556,10 +9624,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     num_concurrencies = group[conc_col].nunique()
                 else:
                     num_concurrencies = len(group)
-                if "EA1" in str(version) or "EA2" in str(version):
-                    seconds_per_conc = 450
-                else:
-                    seconds_per_conc = 600
+                seconds_per_conc = 450 if "3.4" in str(version) else 600
                 runtime_seconds = num_concurrencies * seconds_per_conc
                 runtime_minutes = runtime_seconds / 60
                 runtime_hours = runtime_seconds / 3600
@@ -9575,7 +9640,15 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                 energy_per_1m_tokens = None
 
                 if "output_tok/sec" in group.columns:
-                    avg_output_throughput = group["output_tok/sec"].mean()
+                    tput_group = group
+                    if conc_col:
+                        if profile in ("Profile D: Prefill Heavy (8k/1k)",):
+                            tput_group = group[group[conc_col] <= 100]
+                        else:
+                            tput_group = group[group[conc_col] <= 300]
+                    if tput_group.empty:
+                        tput_group = group
+                    avg_output_throughput = tput_group["output_tok/sec"].mean()
                     if pd.notna(avg_output_throughput) and avg_output_throughput > 0:
                         total_tokens = avg_output_throughput * runtime_seconds
                         if total_tokens > 0:
@@ -9772,11 +9845,11 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Concurrencies": st.column_config.NumberColumn(
                         "Concurrencies",
-                        help="Number of different concurrent user load levels tested (e.g., 1, 50, 100, 200, 300, 400, 500, 650 users). Each level runs for ~10 minutes.",
+                        help="Number of different concurrent user load levels tested (e.g., 1, 50, 100, 200, 300, 400, 500, 650 users). Each level runs for ~7.5 min (3.4+) or ~10 min (older).",
                     ),
                     "Benchmark Duration (min)": st.column_config.NumberColumn(
                         "Benchmark Duration (min)",
-                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies × 10 minutes per level.",
+                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies × duration per level (7.5 or 10 min).",
                         format="%d",
                     ),
                     "Benchmark Duration (hrs)": st.column_config.NumberColumn(
@@ -10919,6 +10992,12 @@ def main():
                 "tr_tp": "trends_tp_multi",
                 "tr_metric": "trends_metric",
             },
+            "energy_carbon": {
+                "ec_ver": "energy_version_filter",
+                "ec_accel": "energy_accelerator_filter",
+                "ec_profile": "energy_profile_filter",
+                "ec_models": "energy_model_filter",
+            },
         }
 
         def encode_filters_to_url(accelerators, models, versions, profile, tp_sizes):
@@ -11063,6 +11142,8 @@ def main():
                 "pareto_version_select",
                 "trends_versions_multi",
                 "trends_tp_multi",
+                "energy_accelerator_filter",
+                "energy_model_filter",
             }
             NUMERIC_LIST_SESSION_KEYS = {"trends_tp_multi"}
             INT_SESSION_KEYS = {
@@ -11453,10 +11534,20 @@ def main():
                     )
                 )
 
+            # Compute index from session state so the selectbox stays in sync
+            # when the options list changes (Streamlit resets to index 0 otherwise).
+            _desired_profile = st.session_state.get(
+                profile_key, profiles[0] if profiles else None
+            )
+            _profile_idx = (
+                profiles.index(_desired_profile) if _desired_profile in profiles else 0
+            )
+
             selected_profile = (
                 st.selectbox(
                     "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                     profiles,
+                    index=_profile_idx,
                     format_func=clean_profile_name,
                     key=profile_key,
                 )
