@@ -3823,13 +3823,46 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         elif y_axis == "request_latency_median" or y_axis == "request_latency_max":
             y_axis_display_label = f"{y_axis_label} (s)"
 
+        # Build ISL/OSL subtitle from unique values in the filtered data
+        _isl_osl_subtitle = ""
+        if (
+            "prompt toks" in filtered_df_sorted.columns
+            and "output toks" in filtered_df_sorted.columns
+        ):
+            isl_osl_pairs = (
+                filtered_df_sorted[["prompt toks", "output toks"]]
+                .dropna()
+                .drop_duplicates()
+            )
+            if not isl_osl_pairs.empty:
+                pair_labels = []
+                for _, r in isl_osl_pairs.iterrows():
+                    isl, osl = int(r["prompt toks"]), int(r["output toks"])
+                    if isl == 0 and osl == 0:
+                        if "dataset" in filtered_df_sorted.columns:
+                            ds_names = (
+                                filtered_df_sorted.loc[
+                                    (filtered_df_sorted["prompt toks"] == 0)
+                                    & (filtered_df_sorted["output toks"] == 0),
+                                    "dataset",
+                                ]
+                                .dropna()
+                                .unique()
+                                .tolist()
+                            )
+                            pair_labels.extend(ds_names)
+                    else:
+                        pair_labels.append(f"{isl}/{osl}")
+                if pair_labels:
+                    _isl_osl_subtitle = f"<br><span style='font-size:14px'>ISL/OSL: {', '.join(sorted(set(pair_labels)))}</span>"
+
         fig = px.line(
             filtered_df_sorted.sort_values(by=x_axis),
             x=x_axis,
             y=y_axis,
             color="run_identifier",
             markers=True,
-            title=f"{x_axis_label} vs. {y_axis_label}",
+            title=f"{x_axis_label} vs. {y_axis_label}{_isl_osl_subtitle}",
             labels={
                 x_axis: x_axis_label,
                 y_axis: y_axis_display_label,
