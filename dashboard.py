@@ -6834,15 +6834,39 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 v1_total_throughput = v1_common.loc[v1_peak_idx, "total_tok/sec"]
                 v2_total_throughput = v2_common.loc[v2_peak_idx, "total_tok/sec"]
 
-                # Get latency metrics at peak throughput
-                v1_e2e_latency = v1_common.loc[v1_peak_idx, "request_latency_median"]
-                v2_e2e_latency = v2_common.loc[v2_peak_idx, "request_latency_median"]
+                # For latency, compare at the same concurrency (min of the two peaks)
+                # so the comparison is fair (latency scales with load)
+                latency_conc = min(v1_peak_conc, v2_peak_conc)
+                v1_at_latency_conc = v1_common[
+                    v1_common["intended concurrency"] == latency_conc
+                ]
+                v2_at_latency_conc = v2_common[
+                    v2_common["intended concurrency"] == latency_conc
+                ]
 
-                v1_ttft = v1_common.loc[v1_peak_idx, "ttft_p95"]
-                v2_ttft = v2_common.loc[v2_peak_idx, "ttft_p95"]
+                if not v1_at_latency_conc.empty and not v2_at_latency_conc.empty:
+                    v1_lat_row = v1_at_latency_conc.iloc[0]
+                    v2_lat_row = v2_at_latency_conc.iloc[0]
+                else:
+                    v1_lat_row = v1_common.loc[v1_peak_idx]
+                    v2_lat_row = v2_common.loc[v2_peak_idx]
+                    latency_conc = None
 
-                v1_itl = v1_common.loc[v1_peak_idx, "itl_p95"]
-                v2_itl = v2_common.loc[v2_peak_idx, "itl_p95"]
+                # Get latency metrics at the common concurrency
+                v1_e2e_latency = v1_lat_row["request_latency_median"]
+                v2_e2e_latency = v2_lat_row["request_latency_median"]
+
+                v1_ttft = v1_lat_row["ttft_p95"]
+                v2_ttft = v2_lat_row["ttft_p95"]
+
+                v1_itl = v1_lat_row["itl_p95"]
+                v2_itl = v2_lat_row["itl_p95"]
+
+                latency_conc_label = (
+                    f" at {latency_conc} concurrent users"
+                    if latency_conc is not None
+                    else ""
+                )
 
                 def format_value(val, unit="", decimals=0, round_up=False):
                     """Format a numeric value with optional unit."""
@@ -6908,7 +6932,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "Median E2E Latency at Peak Throughput",
+                            "Metric": f"Median E2E Latency{latency_conc_label}",
                             version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
                             version_2: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
@@ -6916,7 +6940,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "TTFT P95 at Peak Throughput",
+                            "Metric": f"TTFT P95{latency_conc_label}",
                             version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
                             if pd.notna(v1_ttft)
                             else "N/A",
@@ -6928,7 +6952,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "ITL P95 at Peak Throughput",
+                            "Metric": f"ITL P95{latency_conc_label}",
                             version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
                             version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
