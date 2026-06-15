@@ -30,6 +30,7 @@ def process_benchmark_section(
     dataset="",
     spec_decoding="",
     prefix_caching="",
+    turns=None,
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -49,6 +50,7 @@ def process_benchmark_section(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
+        turns: Number of conversation turns for multiturn benchmarks (default: 1).
         cluster: Optional cluster name (e.g., 'hera') to distinguish runs on different clusters.
 
     Returns:
@@ -71,6 +73,9 @@ def process_benchmark_section(
     # Format can be either JSON or key=value pairs like "prompt_tokens=1000,output_tokens=1000"
     config_prompt_tokens = 0
     config_output_tokens = 0
+    detected_turns = None
+    detected_prefix_tokens = None
+    detected_prefix_count = None
     try:
         if global_data_config and len(global_data_config) > 0:
             data_str = global_data_config[0]
@@ -79,8 +84,16 @@ def process_benchmark_section(
                 request_config = json.loads(data_str)
                 config_prompt_tokens = request_config.get("prompt_tokens", 0)
                 config_output_tokens = request_config.get("output_tokens", 0)
+                if "turns" in request_config:
+                    _t = int(request_config["turns"])
+                    if _t >= 1:
+                        detected_turns = _t
+                if "prefix_tokens" in request_config:
+                    detected_prefix_tokens = int(request_config["prefix_tokens"])
+                if "prefix_count" in request_config:
+                    detected_prefix_count = int(request_config["prefix_count"])
             except json.JSONDecodeError:
-                # Try key=value format: "prompt_tokens=1000,output_tokens=1000"
+                # Try key=value format: "prompt_tokens=1000,output_tokens=1000,turns=3"
                 for item in data_str.split(","):
                     if "=" in item:
                         key, value = item.strip().split("=", 1)
@@ -88,9 +101,29 @@ def process_benchmark_section(
                             config_prompt_tokens = int(value)
                         elif key == "output_tokens":
                             config_output_tokens = int(value)
+                        elif key == "turns":
+                            _t = int(value)
+                            if _t >= 1:
+                                detected_turns = _t
+                        elif key == "prefix_tokens":
+                            detected_prefix_tokens = int(value)
+                        elif key == "prefix_count":
+                            detected_prefix_count = int(value)
     except (KeyError, TypeError, ValueError):
         config_prompt_tokens = 0
         config_output_tokens = 0
+
+    # Resolve turns: CLI override > auto-detected > default 1
+    if turns is not None:
+        # Explicitly provided via CLI — use as-is
+        pass
+    elif detected_turns is not None:
+        turns = detected_turns
+    else:
+        turns = 1
+
+    if turns < 1:
+        raise ValueError(f"turns must be >= 1, got {turns}")
 
     # Get request stats from scheduler_metrics
     scheduler_metrics = benchmark.get("scheduler_metrics", {})
@@ -181,6 +214,9 @@ def process_benchmark_section(
         "dataset": dataset,
         "spec_decoding": spec_decoding,
         "prefix_caching": prefix_caching,
+        "turns": turns,
+        "prefix_tokens": detected_prefix_tokens if detected_prefix_tokens else "",
+        "prefix_count": detected_prefix_count if detected_prefix_count else "",
     }
 
     return row
@@ -217,6 +253,7 @@ def parse_guidellm_json(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
+        turns: Number of conversation turns for multiturn benchmarks (default: 1).
 
     Returns:
         DataFrame: Processed benchmark results.
@@ -471,6 +508,9 @@ def main():
             "dataset",
             "spec_decoding",
             "prefix_caching",
+            "turns",
+            "prefix_tokens",
+            "prefix_count",
         ]
 
         for col in fieldnames:

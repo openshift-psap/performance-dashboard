@@ -752,6 +752,7 @@ def _compute_overview_data(
                 d["dataset"],
                 d["spec_decoding"],
                 d["prefix_caching"],
+                d["turns"],
             )
         )
 
@@ -759,7 +760,7 @@ def _compute_overview_data(
 
     # Per-combo metric deltas (current vs previous)
     combo_results = []
-    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache in common_combos:
+    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache, turns in common_combos:
         mask_c = (
             (df_curr["model"] == model)
             & (df_curr["TP"] == tp)
@@ -769,6 +770,7 @@ def _compute_overview_data(
             & (df_curr["dataset"] == dset)
             & (df_curr["spec_decoding"] == sdec)
             & (df_curr["prefix_caching"] == pcache)
+            & (df_curr["turns"] == turns)
         )
         mask_p = (
             (df_prev["model"] == model)
@@ -779,6 +781,7 @@ def _compute_overview_data(
             & (df_prev["dataset"] == dset)
             & (df_prev["spec_decoding"] == sdec)
             & (df_prev["prefix_caching"] == pcache)
+            & (df_prev["turns"] == turns)
         )
         cd, pd_ = df_curr[mask_c], df_prev[mask_p]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
@@ -795,6 +798,7 @@ def _compute_overview_data(
             "dataset": dset,
             "spec_decoding": sdec,
             "prefix_caching": pcache,
+            "turns": turns,
         }
         for mname, mc in metrics_cfg.items():
             pct, better, _, _, similar = compare_two_datasets(
@@ -961,7 +965,7 @@ def _compute_overview_data(
     tput_cfg = metrics_cfg["Throughput"]
     ttft_cfg = metrics_cfg["TTFT P95"]
     itl_cfg = metrics_cfg["ITL P95"]
-    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache in common_vllm:
+    for model, tp, accel, profile, cisl_osl, dset, sdec, pcache, turns in common_vllm:
         if accel != "H200":
             continue
         mask_c = (
@@ -973,6 +977,7 @@ def _compute_overview_data(
             & (df_curr["dataset"] == dset)
             & (df_curr["spec_decoding"] == sdec)
             & (df_curr["prefix_caching"] == pcache)
+            & (df_curr["turns"] == turns)
         )
         mask_v = (
             (df_vllm["model"] == model)
@@ -983,6 +988,7 @@ def _compute_overview_data(
             & (df_vllm["dataset"] == dset)
             & (df_vllm["spec_decoding"] == sdec)
             & (df_vllm["prefix_caching"] == pcache)
+            & (df_vllm["turns"] == turns)
         )
         cd, vd = df_curr[mask_c], df_vllm[mask_v]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
@@ -1022,6 +1028,7 @@ def _compute_overview_data(
                 "dataset": dset,
                 "spec_decoding": sdec,
                 "prefix_caching": pcache,
+                "turns": turns,
             }
         )
 
@@ -1079,6 +1086,7 @@ def _compute_overview_data(
                     r.get("dataset", ""),
                     r.get("spec_decoding", ""),
                     r.get("prefix_caching", ""),
+                    r.get("turns", 1),
                 )
                 for _, r in rows.iterrows()
             }
@@ -1686,6 +1694,11 @@ def _render_three_way_comparison(
                     if pc:
                         pc_str = ", ".join(pc) if isinstance(pc, list) else pc
                         tab_subtitle += f" | Prefix Caching: {pc_str}"
+                    turns_f = st.session_state.get("selected_turns_filter", [])
+                    if turns_f and any(t > 1 for t in turns_f):
+                        tab_subtitle += (
+                            f" | Turns: {', '.join(str(t) for t in turns_f)}"
+                        )
                 st.markdown(f"**NVIDIA H200 GPU, ISL/OSL: {label}{tab_subtitle}**")
                 st.caption(
                     f"ℹ️ Geometric mean metrics use concurrency levels: "
@@ -1959,6 +1972,11 @@ def render_competitive_analysis_section(df):
             if pc:
                 pc_str = ", ".join(pc) if isinstance(pc, list) else pc
                 dialog_subtitle += f" &nbsp;|&nbsp; Prefix Caching: **{pc_str}**"
+            turns_f = st.session_state.get("selected_turns_filter", [])
+            if turns_f and any(t > 1 for t in turns_f):
+                dialog_subtitle += (
+                    f" &nbsp;|&nbsp; Turns: **{', '.join(str(t) for t in turns_f)}**"
+                )
         st.markdown(
             f"**{baseline}** vs **{competitor}** &nbsp;|&nbsp; "
             f"**{ACCELERATOR}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
@@ -2379,6 +2397,11 @@ def render_competitive_analysis_section(df):
                                             else pc
                                         )
                                         tab_subtitle += f" | Prefix Caching: {pc_str}"
+                                    turns_f = st.session_state.get(
+                                        "selected_turns_filter", []
+                                    )
+                                    if turns_f and any(t > 1 for t in turns_f):
+                                        tab_subtitle += f" | Turns: {', '.join(str(t) for t in turns_f)}"
                                 st.markdown(
                                     f"**NVIDIA H200 GPU, ISL/OSL: {label}{tab_subtitle}**"
                                 )
@@ -3251,7 +3274,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
     @st.dialog("Version Comparison — Metric Details", width="large")
     def _show_hm_compare_dialog(
-        model, tp, accel, profile, cisl_osl, dset, sdec, pcache
+        model, tp, accel, profile, cisl_osl, dset, sdec, pcache, turns=1
     ):
         short_name = _short_model_name(model)
         profile_display = _display_profile(profile, cisl_osl)
@@ -3265,6 +3288,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             & (df["dataset"] == dset)
             & (df["spec_decoding"] == sdec)
             & (df["prefix_caching"] == pcache)
+            & (df["turns"] == turns)
         )
         df_v1 = df[mask_common & (df["version"] == ov_current)]
         df_v2 = df[mask_common & (df["version"] == ov_previous)]
@@ -3467,6 +3491,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 r.get("dataset", ""),
                 r.get("spec_decoding", ""),
                 r.get("prefix_caching", ""),
+                r.get("turns", 1),
             )
             if key not in seen:
                 seen[key] = r
@@ -3494,9 +3519,10 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
         # Data rows
         _n_rows = len(seen)
-        for i, ((_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc), r) in enumerate(
-            seen.items()
-        ):
+        for i, (
+            (_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc, _turns),
+            r,
+        ) in enumerate(seen.items()):
             sname = r["short_name"]
             profile_short = _display_profile(profile, cisl_osl)
             if i > 0:
@@ -3532,6 +3558,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                         _dset,
                         _sdec,
                         _pc,
+                        _turns,
                     )
 
     st.markdown("---")
@@ -3543,7 +3570,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
         name = _short_model_name(entry["model"])
         config_parts = [
             f"{ver} · {_accel_display(accel)} · {_display_profile(prof, cisl)}"
-            for ver, accel, prof, cisl, _dset, _sdec, _pc in entry["configs"]
+            for ver, accel, prof, cisl, _dset, _sdec, _pc, _turns in entry["configs"]
         ]
         config_str = (
             f' <span style="opacity:0.7">({", ".join(config_parts)})</span>'
@@ -3734,6 +3761,10 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         if filtered_df["prefix_caching"].any():
             filtered_df["run_identifier"] += filtered_df["prefix_caching"].apply(
                 lambda x: f" | PC={x}" if x else ""
+            )
+        if (filtered_df["turns"] > 1).any():
+            filtered_df["run_identifier"] += filtered_df["turns"].apply(
+                lambda x: f" | {x}T" if x > 1 else ""
             )
 
         _sort_cols = ["model_short", "accelerator", "version", "TP"]
@@ -5752,6 +5783,66 @@ def render_compare_versions_summary_section(df, use_expander=True):
         compare_dataset_filter = None
         compare_spec_decoding_filter = None
         compare_prefix_caching_filter = None
+        compare_turns_filter = None
+        compare_mt_isl_osl = None
+        compare_mt_turns = None
+        compare_mt_prefix_tokens = None
+        compare_mt_prefix_count = None
+        if selected_profile == "Multi-turn":
+            mt_temp = df[
+                (df["profile"] == "Multi-turn")
+                & (df["accelerator"].isin(available_accelerators))
+            ]
+            mt_pairs = sorted(p for p in mt_temp["multiturn_isl_osl"].unique() if p)
+            if mt_pairs:
+                compare_mt_isl_osl = st.selectbox(
+                    "Select ISL/OSL",
+                    options=mt_pairs,
+                    key="compare_summary_mt_isl_osl",
+                    on_change=keep_expander_open,
+                    args=("compare_versions_summary_expanded",),
+                )
+                mt_scoped = mt_temp[mt_temp["multiturn_isl_osl"] == compare_mt_isl_osl]
+                cmp_mt_turns_opts = sorted(mt_scoped["turns"].unique().tolist())
+                if cmp_mt_turns_opts:
+                    compare_mt_turns = st.multiselect(
+                        "Turns",
+                        cmp_mt_turns_opts,
+                        default=cmp_mt_turns_opts,
+                        key="compare_summary_mt_turns",
+                        on_change=keep_expander_open,
+                        args=("compare_versions_summary_expanded",),
+                    )
+                pt_scoped = mt_scoped
+                if compare_mt_turns:
+                    pt_scoped = pt_scoped[pt_scoped["turns"].isin(compare_mt_turns)]
+                cmp_pt_opts = sorted(
+                    v for v in pt_scoped["prefix_tokens"].unique() if v
+                )
+                if cmp_pt_opts:
+                    compare_mt_prefix_tokens = st.multiselect(
+                        "Prefix Tokens",
+                        cmp_pt_opts,
+                        default=cmp_pt_opts,
+                        key="compare_summary_mt_prefix_tokens",
+                        on_change=keep_expander_open,
+                        args=("compare_versions_summary_expanded",),
+                    )
+                pc_scoped = pt_scoped
+                if compare_mt_prefix_tokens:
+                    pc_scoped = pc_scoped[
+                        pc_scoped["prefix_tokens"].isin(compare_mt_prefix_tokens)
+                    ]
+                cmp_pc_opts = sorted(v for v in pc_scoped["prefix_count"].unique() if v)
+                if cmp_pc_opts:
+                    compare_mt_prefix_count = st.multiselect(
+                        "Prefix Count",
+                        cmp_pc_opts,
+                        default=cmp_pc_opts,
+                        key="compare_summary_mt_prefix_count",
+                        on_change=keep_expander_open,
+                        args=("compare_versions_summary_expanded",),
+                    )
         if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
             custom_temp = df[
                 (df["profile"] == "Custom")
@@ -5822,6 +5913,36 @@ def render_compare_versions_summary_section(df, use_expander=True):
                                 args=("compare_versions_summary_expanded",),
                             )
 
+                        # Turns filter — scoped to dataset + spec_decoding + prefix_caching
+                        cmp_turns_temp = real_temp[
+                            real_temp["dataset"] == compare_dataset_filter
+                        ]
+                        if compare_spec_decoding_filter:
+                            cmp_turns_temp = cmp_turns_temp[
+                                cmp_turns_temp["spec_decoding"].isin(
+                                    compare_spec_decoding_filter
+                                )
+                            ]
+                        if compare_prefix_caching_filter:
+                            cmp_turns_temp = cmp_turns_temp[
+                                cmp_turns_temp["prefix_caching"].isin(
+                                    compare_prefix_caching_filter
+                                )
+                            ]
+                        cmp_turns_options = sorted(
+                            cmp_turns_temp["turns"].unique().tolist()
+                        )
+                        if len(cmp_turns_options) > 1:
+                            compare_turns_filter = st.multiselect(
+                                "Turns",
+                                cmp_turns_options,
+                                default=cmp_turns_options,
+                                format_func=lambda x: str(x),
+                                key="compare_summary_turns",
+                                on_change=keep_expander_open,
+                                args=("compare_versions_summary_expanded",),
+                            )
+
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
@@ -5856,6 +5977,33 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
             base_mask_v2 = base_mask_v2 & df["prefix_caching"].isin(
                 compare_prefix_caching_filter
+            )
+        if compare_turns_filter:
+            base_mask_v1 = base_mask_v1 & df["turns"].isin(compare_turns_filter)
+            base_mask_v2 = base_mask_v2 & df["turns"].isin(compare_turns_filter)
+        if compare_mt_isl_osl:
+            base_mask_v1 = base_mask_v1 & (
+                df["multiturn_isl_osl"] == compare_mt_isl_osl
+            )
+            base_mask_v2 = base_mask_v2 & (
+                df["multiturn_isl_osl"] == compare_mt_isl_osl
+            )
+        if compare_mt_turns:
+            base_mask_v1 = base_mask_v1 & df["turns"].isin(compare_mt_turns)
+            base_mask_v2 = base_mask_v2 & df["turns"].isin(compare_mt_turns)
+        if compare_mt_prefix_tokens:
+            base_mask_v1 = base_mask_v1 & df["prefix_tokens"].isin(
+                compare_mt_prefix_tokens
+            )
+            base_mask_v2 = base_mask_v2 & df["prefix_tokens"].isin(
+                compare_mt_prefix_tokens
+            )
+        if compare_mt_prefix_count:
+            base_mask_v1 = base_mask_v1 & df["prefix_count"].isin(
+                compare_mt_prefix_count
+            )
+            base_mask_v2 = base_mask_v2 & df["prefix_count"].isin(
+                compare_mt_prefix_count
             )
         df_v1 = df[base_mask_v1].copy()
         df_v2 = df[base_mask_v2].copy()
@@ -6743,7 +6891,7 @@ def render_compare_configurations_section(
             "💡 **Compare performance between two configurations across all versions and metrics.**"
         )
 
-        _cfg_cols = ["model", "dataset", "spec_decoding", "prefix_caching"]
+        _cfg_cols = ["model", "dataset", "spec_decoding", "prefix_caching", "turns"]
         _cfg_df = (
             filtered_df[_cfg_cols]
             .fillna("")
@@ -6761,6 +6909,8 @@ def render_compare_configurations_section(
                 parts.append(f"SD={row['spec_decoding']}")
             if row["prefix_caching"]:
                 parts.append(f"PC={row['prefix_caching']}")
+            if row["turns"] > 1:
+                parts.append(f"{row['turns']}T")
             return " | ".join(parts)
 
         _cfg_df["_label"] = _cfg_df.apply(_cfg_label, axis=1)
@@ -6771,6 +6921,7 @@ def render_compare_configurations_section(
                 row["dataset"],
                 row["spec_decoding"],
                 row["prefix_caching"],
+                row["turns"],
             )
             for _, row in _cfg_df.iterrows()
         }
@@ -6814,11 +6965,12 @@ def render_compare_configurations_section(
             return
 
         def _filter_by_config(src_df, cfg_tuple):
-            model, dataset, spec_dec, pref_cache = cfg_tuple
+            model, dataset, spec_dec, pref_cache, turns = cfg_tuple
             mask = src_df["model"] == model
             mask &= src_df["dataset"].fillna("") == dataset
             mask &= src_df["spec_decoding"].fillna("") == spec_dec
             mask &= src_df["prefix_caching"].fillna("") == pref_cache
+            mask &= src_df["turns"] == turns
             return src_df[mask].copy()
 
         cfg1_tuple = label_to_tuple[config_1]
@@ -10973,6 +11125,10 @@ def main():
             if "custom_isl_osl" in query_params:
                 url_custom_isl_osl = query_params["custom_isl_osl"].strip()
 
+            url_multiturn_isl_osl = None
+            if "multiturn_isl_osl" in query_params:
+                url_multiturn_isl_osl = query_params["multiturn_isl_osl"].strip()
+
             url_dp_sizes = []
             if "dp_sizes" in query_params:
                 try:
@@ -11035,12 +11191,25 @@ def main():
                 url_section_filters,
                 url_custom_isl_osl,
                 url_dp_sizes,
+                url_multiturn_isl_osl,
             )
 
     df["profile"] = assign_profile_vectorized(df)
 
+    # Override profile for multiturn data (turns > 1)
+    if "turns" in df.columns:
+        df.loc[df["turns"].fillna(1).astype(int) > 1, "profile"] = "Multi-turn"
+
     df["custom_isl_osl"] = np.where(
         df["profile"] == "Custom",
+        df["prompt toks"].astype(int).astype(str)
+        + "/"
+        + df["output toks"].astype(int).astype(str),
+        "",
+    )
+
+    df["multiturn_isl_osl"] = np.where(
+        df["profile"] == "Multi-turn",
         df["prompt toks"].astype(int).astype(str)
         + "/"
         + df["output toks"].astype(int).astype(str),
@@ -11056,6 +11225,34 @@ def main():
     if "prefix_caching" not in df.columns:
         df["prefix_caching"] = ""
     df["prefix_caching"] = df["prefix_caching"].fillna("").astype(str)
+
+    if "turns" not in df.columns:
+        df["turns"] = 1
+    df["turns"] = df["turns"].fillna(1).astype(int)
+
+    if "prefix_tokens" not in df.columns:
+        df["prefix_tokens"] = ""
+    df["prefix_tokens"] = (
+        df["prefix_tokens"]
+        .fillna("")
+        .apply(
+            lambda v: (
+                str(int(float(v))) if v != "" and str(v) not in ("", "nan") else ""
+            )
+        )
+    )
+
+    if "prefix_count" not in df.columns:
+        df["prefix_count"] = ""
+    df["prefix_count"] = (
+        df["prefix_count"]
+        .fillna("")
+        .apply(
+            lambda v: (
+                str(int(float(v))) if v != "" and str(v) not in ("", "nan") else ""
+            )
+        )
+    )
 
     df["error_rate"] = (
         df["errored_requests"]
@@ -11084,6 +11281,7 @@ def main():
             url_section_filters,
             url_custom_isl_osl,
             url_dp_sizes,
+            url_multiturn_isl_osl,
         ) = decode_filters_from_url()
 
         if url_section:
@@ -11162,6 +11360,8 @@ def main():
         st.session_state.use_url_filters = has_url_filters
         if url_custom_isl_osl:
             st.session_state.selected_custom_isl_osl = url_custom_isl_osl
+        if url_multiturn_isl_osl:
+            st.session_state.selected_multiturn_isl_osl = url_multiturn_isl_osl
 
     SECTIONS_WITHOUT_GLOBAL_FILTERS = {
         "🏠 Overview",
@@ -11210,9 +11410,12 @@ def main():
             # If no profile selected yet, determine the default that will be selected
             if not current_profile:
                 available_profiles_raw = sorted(df["profile"].unique().tolist())
-                available_profiles = [
-                    p for p in available_profiles_raw if p != "Custom"
-                ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+                _sp = ("Multi-turn", "Custom")
+                available_profiles = (
+                    [p for p in available_profiles_raw if p not in _sp]
+                    + (["Multi-turn"] if "Multi-turn" in available_profiles_raw else [])
+                    + (["Custom"] if "Custom" in available_profiles_raw else [])
+                )
 
                 # Default to Profile A (1k/1k) when clearing or as fallback
                 default_profile = "Profile A: Balanced (1k/1k)"
@@ -11310,9 +11513,12 @@ def main():
                 if not temp_df.empty
                 else []
             )
-            # Sort so "Custom" always comes last to avoid it being picked as profiles[0] fallback
-            profiles = [p for p in profiles_raw if p != "Custom"] + (
-                ["Custom"] if "Custom" in profiles_raw else []
+            # Sort so "Multi-turn" and "Custom" always come last
+            _special = ("Multi-turn", "Custom")
+            profiles = (
+                [p for p in profiles_raw if p not in _special]
+                + (["Multi-turn"] if "Multi-turn" in profiles_raw else [])
+                + (["Custom"] if "Custom" in profiles_raw else [])
             )
 
             # Default to Profile A (1k/1k) when clearing or as fallback
@@ -11493,6 +11699,89 @@ def main():
                             selected_prefix_caching_filter
                         )
 
+            # ── Multi-turn cascading filters ──
+            selected_multiturn_isl_osl = None
+            selected_mt_turns = None
+            selected_mt_prefix_tokens = None
+            selected_mt_prefix_count = None
+
+            if selected_profile == "Multi-turn":
+                mt_temp = df.copy()
+                if selected_accelerators:
+                    mt_temp = mt_temp[
+                        mt_temp["accelerator"].isin(selected_accelerators)
+                    ]
+                mt_temp = mt_temp[mt_temp["profile"] == "Multi-turn"]
+
+                # ISL/OSL pair selector
+                mt_pairs = sorted(mt_temp["multiturn_isl_osl"].unique().tolist())
+                mt_pairs = [p for p in mt_pairs if p]
+                if mt_pairs:
+                    mt_isl_key = (
+                        f"mt_isl_osl_filter_{st.session_state.filter_change_key}"
+                    )
+                    if mt_isl_key not in st.session_state:
+                        url_mt = st.session_state.get("selected_multiturn_isl_osl")
+                        st.session_state[mt_isl_key] = (
+                            url_mt if url_mt and url_mt in mt_pairs else mt_pairs[0]
+                        )
+                    elif st.session_state.get(mt_isl_key) not in mt_pairs:
+                        st.session_state[mt_isl_key] = mt_pairs[0]
+                    selected_multiturn_isl_osl = st.selectbox(
+                        "Select ISL/OSL",
+                        mt_pairs,
+                        key=mt_isl_key,
+                    )
+                    st.session_state.selected_multiturn_isl_osl = (
+                        selected_multiturn_isl_osl
+                    )
+
+                    # Turns filter — scoped to selected ISL/OSL
+                    turns_temp = mt_temp[
+                        mt_temp["multiturn_isl_osl"] == selected_multiturn_isl_osl
+                    ]
+                    turns_opts = sorted(turns_temp["turns"].unique().tolist())
+                    if turns_opts:
+                        turns_key = (
+                            f"mt_turns_filter_{st.session_state.filter_change_key}"
+                        )
+                        selected_mt_turns = st.multiselect(
+                            "Turns",
+                            turns_opts,
+                            default=turns_opts,
+                            key=turns_key,
+                        )
+
+                    # Prefix tokens filter — scoped to ISL/OSL + turns
+                    pt_temp = turns_temp
+                    if selected_mt_turns:
+                        pt_temp = pt_temp[pt_temp["turns"].isin(selected_mt_turns)]
+                    pt_opts = sorted(v for v in pt_temp["prefix_tokens"].unique() if v)
+                    if pt_opts:
+                        pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
+                        selected_mt_prefix_tokens = st.multiselect(
+                            "Prefix Tokens",
+                            pt_opts,
+                            default=pt_opts,
+                            key=pt_key,
+                        )
+
+                    # Prefix count filter — scoped to ISL/OSL + turns + prefix_tokens
+                    pc_temp = pt_temp
+                    if selected_mt_prefix_tokens:
+                        pc_temp = pc_temp[
+                            pc_temp["prefix_tokens"].isin(selected_mt_prefix_tokens)
+                        ]
+                    pc_opts = sorted(v for v in pc_temp["prefix_count"].unique() if v)
+                    if pc_opts:
+                        pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
+                        selected_mt_prefix_count = st.multiselect(
+                            "Prefix Count",
+                            pc_opts,
+                            default=pc_opts,
+                            key=pc_mt_key,
+                        )
+
             # Update baseline_profile to remember user's current selection
             # This ensures the selected profile is retained when other filters change
             if selected_profile is not None:
@@ -11524,6 +11813,21 @@ def main():
             if selected_prefix_caching_filter:
                 temp_df = temp_df[
                     temp_df["prefix_caching"].isin(selected_prefix_caching_filter)
+                ]
+            # Narrow to multi-turn filters
+            if selected_multiturn_isl_osl:
+                temp_df = temp_df[
+                    temp_df["multiturn_isl_osl"] == selected_multiturn_isl_osl
+                ]
+            if selected_mt_turns:
+                temp_df = temp_df[temp_df["turns"].isin(selected_mt_turns)]
+            if selected_mt_prefix_tokens:
+                temp_df = temp_df[
+                    temp_df["prefix_tokens"].isin(selected_mt_prefix_tokens)
+                ]
+            if selected_mt_prefix_count:
+                temp_df = temp_df[
+                    temp_df["prefix_count"].isin(selected_mt_prefix_count)
                 ]
 
             versions = (
@@ -11693,6 +11997,21 @@ def main():
             if selected_prefix_caching_filter:
                 temp_df = temp_df[
                     temp_df["prefix_caching"].isin(selected_prefix_caching_filter)
+                ]
+            # Narrow to multi-turn filters
+            if selected_multiturn_isl_osl:
+                temp_df = temp_df[
+                    temp_df["multiturn_isl_osl"] == selected_multiturn_isl_osl
+                ]
+            if selected_mt_turns:
+                temp_df = temp_df[temp_df["turns"].isin(selected_mt_turns)]
+            if selected_mt_prefix_tokens:
+                temp_df = temp_df[
+                    temp_df["prefix_tokens"].isin(selected_mt_prefix_tokens)
+                ]
+            if selected_mt_prefix_count:
+                temp_df = temp_df[
+                    temp_df["prefix_count"].isin(selected_mt_prefix_count)
                 ]
 
             models = (
@@ -11887,6 +12206,25 @@ def main():
             if selected_prefix_caching_filter
             else True
         )
+        # Multi-turn masks
+        multiturn_isl_osl_mask = (
+            (df["multiturn_isl_osl"] == selected_multiturn_isl_osl)
+            if selected_profile == "Multi-turn" and selected_multiturn_isl_osl
+            else True
+        )
+        mt_turns_mask = (
+            df["turns"].isin(selected_mt_turns) if selected_mt_turns else True
+        )
+        mt_prefix_tokens_mask = (
+            df["prefix_tokens"].isin(selected_mt_prefix_tokens)
+            if selected_mt_prefix_tokens
+            else True
+        )
+        mt_prefix_count_mask = (
+            df["prefix_count"].isin(selected_mt_prefix_count)
+            if selected_mt_prefix_count
+            else True
+        )
         tp_mask = df["TP"].isin(selected_tp) | df["TP"].isna()
         filtered_df = df[
             df["accelerator"].isin(selected_accelerators)
@@ -11898,6 +12236,10 @@ def main():
             & dataset_mask
             & spec_decoding_mask
             & prefix_caching_mask
+            & multiturn_isl_osl_mask
+            & mt_turns_mask
+            & mt_prefix_tokens_mask
+            & mt_prefix_count_mask
             & dp_mask
         ].copy()
 
@@ -12097,6 +12439,10 @@ def main():
                 custom_val = st.session_state.get("selected_custom_isl_osl")
                 if custom_val:
                     desired_params["custom_isl_osl"] = custom_val
+            if selected_profile == "Multi-turn":
+                mt_val = st.session_state.get("selected_multiturn_isl_osl")
+                if mt_val:
+                    desired_params["multiturn_isl_osl"] = mt_val
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
             if st.session_state.get("show_advanced_filters", False) and selected_dp:
