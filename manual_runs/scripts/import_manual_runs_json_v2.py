@@ -216,8 +216,12 @@ def process_benchmark_section(
         "spec_decoding": spec_decoding,
         "prefix_caching": prefix_caching,
         "turns": turns,
-        "prefix_tokens": detected_prefix_tokens if detected_prefix_tokens else "",
-        "prefix_count": detected_prefix_count if detected_prefix_count else "",
+        "prefix_tokens": detected_prefix_tokens
+        if detected_prefix_tokens is not None
+        else "",
+        "prefix_count": detected_prefix_count
+        if detected_prefix_count is not None
+        else "",
         "request_type": request_type,
     }
 
@@ -255,7 +259,6 @@ def parse_guidellm_json(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
-        turns: Number of conversation turns for multiturn benchmarks (default: 1).
 
     Returns:
         DataFrame: Processed benchmark results.
