@@ -31,6 +31,7 @@ def process_benchmark_section(
     spec_decoding="",
     prefix_caching="",
     turns=None,
+    request_type="",
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -217,6 +218,7 @@ def process_benchmark_section(
         "turns": turns,
         "prefix_tokens": detected_prefix_tokens if detected_prefix_tokens else "",
         "prefix_count": detected_prefix_count if detected_prefix_count else "",
+        "request_type": request_type,
     }
 
     return row
@@ -286,6 +288,8 @@ def parse_guidellm_json(
     # Get global data config (prompt_tokens, output_tokens)
     global_args = data.get("args", {})
     global_data_config = global_args.get("data", [])
+    backend_kwargs = global_args.get("backend_kwargs", {})
+    request_type = backend_kwargs.get("request_format", "")
 
     # Extract aggregated guidellm start and end times from scheduler_metrics
     start_times = []
@@ -321,6 +325,7 @@ def parse_guidellm_json(
             dataset=dataset,
             spec_decoding=spec_decoding,
             prefix_caching=prefix_caching,
+            request_type=request_type,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -504,6 +509,7 @@ def main():
             "guidellm_end_time_ms",
             "image_tag",
             "guidellm_version",
+            "request_type",
             "DP",
             "dataset",
             "spec_decoding",
