@@ -6030,36 +6030,91 @@ def render_compare_versions_summary_section(df, use_expander=True):
             return
 
         _has_dp = "DP" in df_v1.columns
+        _is_multiturn = selected_profile == "Multi-turn"
 
         def _get_version_configs(df, model):
-            """Return sorted list of (type, value) parallelism configs for a model."""
+            """Return sorted list of config tuples for a model.
+
+            For Multi-turn: (ptype, pval, turns, prefix_tokens, prefix_count)
+            Otherwise: (ptype, pval)
+            """
             model_data = df[df["model"] == model]
-            configs = set()
+            base_configs = set()
             if _has_dp and model_data["DP"].notna().any():
                 for dp_val in model_data["DP"].dropna().unique():
-                    configs.add(("DP", int(dp_val)))
+                    base_configs.add(("DP", int(dp_val)))
             tp_data = model_data if not _has_dp else model_data[model_data["DP"].isna()]
             if not tp_data.empty and tp_data["TP"].notna().any():
                 for tp_val in tp_data["TP"].dropna().unique():
-                    configs.add(("TP", int(tp_val)))
-            return sorted(configs) if configs else [("N/A", 0)]
+                    base_configs.add(("TP", int(tp_val)))
+            if not base_configs:
+                base_configs = {("N/A", 0)}
+
+            if not _is_multiturn:
+                return sorted(base_configs)
+
+            # Expand each parallelism config by turns/prefix variants
+            configs = set()
+            for base in base_configs:
+                ptype, pval = base
+                if ptype == "DP" and _has_dp:
+                    subset = model_data[model_data["DP"] == pval]
+                elif ptype == "TP":
+                    mask = model_data["TP"] == pval
+                    if _has_dp:
+                        mask = mask & model_data["DP"].isna()
+                    subset = model_data[mask]
+                else:
+                    subset = model_data
+                for _, row in (
+                    subset[["turns", "prefix_tokens", "prefix_count"]]
+                    .drop_duplicates()
+                    .iterrows()
+                ):
+                    configs.add(
+                        (
+                            ptype,
+                            pval,
+                            row["turns"],
+                            row["prefix_tokens"],
+                            row["prefix_count"],
+                        )
+                    )
+            return sorted(configs)
 
         def _slice_by_config(df, model, config):
-            """Return rows matching model and parallelism config."""
+            """Return rows matching model and config tuple."""
             model_data = df[df["model"] == model]
-            ptype, pval = config
+            ptype, pval = config[0], config[1]
             if ptype == "DP" and _has_dp:
-                return model_data[model_data["DP"] == pval]
+                mask = model_data["DP"] == pval
             elif ptype == "TP":
                 mask = model_data["TP"] == pval
                 if _has_dp:
                     mask = mask & model_data["DP"].isna()
-                return model_data[mask]
-            return model_data
+            else:
+                mask = pd.Series(True, index=model_data.index)
+            if _is_multiturn and len(config) == 5:
+                _, _, turns, pt, pc = config
+                mask = mask & (model_data["turns"] == turns)
+                if pt:
+                    mask = mask & (model_data["prefix_tokens"] == pt)
+                if pc:
+                    mask = mask & (model_data["prefix_count"] == pc)
+            return model_data[mask]
 
         def _config_label(config):
-            ptype, pval = config
-            return f"{ptype}={pval}" if ptype != "N/A" else "N/A"
+            ptype, pval = config[0], config[1]
+            label = f"{ptype}={pval}" if ptype != "N/A" else "N/A"
+            if _is_multiturn and len(config) == 5:
+                _, _, turns, pt, pc = config
+                parts = [f"{turns}T"]
+                if pt:
+                    parts.append(f"{pt}pt")
+                if pc:
+                    parts.append(f"{pc}pc")
+                label += " " + "/".join(parts)
+            return label
 
         # Build comparison pairs: exact parallelism matches first, then
         # cross-parallelism pairs for models that differ (e.g. TP vs DP).
