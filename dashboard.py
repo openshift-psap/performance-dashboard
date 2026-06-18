@@ -6097,10 +6097,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             if _is_multiturn and len(config) == 5:
                 _, _, turns, pt, pc = config
                 mask = mask & (model_data["turns"] == turns)
-                if pt:
-                    mask = mask & (model_data["prefix_tokens"] == pt)
-                if pc:
-                    mask = mask & (model_data["prefix_count"] == pc)
+                mask = mask & (model_data["prefix_tokens"] == pt)
+                mask = mask & (model_data["prefix_count"] == pc)
             return model_data[mask]
 
         def _config_label(config):
