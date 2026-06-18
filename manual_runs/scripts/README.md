@@ -174,14 +174,14 @@ The script outputs 52 columns compatible with the performance dashboard:
 | 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                        |
 | 43  | `image_tag`               | Container image used                                 |
 | 44  | `guidellm_version`        | guidellm version used                                |
-| 45  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
-| 46  | `DP`                      | Data parallelism size (empty for TP runs)            |
-| 47  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
-| 48  | `spec_decoding`           | Speculative decoding method (empty if none)          |
-| 49  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
-| 50  | `turns`                   | Conversation turns for multiturn benchmarks          |
-| 51  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
-| 52  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
+| 45  | `DP`                      | Data parallelism size (empty for TP runs)            |
+| 46  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
+| 47  | `spec_decoding`           | Speculative decoding method (empty if none)          |
+| 48  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
+| 49  | `turns`                   | Conversation turns for multiturn benchmarks          |
+| 50  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
+| 51  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
+| 52  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
 
 ## Notes
 

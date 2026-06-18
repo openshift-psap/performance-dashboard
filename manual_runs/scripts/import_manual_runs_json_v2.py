@@ -522,7 +522,6 @@ def main():
             "guidellm_end_time_ms",
             "image_tag",
             "guidellm_version",
-            "request_type",
             "DP",
             "dataset",
             "spec_decoding",
@@ -530,6 +529,7 @@ def main():
             "turns",
             "prefix_tokens",
             "prefix_count",
+            "request_type",
         ]
 
         for col in fieldnames:
