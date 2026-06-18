@@ -30,7 +30,6 @@ def process_benchmark_section(
     dataset="",
     spec_decoding="",
     prefix_caching="",
-    turns=None,
     request_type="",
 ):
     """Process a single benchmark section and extract performance metrics.
@@ -51,7 +50,6 @@ def process_benchmark_section(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
-        turns: Number of conversation turns for multiturn benchmarks (default: 1).
         request_type: GuideLLM API endpoint type (e.g., 'chat_completions', 'completions').
         cluster: Optional cluster name (e.g., 'hera') to distinguish runs on different clusters.
 
@@ -115,17 +113,8 @@ def process_benchmark_section(
         config_prompt_tokens = 0
         config_output_tokens = 0
 
-    # Resolve turns: CLI override > auto-detected > default 1
-    if turns is not None:
-        # Explicitly provided via CLI — use as-is
-        pass
-    elif detected_turns is not None:
-        turns = detected_turns
-    else:
-        turns = 1
-
-    if turns < 1:
-        raise ValueError(f"turns must be >= 1, got {turns}")
+    # Resolve turns from auto-detection, default to 1
+    turns = detected_turns if detected_turns is not None else 1
 
     # Get request stats from scheduler_metrics
     scheduler_metrics = benchmark.get("scheduler_metrics", {})

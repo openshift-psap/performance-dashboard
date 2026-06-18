@@ -46,7 +46,6 @@ python import_manual_runs_json_v2.py <json_file> \
 | `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
 | `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
 | `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
-| `--turns`            | No       | Number of conversation turns (multiturn)        | `5`, `10`                               |
 
 ## Examples
 
@@ -110,11 +109,10 @@ python import_manual_runs_json_v2.py \
   --runtime-args "tp: 1" \
   --image-tag "v0.19.1" \
   --guidellm-version "0.6.0" \
-  --turns 5 \
   --csv-file "gemma-multiturn.csv"
 ```
 
-> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON when available. The `--turns` flag overrides auto-detection.
+> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON.
 
 ## Appending to Consolidated Dashboard
 
