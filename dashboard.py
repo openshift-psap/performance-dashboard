@@ -3763,8 +3763,15 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 lambda x: f" | PC={x}" if x else ""
             )
         if (filtered_df["turns"] > 1).any():
-            filtered_df["run_identifier"] += filtered_df["turns"].apply(
-                lambda x: f" | {x}T" if x > 1 else ""
+            filtered_df["run_identifier"] += filtered_df.apply(
+                lambda r: (
+                    f" | {r['turns']}T"
+                    + (f"/{r['prefix_tokens']}pt" if r.get("prefix_tokens") else "")
+                    + (f"/{r['prefix_count']}pc" if r.get("prefix_count") else "")
+                    if r["turns"] > 1
+                    else ""
+                ),
+                axis=1,
             )
 
         _sort_cols = ["model_short", "accelerator", "version", "TP"]
@@ -5814,7 +5821,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         args=("compare_versions_summary_expanded",),
                     )
                 pt_scoped = mt_scoped
-                if compare_mt_turns:
+                if compare_mt_turns is not None:
                     pt_scoped = pt_scoped[pt_scoped["turns"].isin(compare_mt_turns)]
                 cmp_pt_opts = sorted(
                     v for v in pt_scoped["prefix_tokens"].unique() if v
@@ -5829,7 +5836,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         args=("compare_versions_summary_expanded",),
                     )
                 pc_scoped = pt_scoped
-                if compare_mt_prefix_tokens:
+                if compare_mt_prefix_tokens is not None:
                     pc_scoped = pc_scoped[
                         pc_scoped["prefix_tokens"].isin(compare_mt_prefix_tokens)
                     ]
@@ -5988,17 +5995,17 @@ def render_compare_versions_summary_section(df, use_expander=True):
             base_mask_v2 = base_mask_v2 & (
                 df["multiturn_isl_osl"] == compare_mt_isl_osl
             )
-        if compare_mt_turns:
+        if compare_mt_turns is not None:
             base_mask_v1 = base_mask_v1 & df["turns"].isin(compare_mt_turns)
             base_mask_v2 = base_mask_v2 & df["turns"].isin(compare_mt_turns)
-        if compare_mt_prefix_tokens:
+        if compare_mt_prefix_tokens is not None:
             base_mask_v1 = base_mask_v1 & df["prefix_tokens"].isin(
                 compare_mt_prefix_tokens
             )
             base_mask_v2 = base_mask_v2 & df["prefix_tokens"].isin(
                 compare_mt_prefix_tokens
             )
-        if compare_mt_prefix_count:
+        if compare_mt_prefix_count is not None:
             base_mask_v1 = base_mask_v1 & df["prefix_count"].isin(
                 compare_mt_prefix_count
             )
@@ -11137,6 +11144,33 @@ def main():
             if "multiturn_isl_osl" in query_params:
                 url_multiturn_isl_osl = query_params["multiturn_isl_osl"].strip()
 
+            url_mt_turns = None
+            if "mt_turns" in query_params:
+                try:
+                    url_mt_turns = [
+                        int(t.strip())
+                        for t in query_params["mt_turns"].split(",")
+                        if t.strip().isdigit()
+                    ]
+                except Exception:
+                    url_mt_turns = None
+
+            url_mt_prefix_tokens = None
+            if "mt_prefix_tokens" in query_params:
+                url_mt_prefix_tokens = [
+                    v.strip()
+                    for v in query_params["mt_prefix_tokens"].split(",")
+                    if v.strip()
+                ]
+
+            url_mt_prefix_count = None
+            if "mt_prefix_count" in query_params:
+                url_mt_prefix_count = [
+                    v.strip()
+                    for v in query_params["mt_prefix_count"].split(",")
+                    if v.strip()
+                ]
+
             url_dp_sizes = []
             if "dp_sizes" in query_params:
                 try:
@@ -11200,6 +11234,9 @@ def main():
                 url_custom_isl_osl,
                 url_dp_sizes,
                 url_multiturn_isl_osl,
+                url_mt_turns,
+                url_mt_prefix_tokens,
+                url_mt_prefix_count,
             )
 
     df["profile"] = assign_profile_vectorized(df)
@@ -11294,6 +11331,9 @@ def main():
             url_custom_isl_osl,
             url_dp_sizes,
             url_multiturn_isl_osl,
+            url_mt_turns,
+            url_mt_prefix_tokens,
+            url_mt_prefix_count,
         ) = decode_filters_from_url()
 
         if url_section:
@@ -11374,6 +11414,12 @@ def main():
             st.session_state.selected_custom_isl_osl = url_custom_isl_osl
         if url_multiturn_isl_osl:
             st.session_state.selected_multiturn_isl_osl = url_multiturn_isl_osl
+        if url_mt_turns is not None:
+            st.session_state.baseline_mt_turns = url_mt_turns
+        if url_mt_prefix_tokens is not None:
+            st.session_state.baseline_mt_prefix_tokens = url_mt_prefix_tokens
+        if url_mt_prefix_count is not None:
+            st.session_state.baseline_mt_prefix_count = url_mt_prefix_count
 
     SECTIONS_WITHOUT_GLOBAL_FILTERS = {
         "🏠 Overview",
@@ -11757,40 +11803,62 @@ def main():
                         turns_key = (
                             f"mt_turns_filter_{st.session_state.filter_change_key}"
                         )
+                        _url_mt_turns = st.session_state.pop("baseline_mt_turns", None)
+                        turns_default = (
+                            [t for t in _url_mt_turns if t in turns_opts]
+                            if _url_mt_turns is not None
+                            else turns_opts
+                        )
                         selected_mt_turns = st.multiselect(
                             "Turns",
                             turns_opts,
-                            default=turns_opts,
+                            default=turns_default or turns_opts,
                             key=turns_key,
                         )
 
                     # Prefix tokens filter — scoped to ISL/OSL + turns
                     pt_temp = turns_temp
-                    if selected_mt_turns:
+                    if selected_mt_turns is not None:
                         pt_temp = pt_temp[pt_temp["turns"].isin(selected_mt_turns)]
                     pt_opts = sorted(v for v in pt_temp["prefix_tokens"].unique() if v)
                     if pt_opts:
                         pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
+                        _url_mt_pt = st.session_state.pop(
+                            "baseline_mt_prefix_tokens", None
+                        )
+                        pt_default = (
+                            [v for v in _url_mt_pt if v in pt_opts]
+                            if _url_mt_pt is not None
+                            else pt_opts
+                        )
                         selected_mt_prefix_tokens = st.multiselect(
                             "Prefix Tokens",
                             pt_opts,
-                            default=pt_opts,
+                            default=pt_default or pt_opts,
                             key=pt_key,
                         )
 
                     # Prefix count filter — scoped to ISL/OSL + turns + prefix_tokens
                     pc_temp = pt_temp
-                    if selected_mt_prefix_tokens:
+                    if selected_mt_prefix_tokens is not None:
                         pc_temp = pc_temp[
                             pc_temp["prefix_tokens"].isin(selected_mt_prefix_tokens)
                         ]
                     pc_opts = sorted(v for v in pc_temp["prefix_count"].unique() if v)
                     if pc_opts:
                         pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
+                        _url_mt_pc = st.session_state.pop(
+                            "baseline_mt_prefix_count", None
+                        )
+                        pc_default = (
+                            [v for v in _url_mt_pc if v in pc_opts]
+                            if _url_mt_pc is not None
+                            else pc_opts
+                        )
                         selected_mt_prefix_count = st.multiselect(
                             "Prefix Count",
                             pc_opts,
-                            default=pc_opts,
+                            default=pc_default or pc_opts,
                             key=pc_mt_key,
                         )
 
@@ -11831,13 +11899,13 @@ def main():
                 temp_df = temp_df[
                     temp_df["multiturn_isl_osl"] == selected_multiturn_isl_osl
                 ]
-            if selected_mt_turns:
+            if selected_mt_turns is not None:
                 temp_df = temp_df[temp_df["turns"].isin(selected_mt_turns)]
-            if selected_mt_prefix_tokens:
+            if selected_mt_prefix_tokens is not None:
                 temp_df = temp_df[
                     temp_df["prefix_tokens"].isin(selected_mt_prefix_tokens)
                 ]
-            if selected_mt_prefix_count:
+            if selected_mt_prefix_count is not None:
                 temp_df = temp_df[
                     temp_df["prefix_count"].isin(selected_mt_prefix_count)
                 ]
@@ -12015,13 +12083,13 @@ def main():
                 temp_df = temp_df[
                     temp_df["multiturn_isl_osl"] == selected_multiturn_isl_osl
                 ]
-            if selected_mt_turns:
+            if selected_mt_turns is not None:
                 temp_df = temp_df[temp_df["turns"].isin(selected_mt_turns)]
-            if selected_mt_prefix_tokens:
+            if selected_mt_prefix_tokens is not None:
                 temp_df = temp_df[
                     temp_df["prefix_tokens"].isin(selected_mt_prefix_tokens)
                 ]
-            if selected_mt_prefix_count:
+            if selected_mt_prefix_count is not None:
                 temp_df = temp_df[
                     temp_df["prefix_count"].isin(selected_mt_prefix_count)
                 ]
@@ -12225,16 +12293,18 @@ def main():
             else True
         )
         mt_turns_mask = (
-            df["turns"].isin(selected_mt_turns) if selected_mt_turns else True
+            df["turns"].isin(selected_mt_turns)
+            if selected_mt_turns is not None
+            else True
         )
         mt_prefix_tokens_mask = (
             df["prefix_tokens"].isin(selected_mt_prefix_tokens)
-            if selected_mt_prefix_tokens
+            if selected_mt_prefix_tokens is not None
             else True
         )
         mt_prefix_count_mask = (
             df["prefix_count"].isin(selected_mt_prefix_count)
-            if selected_mt_prefix_count
+            if selected_mt_prefix_count is not None
             else True
         )
         tp_mask = df["TP"].isin(selected_tp) | df["TP"].isna()
@@ -12455,6 +12525,16 @@ def main():
                 mt_val = st.session_state.get("selected_multiturn_isl_osl")
                 if mt_val:
                     desired_params["multiturn_isl_osl"] = mt_val
+                if selected_mt_turns is not None:
+                    desired_params["mt_turns"] = ",".join(map(str, selected_mt_turns))
+                if selected_mt_prefix_tokens is not None:
+                    desired_params["mt_prefix_tokens"] = ",".join(
+                        map(str, selected_mt_prefix_tokens)
+                    )
+                if selected_mt_prefix_count is not None:
+                    desired_params["mt_prefix_count"] = ",".join(
+                        map(str, selected_mt_prefix_count)
+                    )
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
             if st.session_state.get("show_advanced_filters", False) and selected_dp:
