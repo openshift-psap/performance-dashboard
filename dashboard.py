@@ -10434,6 +10434,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             cols.remove("view_logs_link")
             gml_idx = cols.index("grafana_metrics_link")
             cols.insert(gml_idx + 1, "view_logs_link")
+        if "request_type" in cols:
+            cols.remove("request_type")
+            ver_idx = cols.index("version")
+            cols.insert(ver_idx + 1, "request_type")
         if "Run Date" in cols:
             cols.remove("Run Date")
             cols.append("Run Date")
@@ -10462,6 +10466,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "version",
                 help="Inference server version (e.g., RHAIIS-3.2.1, vLLM-0.10.0)",
                 pinned=True,
+            ),
+            "request_type": st.column_config.TextColumn(
+                "request type",
+                help="GuideLLM API endpoint type (e.g., chat_completions, completions)",
             ),
             "prompt toks": st.column_config.NumberColumn(
                 "prompt toks",
@@ -11261,6 +11269,10 @@ def main():
             )
         )
     )
+
+    if "request_type" not in df.columns:
+        df["request_type"] = ""
+    df["request_type"] = df["request_type"].fillna("").astype(str)
 
     df["error_rate"] = (
         df["errored_requests"]
