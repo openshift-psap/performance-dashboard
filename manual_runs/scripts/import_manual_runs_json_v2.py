@@ -52,6 +52,7 @@ def process_benchmark_section(
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
         turns: Number of conversation turns for multiturn benchmarks (default: 1).
+        request_type: GuideLLM API endpoint type (e.g., 'chat_completions', 'completions').
         cluster: Optional cluster name (e.g., 'hera') to distinguish runs on different clusters.
 
     Returns:
@@ -259,6 +260,12 @@ def parse_guidellm_json(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
+
+    Auto-detected from JSON:
+        turns: Number of conversation turns (from args.data config).
+        prefix_tokens: Prefix token count (from args.data config).
+        prefix_count: Prefix count (from args.data config).
+        request_type: API endpoint type (from args.backend_kwargs.request_format).
 
     Returns:
         DataFrame: Processed benchmark results.
