@@ -707,6 +707,7 @@ _FAMILY_PATTERNS = [
     ("Nemotron", ["nemotron"]),
     ("BART", ["bart"]),
     ("Gemma", ["gemma"]),
+    ("GLM", ["glm"]),
 ]
 
 
