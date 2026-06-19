@@ -3873,6 +3873,8 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         _legend_parts = "Accelerator | Model | Version | TP"
         if _has_dp_data:
             _legend_parts += " | DP"
+        if (filtered_df_sorted["turns"] > 1).any():
+            _legend_parts += " | Turns/PrefixTokens/PrefixCount"
         fig.update_layout(
             legend_title_text=f"Run Details ({_legend_parts})",
             legend={"font": {"size": 14}},
