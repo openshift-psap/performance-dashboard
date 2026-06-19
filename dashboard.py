@@ -706,6 +706,7 @@ _FAMILY_PATTERNS = [
     ("DeepSeek", ["deepseek"]),
     ("Nemotron", ["nemotron"]),
     ("BART", ["bart"]),
+    ("Gemma", ["gemma"]),
 ]
 
 
