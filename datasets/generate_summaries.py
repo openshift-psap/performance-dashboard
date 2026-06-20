@@ -231,6 +231,58 @@ def process_sharegpt():
         print(f"  Error: {e}")
 
 
+def process_swebench_lite():
+    """Process SWE-Bench Lite dataset from HuggingFace.
+
+    Downloads the test split from princeton-nlp/SWE-bench_Lite (300 real-world
+    software engineering problem statements) and tokenizes each prompt using the
+    gemma tokenizer (matching the RedHatAI/gemma-4-26B-A4B-it-FP8-Dynamic model).
+
+    Note: This dataset only contains input token lengths. Output token lengths
+    depend on the model's generated code fix responses and are not available
+    in the source data.
+
+    Requires: pip install datasets transformers
+    """
+    print("Processing SWE-Bench Lite...")
+    output_path = "datasets/summaries/swebench-lite.csv"
+
+    try:
+        import pandas as pd
+        from datasets import load_dataset
+        from transformers import AutoTokenizer
+
+        print("  Loading SWE-bench_Lite test split from HuggingFace...")
+        ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+
+        print(f"  Tokenizing {len(ds):,} problem statements...")
+        tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-26B-A4B-it")
+
+        input_lengths = []
+        for row in ds:
+            tokens = tokenizer.encode(row["problem_statement"])
+            input_lengths.append(len(tokens))
+
+        summary = pd.DataFrame({"input_length": input_lengths})
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        summary.to_csv(output_path, index=False)
+        print(f"  Generated: {output_path} ({len(summary):,} samples)")
+        print(
+            f"  Input tokens - min: {summary['input_length'].min()}, "
+            f"max: {summary['input_length'].max()}, "
+            f"mean: {summary['input_length'].mean():.1f}"
+        )
+        print("  Note: Output token lengths not available (model-dependent)")
+
+    except ImportError as e:
+        print(
+            f"  Requires datasets and transformers. Install with: pip install datasets transformers. Error: {e}"
+        )
+    except Exception as e:
+        print(f"  Error: {e}")
+
+
 def main():
     """Process all datasets and generate CSV summaries."""
     print("=" * 60)
@@ -248,6 +300,8 @@ def main():
     process_gpt_oss()
     print()
     process_sharegpt()
+    print()
+    process_swebench_lite()
 
     print()
     print("=" * 60)
