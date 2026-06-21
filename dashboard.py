@@ -11873,8 +11873,12 @@ def main():
 
                     # Prefix tokens filter — scoped to ISL/OSL + turns
                     if selected_mt_turns:
-                        pt_temp = turns_temp[turns_temp["turns"].isin(selected_mt_turns)]
-                        pt_opts = sorted(v for v in pt_temp["prefix_tokens"].unique() if v)
+                        pt_temp = turns_temp[
+                            turns_temp["turns"].isin(selected_mt_turns)
+                        ]
+                        pt_opts = sorted(
+                            v for v in pt_temp["prefix_tokens"].unique() if v
+                        )
                         if pt_opts:
                             pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
                             _url_mt_pt = st.session_state.pop(
@@ -11897,7 +11901,9 @@ def main():
                         pc_temp = pt_temp[
                             pt_temp["prefix_tokens"].isin(selected_mt_prefix_tokens)
                         ]
-                        pc_opts = sorted(v for v in pc_temp["prefix_count"].unique() if v)
+                        pc_opts = sorted(
+                            v for v in pc_temp["prefix_count"].unique() if v
+                        )
                         if pc_opts:
                             pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
                             _url_mt_pc = st.session_state.pop(
