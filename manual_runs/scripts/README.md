@@ -97,6 +97,23 @@ python import_manual_runs_json_v2.py \
   --csv-file "gpt-oss-120b-sd-pc.csv"
 ```
 
+### Multiturn Benchmark
+
+```bash
+python import_manual_runs_json_v2.py \
+  multiturn-gemma.json \
+  --model "google/gemma-4-31B-it" \
+  --version "vLLM-0.19.1" \
+  --tp 1 \
+  --accelerator "H200" \
+  --runtime-args "tp: 1" \
+  --image-tag "v0.19.1" \
+  --guidellm-version "0.6.0" \
+  --csv-file "gemma-multiturn.csv"
+```
+
+> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON.
+
 ## Appending to Consolidated Dashboard
 
 After generating a CSV file, append it to the main dashboard (skip the header):
@@ -107,7 +124,7 @@ tail -n +2 my-benchmark.csv >> ../consolidated_dashboard.csv
 
 ## Output CSV Columns
 
-The script outputs 47 columns compatible with the performance dashboard:
+The script outputs 52 columns compatible with the performance dashboard:
 
 | #   | Column                    | Description                                          |
 | --- | ------------------------- | ---------------------------------------------------- |
@@ -155,9 +172,14 @@ The script outputs 47 columns compatible with the performance dashboard:
 | 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                        |
 | 43  | `image_tag`               | Container image used                                 |
 | 44  | `guidellm_version`        | guidellm version used                                |
-| 45  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
-| 46  | `spec_decoding`           | Speculative decoding method (empty if none)          |
-| 47  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
+| 45  | `DP`                      | Data parallelism size (empty for TP runs)            |
+| 46  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
+| 47  | `spec_decoding`           | Speculative decoding method (empty if none)          |
+| 48  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
+| 49  | `turns`                   | Conversation turns for multiturn benchmarks          |
+| 50  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
+| 51  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
+| 52  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
 
 ## Notes
 
