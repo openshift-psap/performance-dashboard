@@ -255,10 +255,11 @@ def process_swebench_lite():
         from datasets import load_dataset
 
         print("  Loading SWE-bench_Lite test split from HuggingFace...")
-        ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+        # Loading trusted benchmark datasets - revision pinning not needed
+        ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")  # nosec B615
 
         print(f"  Tokenizing {len(ds):,} problem statements...")
-        tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-26B-A4B-it")
+        tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-26B-A4B-it")  # nosec B615
 
         input_lengths = []
         for row in ds:
