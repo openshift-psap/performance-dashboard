@@ -3592,7 +3592,12 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
             "in the dataset."
         )
 
-        available_datasets = ["DeepSeek-R1", "GPT-OSS Perf Eval", "ShareGPT Vicuna", "SWE-Bench Lite"]
+        available_datasets = [
+            "DeepSeek-R1",
+            "GPT-OSS Perf Eval",
+            "ShareGPT Vicuna",
+            "SWE-Bench Lite",
+        ]
         selected_dataset = st.selectbox(
             "Select Dataset",
             available_datasets,
