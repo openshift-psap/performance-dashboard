@@ -526,6 +526,7 @@ def load_rhaiis_dataset(dataset_name):
         "DeepSeek-R1": "datasets/summaries/deepseek-r1.csv",
         "GPT-OSS Perf Eval": "datasets/summaries/gpt-oss.csv",
         "ShareGPT Vicuna": "datasets/summaries/sharegpt-vicuna.csv",
+        "SWE-Bench Lite": "datasets/summaries/swebench-lite.csv",
     }
 
     if dataset_name not in dataset_map:
@@ -3598,7 +3599,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
             "in the dataset."
         )
 
-        available_datasets = ["DeepSeek-R1", "GPT-OSS Perf Eval", "ShareGPT Vicuna"]
+        available_datasets = ["DeepSeek-R1", "GPT-OSS Perf Eval", "ShareGPT Vicuna", "SWE-Bench Lite"]
         selected_dataset = st.selectbox(
             "Select Dataset",
             available_datasets,
