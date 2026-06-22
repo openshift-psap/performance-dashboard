@@ -250,8 +250,9 @@ def process_swebench_lite():
 
     try:
         import pandas as pd
-        from datasets import load_dataset
         from transformers import AutoTokenizer
+
+        from datasets import load_dataset
 
         print("  Loading SWE-bench_Lite test split from HuggingFace...")
         ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
