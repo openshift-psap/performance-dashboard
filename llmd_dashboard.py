@@ -466,7 +466,14 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                     custom_key not in st.session_state
                     or st.session_state.get(custom_key) not in custom_pairs
                 ):
-                    st.session_state[custom_key] = custom_pairs[0]
+                    persisted_custom = st.session_state.get(
+                        "llmd_selected_custom_isl_osl"
+                    )
+                    st.session_state[custom_key] = (
+                        persisted_custom
+                        if persisted_custom in custom_pairs
+                        else custom_pairs[0]
+                    )
                 selected_custom_isl_osl = st.selectbox(
                     "Select Custom ISL/OSL Pair",
                     custom_pairs,
@@ -2463,6 +2470,7 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         ):
             isl_osl_pairs = (
                 filtered_df_sorted[["prompt toks", "output toks"]]
+                .apply(pd.to_numeric, errors="coerce")
                 .dropna()
                 .drop_duplicates()
             )
@@ -2472,10 +2480,13 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                     isl, osl = int(r["prompt toks"]), int(r["output toks"])
                     if isl == 0 and osl == 0:
                         if "dataset" in filtered_df_sorted.columns:
+                            _tok_numeric = filtered_df_sorted[
+                                ["prompt toks", "output toks"]
+                            ].apply(pd.to_numeric, errors="coerce")
                             ds_names = (
                                 filtered_df_sorted.loc[
-                                    (filtered_df_sorted["prompt toks"] == 0)
-                                    & (filtered_df_sorted["output toks"] == 0),
+                                    _tok_numeric["prompt toks"].eq(0)
+                                    & _tok_numeric["output toks"].eq(0),
                                     "dataset",
                                 ]
                                 .dropna()
@@ -2948,6 +2959,8 @@ def _decode_llmd_url_filters(df: pd.DataFrame) -> dict:
         ]
     if "profile" in qp:
         p = qp["profile"].strip()
+        if p == "Custom":
+            p = "Custom ISL/OSL"
         if p in all_profiles:
             result["profile"] = p
     if "custom_isl_osl" in qp:
@@ -4083,9 +4096,10 @@ def render_llmd_dashboard(llmd_csv_path: str):
                 desired_params["versions"] = ",".join(sel_ver)
             if sel_prof:
                 desired_params["profile"] = sel_prof[0]
-            custom_val = st.session_state.get("llmd_selected_custom_isl_osl")
-            if custom_val:
-                desired_params["custom_isl_osl"] = custom_val
+            if sel_prof and sel_prof[0] == "Custom ISL/OSL":
+                custom_val = st.session_state.get("llmd_selected_custom_isl_osl")
+                if custom_val:
+                    desired_params["custom_isl_osl"] = custom_val
             if sel_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, sel_tp))
             if sel_rep:
