@@ -12167,18 +12167,30 @@ def main():
                         turns_key = (
                             f"mt_turns_filter_{st.session_state.filter_change_key}"
                         )
-                        _url_mt_turns = st.session_state.pop("baseline_mt_turns", None)
-                        turns_default = (
-                            [t for t in _url_mt_turns if t in turns_opts]
-                            if _url_mt_turns is not None
-                            else []
-                        )
+                        if turns_key not in st.session_state:
+                            _url_mt_turns = st.session_state.pop(
+                                "baseline_mt_turns", None
+                            )
+                            _persisted_mt_turns = st.session_state.get(
+                                "_persisted_mt_turns"
+                            )
+                            if _url_mt_turns is not None:
+                                turns_default = [
+                                    t for t in _url_mt_turns if t in turns_opts
+                                ]
+                            elif _persisted_mt_turns is not None:
+                                turns_default = [
+                                    t for t in _persisted_mt_turns if t in turns_opts
+                                ]
+                            else:
+                                turns_default = []
+                            st.session_state[turns_key] = turns_default
                         selected_mt_turns = st.multiselect(
                             "Turns",
                             turns_opts,
-                            default=turns_default,
                             key=turns_key,
                         )
+                        st.session_state._persisted_mt_turns = list(selected_mt_turns)
 
                     # Prefix tokens filter — scoped to ISL/OSL + turns
                     if selected_mt_turns:
@@ -12190,19 +12202,29 @@ def main():
                         )
                         if pt_opts:
                             pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
-                            _url_mt_pt = st.session_state.pop(
-                                "baseline_mt_prefix_tokens", None
-                            )
-                            pt_default = (
-                                [v for v in _url_mt_pt if v in pt_opts]
-                                if _url_mt_pt is not None
-                                else pt_opts
-                            )
+                            if pt_key not in st.session_state:
+                                _url_mt_pt = st.session_state.pop(
+                                    "baseline_mt_prefix_tokens", None
+                                )
+                                _persisted_mt_pt = st.session_state.get(
+                                    "_persisted_mt_prefix_tokens"
+                                )
+                                if _url_mt_pt is not None:
+                                    pt_default = [v for v in _url_mt_pt if v in pt_opts]
+                                elif _persisted_mt_pt is not None:
+                                    pt_default = [
+                                        v for v in _persisted_mt_pt if v in pt_opts
+                                    ]
+                                else:
+                                    pt_default = pt_opts
+                                st.session_state[pt_key] = pt_default or pt_opts
                             selected_mt_prefix_tokens = st.multiselect(
                                 "Prefix Tokens",
                                 pt_opts,
-                                default=pt_default or pt_opts,
                                 key=pt_key,
+                            )
+                            st.session_state._persisted_mt_prefix_tokens = list(
+                                selected_mt_prefix_tokens
                             )
 
                     # Prefix count filter — scoped to ISL/OSL + turns + prefix_tokens
@@ -12215,19 +12237,29 @@ def main():
                         )
                         if pc_opts:
                             pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
-                            _url_mt_pc = st.session_state.pop(
-                                "baseline_mt_prefix_count", None
-                            )
-                            pc_default = (
-                                [v for v in _url_mt_pc if v in pc_opts]
-                                if _url_mt_pc is not None
-                                else pc_opts
-                            )
+                            if pc_mt_key not in st.session_state:
+                                _url_mt_pc = st.session_state.pop(
+                                    "baseline_mt_prefix_count", None
+                                )
+                                _persisted_mt_pc = st.session_state.get(
+                                    "_persisted_mt_prefix_count"
+                                )
+                                if _url_mt_pc is not None:
+                                    pc_default = [v for v in _url_mt_pc if v in pc_opts]
+                                elif _persisted_mt_pc is not None:
+                                    pc_default = [
+                                        v for v in _persisted_mt_pc if v in pc_opts
+                                    ]
+                                else:
+                                    pc_default = pc_opts
+                                st.session_state[pc_mt_key] = pc_default or pc_opts
                             selected_mt_prefix_count = st.multiselect(
                                 "Prefix Count",
                                 pc_opts,
-                                default=pc_default or pc_opts,
                                 key=pc_mt_key,
+                            )
+                            st.session_state._persisted_mt_prefix_count = list(
+                                selected_mt_prefix_count
                             )
 
             # Update baseline_profile to remember user's current selection
