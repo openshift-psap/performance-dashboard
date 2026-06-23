@@ -11411,28 +11411,36 @@ def main():
             if "mt_turns" in query_params:
                 try:
                     url_mt_turns = [
-                        int(t.strip())
+                        float(t.strip())
                         for t in query_params["mt_turns"].split(",")
-                        if t.strip().isdigit()
+                        if t.strip()
                     ]
-                except Exception:
+                except (ValueError, OverflowError):
                     url_mt_turns = None
 
             url_mt_prefix_tokens = None
             if "mt_prefix_tokens" in query_params:
-                url_mt_prefix_tokens = [
-                    v.strip()
-                    for v in query_params["mt_prefix_tokens"].split(",")
-                    if v.strip()
-                ]
+                parsed = []
+                for v in query_params["mt_prefix_tokens"].split(","):
+                    v = v.strip()
+                    if v:
+                        try:
+                            parsed.append(float(v))
+                        except (ValueError, OverflowError):
+                            parsed.append(v)
+                url_mt_prefix_tokens = parsed or None
 
             url_mt_prefix_count = None
             if "mt_prefix_count" in query_params:
-                url_mt_prefix_count = [
-                    v.strip()
-                    for v in query_params["mt_prefix_count"].split(",")
-                    if v.strip()
-                ]
+                parsed = []
+                for v in query_params["mt_prefix_count"].split(","):
+                    v = v.strip()
+                    if v:
+                        try:
+                            parsed.append(float(v))
+                        except (ValueError, OverflowError):
+                            parsed.append(v)
+                url_mt_prefix_count = parsed or None
 
             url_dataset = None
             if "dataset" in query_params:
@@ -12907,15 +12915,21 @@ def main():
                 mt_val = st.session_state.get("selected_multiturn_isl_osl")
                 if mt_val:
                     desired_params["multiturn_isl_osl"] = mt_val
+
+                def _fmt(v):
+                    return (
+                        str(int(v)) if isinstance(v, float) and v == int(v) else str(v)
+                    )
+
                 if selected_mt_turns is not None:
-                    desired_params["mt_turns"] = ",".join(map(str, selected_mt_turns))
+                    desired_params["mt_turns"] = ",".join(map(_fmt, selected_mt_turns))
                 if selected_mt_prefix_tokens is not None:
                     desired_params["mt_prefix_tokens"] = ",".join(
-                        map(str, selected_mt_prefix_tokens)
+                        map(_fmt, selected_mt_prefix_tokens)
                     )
                 if selected_mt_prefix_count is not None:
                     desired_params["mt_prefix_count"] = ",".join(
-                        map(str, selected_mt_prefix_count)
+                        map(_fmt, selected_mt_prefix_count)
                     )
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
