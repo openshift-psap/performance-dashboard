@@ -169,7 +169,7 @@ def assign_profile(row):
     prompt_toks = int(row["prompt toks"])
     output_toks = int(row["output toks"])
     if prompt_toks == 0 and output_toks == 0:
-        return "Custom"
+        return "Custom ISL/OSL"
     return f"{prompt_toks}/{output_toks}"
 
 
@@ -252,7 +252,7 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
         if "prompt toks" in df.columns and "output toks" in df.columns:
             df["profile"] = df.apply(assign_profile, axis=1)
             df["custom_isl_osl"] = np.where(
-                df["profile"] == "Custom",
+                df["profile"] == "Custom ISL/OSL",
                 df["prompt toks"].astype(int).astype(str)
                 + "/"
                 + df["output toks"].astype(int).astype(str),
@@ -324,8 +324,10 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if not current_profile:
             available_profiles_raw = sorted(df["profile"].unique().tolist())
             available_profiles = [
-                p for p in available_profiles_raw if p != "Custom"
-            ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+                p for p in available_profiles_raw if p != "Custom ISL/OSL"
+            ] + (
+                ["Custom ISL/OSL"] if "Custom ISL/OSL" in available_profiles_raw else []
+            )
 
             if st.session_state.get(
                 "llmd_clear_all_filters", False
@@ -392,8 +394,8 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         profiles_raw = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
         )
-        profiles = [p for p in profiles_raw if p != "Custom"] + (
-            ["Custom"] if "Custom" in profiles_raw else []
+        profiles = [p for p in profiles_raw if p != "Custom ISL/OSL"] + (
+            ["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else []
         )
 
         if st.session_state.get(
@@ -449,13 +451,13 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
         # Secondary filter: specific ISL/OSL pair when Custom is selected
         selected_custom_isl_osl = None
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
             custom_temp = df.copy()
             if selected_accelerators:
                 custom_temp = custom_temp[
                     custom_temp["accelerator"].isin(selected_accelerators)
                 ]
-            custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+            custom_temp = custom_temp[custom_temp["profile"] == "Custom ISL/OSL"]
             custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
             custom_pairs = [p for p in custom_pairs if p]
             if custom_pairs:
@@ -1659,9 +1661,9 @@ def render_compare_versions_section(df, use_expander=True):
         available_versions = sorted(df["version"].unique().tolist())
         available_accelerators = sorted(df["accelerator"].unique().tolist())
         available_profiles_raw = sorted(df["profile"].unique().tolist())
-        available_profiles = [p for p in available_profiles_raw if p != "Custom"] + (
-            ["Custom"] if "Custom" in available_profiles_raw else []
-        )
+        available_profiles = [
+            p for p in available_profiles_raw if p != "Custom ISL/OSL"
+        ] + (["Custom ISL/OSL"] if "Custom ISL/OSL" in available_profiles_raw else [])
 
         if len(available_versions) < 2:
             st.warning("⚠️ Need at least 2 versions in the data to compare.")
@@ -1734,8 +1736,8 @@ def render_compare_versions_section(df, use_expander=True):
 
         # Secondary custom ISL/OSL pair filter
         selected_custom_pair = None
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
-            custom_temp = df[df["profile"] == "Custom"]
+        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
+            custom_temp = df[df["profile"] == "Custom ISL/OSL"]
             custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
             custom_pairs = [p for p in custom_pairs if p]
             if custom_pairs:
@@ -3815,7 +3817,13 @@ def render_llmd_dashboard(llmd_csv_path: str):
 
     if "llmd_url_filters_loaded" not in st.session_state:
         st.session_state.llmd_url_filters_loaded = True
-        url_filters = _decode_llmd_url_filters(df)
+        # Only decode URL filters on a fresh page load that targeted LLM-D.
+        # When switching from another view (e.g. RHAIIS), the URL still has
+        # that view's params, which would produce wrong filter state.
+        if st.session_state.get("_initial_url_view") == "LLM-D Dashboard":
+            url_filters = _decode_llmd_url_filters(df)
+        else:
+            url_filters = {}
 
         has_url_filters = bool(url_filters)
 
