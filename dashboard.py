@@ -3022,7 +3022,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.caption(
         "Per-family rollup comparing the current release to the previous one. "
         "**Avg Tput** is the mean throughput change across all combinations "
-        "(model × accelerator × profile). "
+        "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
         "Click any family card to drill down into per-combo details."
     )
@@ -3129,7 +3129,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.caption(
         "Per-accelerator rollup comparing the current release to the previous one. "
         "**Avg Tput** is the mean throughput change across all combinations "
-        "(model × accelerator × profile). "
+        "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
         "Click any accelerator card to drill down into per-combo details."
     )
@@ -3655,7 +3655,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
                 if selected_dataset == "ShareGPT Vicuna":
                     st.info(
                         "Note: Statistical outliers have been removed from this dataset "
-                        "using the IQR method (values beyond Q3 + 1.5 × IQR) to improve "
+                        "using the IQR method (values beyond Q3 + 1.5 x IQR) to improve "
                         "histogram readability."
                     )
 
@@ -6296,13 +6296,13 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 - Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average) of all those changes
                 - Shows the average performance difference across all concurrency levels
                 - Can be affected by outliers (extreme values)
-                - Formula: `mean([(v1 - v2) / v2 × 100 for each concurrency level])`
+                - Formula: `mean([(v1 - v2) / v2 x 100 for each concurrency level])`
 
                 **Median Change Calculation:**
                 - Calculated by taking the percentage change at each common concurrency level, then taking the median of all those changes
                 - Shows the typical performance difference across all concurrency levels
                 - More robust to outliers than mean - better represents typical performance
-                - Formula: `median([(v1 - v2) / v2 × 100 for each concurrency level])`
+                - Formula: `median([(v1 - v2) / v2 x 100 for each concurrency level])`
 
                 **Geometric Mean Change Calculation:**
 
@@ -6317,24 +6317,24 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 *Step 2: Compute Geometric Mean of Growth Factors*
                 - Multiply all growth factors together, then take the nth root
                 - Formula: `geom_mean_factor = (∏ growth_factors)^(1/n)`
-                - Example: For [1.10, 0.90], geom_mean = (1.10 × 0.90)^0.5 = 0.99^0.5 ≈ 0.995
+                - Example: For [1.10, 0.90], geom_mean = (1.10 x 0.90)^0.5 = 0.99^0.5 ≈ 0.995
 
                 *Step 3: Convert back to % change*
-                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
-                - Example: 1.10 - 1 = 0.10 → 0.10 × 100 = +10%
-                - Example: 0.95 - 1 = -0.05 → -0.05 × 100 = -5%
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) x 100`
+                - Example: 1.10 - 1 = 0.10 → 0.10 x 100 = +10%
+                - Example: 0.95 - 1 = -0.05 → -0.05 x 100 = -5%
                 - **Why subtract 1?** Because a growth factor of 1.00 means "no change" (0%). The "1" represents the original value, so we subtract it to isolate just the change portion.
 
                 *Why use Geometric Mean?*
                 - Arithmetic mean of +100% and -50% = +25% ❌ (misleading!)
-                - Geometric mean: (2.0 × 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
+                - Geometric mean: (2.0 x 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
                 - Better for ratios/percentages because it respects multiplicative relationships
 
                 **Peak Change Calculation:**
-                - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) × 100`
+                - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) x 100`
                   - Compares maximum throughput values (best = highest performance)
                   - Higher is better
-                - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) × 100`
+                - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) x 100`
                   - Compares latency values at the concurrency where max throughput occurs for each version
                   - This shows latency characteristics at peak performance
                   - Lower is better
@@ -7212,7 +7212,7 @@ def render_compare_configurations_section(
                 - Multiply all growth factors together, then take the nth root
 
                 *Step 3: Convert back to % change*
-                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) x 100`
 
                 *Why use Geometric Mean?*
                 - Arithmetic mean of +100% and -50% = +25% (misleading!)
@@ -8282,7 +8282,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                 💰 **Cost per Million Tokens (CPMT)**
                 ```
-                CPMT = (Instance Cost/hour × TTMT) ÷ 3600 seconds/hour
+                CPMT = (Instance Cost/hour x TTMT) ÷ 3600 seconds/hour
                 ```
 
                 **Where:**
@@ -8290,7 +8290,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                   - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                   - TPU: Per-core pricing, multiplied by TP count
                 - **Throughput**:
-                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput x 8 GPUs / TP)
                   - TPU: Raw throughput (you pay per core used)
                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                 """
@@ -8320,7 +8320,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🟢 B200 (NVIDIA)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$74.88/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p6-b200.48xlarge</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-B200</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xNVIDIA-B200</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -8340,7 +8340,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🔷 H200 (NVIDIA)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$41.62/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p5en.48xlarge</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-H200-144GB</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xNVIDIA-H200-144GB</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -8360,7 +8360,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🔶 MI300X (AMD)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$48.00/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: Azure ND96isr MI300X v5</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×AMD-MI300X-192GB</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xAMD-MI300X-192GB</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -9042,7 +9042,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                  **Throughput**: Output tokens generated per second
 
                                  **Adjusted Throughput**:
-                                 - TP runs on B200/H200/MI300X: Raw Throughput × (8 GPUs / TP)
+                                 - TP runs on B200/H200/MI300X: Raw Throughput x (8 GPUs / TP)
                                  - DP runs: Raw throughput (each replica is independent)
                                  - TPU: Raw throughput (pay per core used)
 
@@ -9072,7 +9072,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                                 💰 **Cost per Million Tokens (CPMT)**
                                 ```
-                                CPMT = (Instance Cost/hour × TTMT) ÷ 3600 seconds/hour
+                                CPMT = (Instance Cost/hour x TTMT) ÷ 3600 seconds/hour
                                 ```
 
                                 **Where:**
@@ -9080,7 +9080,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                   - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                                   - TPU: Per-core pricing, multiplied by TP count
                                 - **Throughput**:
-                                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput x 8 GPUs / TP)
                                   - TPU: Raw throughput (you pay per core used)
                                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                                 """
@@ -9180,7 +9180,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Adjusted Throughput (tok/s)": st.column_config.NumberColumn(
                             "Adjusted Throughput (tok/s)",
-                            help="Effective throughput for cost calculations: B200/H200/MI300X = Raw × (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
+                            help="Effective throughput for cost calculations: B200/H200/MI300X = Raw x (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
                             format="%.1f",
                         ),
                         ttft_col_name: st.column_config.TextColumn(
@@ -9193,7 +9193,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Instance Cost ($/hour)": st.column_config.NumberColumn(
                             "Instance Cost ($/hour)",
-                            help="Cloud instance hourly cost: B200/H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP × per-core cost)",
+                            help="Cloud instance hourly cost: B200/H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP x per-core cost)",
                             format="%.1f",
                         ),
                         "Time to 1M Tokens (min)": st.column_config.NumberColumn(
@@ -9203,7 +9203,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Total Cost per 1M Tokens ($)": st.column_config.NumberColumn(
                             "Total Cost per 1M Tokens ($)",
-                            help="Final cost efficiency metric = (Instance Cost/hour × Time to 1M Tokens in hours). Lower is more cost-efficient ⭐",
+                            help="Final cost efficiency metric = (Instance Cost/hour x Time to 1M Tokens in hours). Lower is more cost-efficient ⭐",
                             format="%.3f",
                         ),
                     }
@@ -9621,12 +9621,12 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
                     Avg Power to run model:
                     ```
-                    P_model = PI × n
+                    P_model = PI x n
                     ```
 
                     GPU Energy (kWh):
                     ```
-                    P_GPU = (PI × n × NR) × TH
+                    P_GPU = (PI x n x NR) x TH
                     ```
 
                     Total Energy:
@@ -9653,15 +9653,15 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
                     **Step 1:** Average Power
                     ```
-                    P_model = PI × n
-                          = 0.275 × 2
+                    P_model = PI x n
+                          = 0.275 x 2
                           = 0.550 kW
                     ```
 
                     **Step 2:** GPU Energy
                     ```
-                    P_GPU = P_model × NR × TH
-                          = 0.550 × 2 × 3
+                    P_GPU = P_model x NR x TH
+                          = 0.550 x 2 x 3
                           = 3.3 kWh
                     ```
                     """
@@ -10120,12 +10120,12 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Benchmark Duration (min)": st.column_config.NumberColumn(
                         "Benchmark Duration (min)",
-                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies × duration per level (7.5 or 10 min).",
+                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies x duration per level (7.5 or 10 min).",
                         format="%d",
                     ),
                     "Benchmark Duration (hrs)": st.column_config.NumberColumn(
                         "Benchmark Duration (hrs)",
-                        help="Total benchmark duration converted to hours. Used for energy calculations (kWh = kW × hours).",
+                        help="Total benchmark duration converted to hours. Used for energy calculations (kWh = kW x hours).",
                         format="%.2f",
                     ),
                     "Avg Throughput (tok/s)": st.column_config.TextColumn(
@@ -10134,7 +10134,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Total Tokens Generated": st.column_config.TextColumn(
                         "Total Tokens Generated",
-                        help="Estimated total output tokens generated during the benchmark. Formula: Avg Throughput (tok/s) × Runtime (seconds). Used for efficiency calculations.",
+                        help="Estimated total output tokens generated during the benchmark. Formula: Avg Throughput (tok/s) x Runtime (seconds). Used for efficiency calculations.",
                     ),
                     "Power per GPU (kW)": st.column_config.NumberColumn(
                         "Power per GPU (kW)",
@@ -10143,17 +10143,17 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Total Power Draw (kW)": st.column_config.NumberColumn(
                         "Total Power Draw (kW)",
-                        help="Total average power for all GPUs running the model. Formula: Power per GPU × TP (number of GPUs).",
+                        help="Total average power for all GPUs running the model. Formula: Power per GPU x TP (number of GPUs).",
                         format="%.3f",
                     ),
                     "Total Energy Used (kWh)": st.column_config.NumberColumn(
                         "Total Energy Used (kWh)",
-                        help="Total GPU energy consumed during the benchmark in kilowatt-hours. Formula: Total Power Draw (kW) × No of Nodes × Benchmark Duration (hrs). Does not include CPU or storage energy.",
+                        help="Total GPU energy consumed during the benchmark in kilowatt-hours. Formula: Total Power Draw (kW) x No of Nodes x Benchmark Duration (hrs). Does not include CPU or storage energy.",
                         format="%.3f",
                     ),
                     "Energy/1M Tokens (Wh)": st.column_config.TextColumn(
                         "Energy/1M Tokens (Wh)",
-                        help="Energy efficiency metric in Watt-hours per 1 million tokens. Formula: (Total Energy Used in kWh × 1e9) ÷ Total Tokens. LOWER values = MORE efficient. Best metric for comparing energy efficiency across different models and hardware at production scale.",
+                        help="Energy efficiency metric in Watt-hours per 1 million tokens. Formula: (Total Energy Used in kWh x 1e9) ÷ Total Tokens. LOWER values = MORE efficient. Best metric for comparing energy efficiency across different models and hardware at production scale.",
                     ),
                     "Data Source": st.column_config.TextColumn(
                         "Data Source",
@@ -10238,7 +10238,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                             )
 
                 st.caption(
-                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies × duration per level "
+                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies x duration per level "
                     "(7.5 min for 3.4 releases, 10 min for previous releases). "
                     "Power per GPU values are from Grafana metrics (DCGM/ROCm-SMI). "
                     "**Energy/1M Tokens** is a normalized efficiency metric for comparing across hardware at production scale."
@@ -10905,7 +10905,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             ),
             "error_rate": st.column_config.NumberColumn(
                 "error_rate",
-                help="Error rate percentage - (errored_requests / total_requests) × 100 (lower is better)",
+                help="Error rate percentage - (errored_requests / total_requests) x 100 (lower is better)",
                 format="%.2f",
             ),
             "efficiency_ratio": st.column_config.NumberColumn(
@@ -11382,6 +11382,8 @@ def main():
 
             if "profile" in query_params:
                 profile_from_url = query_params["profile"].strip()
+                if profile_from_url == "Custom":
+                    profile_from_url = "Custom ISL/OSL"
                 if profile_from_url in all_profiles:
                     url_profile = profile_from_url
 
@@ -11420,27 +11422,19 @@ def main():
 
             url_mt_prefix_tokens = None
             if "mt_prefix_tokens" in query_params:
-                parsed = []
-                for v in query_params["mt_prefix_tokens"].split(","):
-                    v = v.strip()
-                    if v:
-                        try:
-                            parsed.append(float(v))
-                        except (ValueError, OverflowError):
-                            parsed.append(v)
-                url_mt_prefix_tokens = parsed or None
+                url_mt_prefix_tokens = [
+                    v.strip()
+                    for v in query_params["mt_prefix_tokens"].split(",")
+                    if v.strip()
+                ] or None
 
             url_mt_prefix_count = None
             if "mt_prefix_count" in query_params:
-                parsed = []
-                for v in query_params["mt_prefix_count"].split(","):
-                    v = v.strip()
-                    if v:
-                        try:
-                            parsed.append(float(v))
-                        except (ValueError, OverflowError):
-                            parsed.append(v)
-                url_mt_prefix_count = parsed or None
+                url_mt_prefix_count = [
+                    v.strip()
+                    for v in query_params["mt_prefix_count"].split(",")
+                    if v.strip()
+                ] or None
 
             url_dataset = None
             if "dataset" in query_params:
