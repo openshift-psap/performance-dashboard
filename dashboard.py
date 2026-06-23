@@ -465,7 +465,7 @@ def assign_profile_vectorized(df):
         "Profile C: Large Prompt (2k/128)",
         "Profile D: Prefill Heavy (8k/1k)",
     ]
-    return np.select(conditions, choices, default="Custom")
+    return np.select(conditions, choices, default="Custom ISL/OSL")
 
 
 def clean_profile_name(profile_name):
@@ -3608,7 +3608,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
         selected_profile: The currently selected ISL/OSL profile string.
         use_expander: Whether to wrap content in a collapsible expander.
     """
-    if selected_profile != "Custom":
+    if selected_profile != "Custom ISL/OSL":
         return
 
     if use_expander:
@@ -5412,7 +5412,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
         profile_short = clean_profile_name(selected_profile)
         trends_subtitle = ""
         if (
-            selected_profile == "Custom"
+            selected_profile == "Custom ISL/OSL"
             and st.session_state.get("selected_custom_isl_osl") == "0/0"
         ):
             ds = st.session_state.get("selected_dataset_filter", "")
@@ -5900,9 +5900,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         on_change=keep_expander_open,
                         args=("compare_versions_summary_expanded",),
                     )
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
             custom_temp = df[
-                (df["profile"] == "Custom")
+                (df["profile"] == "Custom ISL/OSL")
                 & (df["accelerator"].isin(available_accelerators))
             ]
             custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
@@ -7006,7 +7006,7 @@ def render_compare_configurations_section(
     filtered_df, selected_profile, use_expander=True
 ):
     """⚖️ Compare Configurations Section - Compare two configurations across multiple metrics (Custom ISL/OSL only)."""
-    if selected_profile != "Custom":
+    if selected_profile != "Custom ISL/OSL":
         return
 
     if use_expander:
@@ -11059,6 +11059,7 @@ if "view" in st.query_params and "dashboard_view_selector" not in st.session_sta
     ]:
         st.session_state.selected_view = view_from_url
         st.session_state.dashboard_view_selector = view_from_url
+        st.session_state._initial_url_view = view_from_url
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
@@ -11410,6 +11411,22 @@ def main():
             if "custom_isl_osl" in query_params:
                 url_custom_isl_osl = query_params["custom_isl_osl"].strip()
 
+            url_dataset = None
+            if "dataset" in query_params:
+                url_dataset = query_params["dataset"].strip()
+
+            url_spec_decoding = None
+            if "spec_decoding" in query_params:
+                url_spec_decoding = [
+                    v.strip() for v in query_params["spec_decoding"].split(",")
+                ]
+
+            url_prefix_caching = None
+            if "prefix_caching" in query_params:
+                url_prefix_caching = [
+                    v.strip() for v in query_params["prefix_caching"].split(",")
+                ]
+
             url_multiturn_isl_osl = None
             if "multiturn_isl_osl" in query_params:
                 url_multiturn_isl_osl = query_params["multiturn_isl_osl"].strip()
@@ -11418,28 +11435,36 @@ def main():
             if "mt_turns" in query_params:
                 try:
                     url_mt_turns = [
-                        int(t.strip())
+                        float(t.strip())
                         for t in query_params["mt_turns"].split(",")
-                        if t.strip().isdigit()
+                        if t.strip()
                     ]
-                except Exception:
+                except (ValueError, OverflowError):
                     url_mt_turns = None
 
             url_mt_prefix_tokens = None
             if "mt_prefix_tokens" in query_params:
-                url_mt_prefix_tokens = [
-                    v.strip()
-                    for v in query_params["mt_prefix_tokens"].split(",")
-                    if v.strip()
-                ]
+                parsed = []
+                for v in query_params["mt_prefix_tokens"].split(","):
+                    v = v.strip()
+                    if v:
+                        try:
+                            parsed.append(float(v))
+                        except (ValueError, OverflowError):
+                            parsed.append(v)
+                url_mt_prefix_tokens = parsed or None
 
             url_mt_prefix_count = None
             if "mt_prefix_count" in query_params:
-                url_mt_prefix_count = [
-                    v.strip()
-                    for v in query_params["mt_prefix_count"].split(",")
-                    if v.strip()
-                ]
+                parsed = []
+                for v in query_params["mt_prefix_count"].split(","):
+                    v = v.strip()
+                    if v:
+                        try:
+                            parsed.append(float(v))
+                        except (ValueError, OverflowError):
+                            parsed.append(v)
+                url_mt_prefix_count = parsed or None
 
             url_dp_sizes = []
             if "dp_sizes" in query_params:
@@ -11509,6 +11534,9 @@ def main():
                 url_mt_turns,
                 url_mt_prefix_tokens,
                 url_mt_prefix_count,
+                url_dataset,
+                url_spec_decoding,
+                url_prefix_caching,
             )
 
     df["profile"] = assign_profile_vectorized(df)
@@ -11518,7 +11546,7 @@ def main():
         df.loc[df["turns"].fillna(1).astype(int) > 1, "profile"] = "Multi-turn"
 
     df["custom_isl_osl"] = np.where(
-        df["profile"] == "Custom",
+        df["profile"] == "Custom ISL/OSL",
         df["prompt toks"].astype(int).astype(str)
         + "/"
         + df["output toks"].astype(int).astype(str),
@@ -11592,21 +11620,46 @@ def main():
 
     if "url_filters_loaded" not in st.session_state:
         st.session_state.url_filters_loaded = True
-        (
-            url_accelerators,
-            url_models,
-            url_versions,
-            url_profile,
-            url_tp_sizes,
-            url_section,
-            url_section_filters,
-            url_custom_isl_osl,
-            url_dp_sizes,
-            url_multiturn_isl_osl,
-            url_mt_turns,
-            url_mt_prefix_tokens,
-            url_mt_prefix_count,
-        ) = decode_filters_from_url()
+        # Only decode URL filters on a fresh page load that targeted RHAIIS
+        # (or had no view param, which defaults to RHAIIS). When switching
+        # from another view, the URL has that view's params.
+        _initial_view = st.session_state.get("_initial_url_view")
+        if _initial_view is None or _initial_view == "RHAIIS Dashboard":
+            (
+                url_accelerators,
+                url_models,
+                url_versions,
+                url_profile,
+                url_tp_sizes,
+                url_section,
+                url_section_filters,
+                url_custom_isl_osl,
+                url_dp_sizes,
+                url_multiturn_isl_osl,
+                url_mt_turns,
+                url_mt_prefix_tokens,
+                url_mt_prefix_count,
+                url_dataset,
+                url_spec_decoding,
+                url_prefix_caching,
+            ) = decode_filters_from_url()
+        else:
+            url_accelerators = []
+            url_models = []
+            url_versions = []
+            url_profile = None
+            url_tp_sizes = []
+            url_section = None
+            url_section_filters = {}
+            url_custom_isl_osl = None
+            url_dp_sizes = []
+            url_multiturn_isl_osl = None
+            url_mt_turns = None
+            url_mt_prefix_tokens = None
+            url_mt_prefix_count = None
+            url_dataset = None
+            url_spec_decoding = None
+            url_prefix_caching = None
 
         if url_section:
             st.session_state.active_section = url_section
@@ -11684,6 +11737,12 @@ def main():
         st.session_state.use_url_filters = has_url_filters
         if url_custom_isl_osl:
             st.session_state.selected_custom_isl_osl = url_custom_isl_osl
+        if url_dataset:
+            st.session_state.selected_dataset_filter = url_dataset
+        if url_spec_decoding is not None:
+            st.session_state.selected_spec_decoding_filter = url_spec_decoding
+        if url_prefix_caching is not None:
+            st.session_state.selected_prefix_caching_filter = url_prefix_caching
         if url_multiturn_isl_osl:
             st.session_state.selected_multiturn_isl_osl = url_multiturn_isl_osl
         if url_mt_turns is not None:
@@ -11741,11 +11800,15 @@ def main():
             # If no profile selected yet, determine the default that will be selected
             if not current_profile:
                 available_profiles_raw = sorted(df["profile"].unique().tolist())
-                _sp = ("Multi-turn", "Custom")
+                _sp = ("Multi-turn", "Custom ISL/OSL")
                 available_profiles = (
                     [p for p in available_profiles_raw if p not in _sp]
                     + (["Multi-turn"] if "Multi-turn" in available_profiles_raw else [])
-                    + (["Custom"] if "Custom" in available_profiles_raw else [])
+                    + (
+                        ["Custom ISL/OSL"]
+                        if "Custom ISL/OSL" in available_profiles_raw
+                        else []
+                    )
                 )
 
                 # Default to Profile A (1k/1k) when clearing or as fallback
@@ -11844,12 +11907,12 @@ def main():
                 if not temp_df.empty
                 else []
             )
-            # Sort so "Multi-turn" and "Custom" always come last
-            _special = ("Multi-turn", "Custom")
+            # Sort so "Multi-turn" and "Custom ISL/OSL" always come last
+            _special = ("Multi-turn", "Custom ISL/OSL")
             profiles = (
                 [p for p in profiles_raw if p not in _special]
                 + (["Multi-turn"] if "Multi-turn" in profiles_raw else [])
-                + (["Custom"] if "Custom" in profiles_raw else [])
+                + (["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else [])
             )
 
             # Default to Profile A (1k/1k) when clearing or as fallback
@@ -11944,13 +12007,13 @@ def main():
 
             # Secondary filter: specific ISL/OSL pair when Custom is selected
             selected_custom_isl_osl = None
-            if selected_profile == "Custom":
+            if selected_profile == "Custom ISL/OSL":
                 custom_temp = df.copy()
                 if selected_accelerators:
                     custom_temp = custom_temp[
                         custom_temp["accelerator"].isin(selected_accelerators)
                     ]
-                custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+                custom_temp = custom_temp[custom_temp["profile"] == "Custom ISL/OSL"]
                 custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
                 custom_pairs = [p for p in custom_pairs if p]
                 if custom_pairs:
@@ -11978,7 +12041,10 @@ def main():
             selected_dataset_filter = None
             selected_spec_decoding_filter = None
             selected_prefix_caching_filter = None
-            if selected_profile == "Custom" and selected_custom_isl_osl == "0/0":
+            if (
+                selected_profile == "Custom ISL/OSL"
+                and selected_custom_isl_osl == "0/0"
+            ):
                 real_temp = custom_temp[custom_temp["custom_isl_osl"] == "0/0"]
                 available_datasets = sorted(
                     d for d in real_temp["dataset"].unique() if d
@@ -11989,7 +12055,12 @@ def main():
                         dataset_key not in st.session_state
                         or st.session_state.get(dataset_key) not in available_datasets
                     ):
-                        st.session_state[dataset_key] = available_datasets[0]
+                        url_ds = st.session_state.get("selected_dataset_filter")
+                        st.session_state[dataset_key] = (
+                            url_ds
+                            if url_ds and url_ds in available_datasets
+                            else available_datasets[0]
+                        )
                     selected_dataset_filter = st.selectbox(
                         "Select Dataset",
                         available_datasets,
@@ -12008,6 +12079,14 @@ def main():
                         spec_key = (
                             f"spec_decoding_filter_{st.session_state.filter_change_key}"
                         )
+                        if spec_key not in st.session_state:
+                            url_sd = st.session_state.get(
+                                "selected_spec_decoding_filter"
+                            )
+                            if url_sd is not None:
+                                st.session_state[spec_key] = [
+                                    v for v in url_sd if v in spec_options
+                                ]
                         selected_spec_decoding_filter = st.multiselect(
                             "Speculative Decoding",
                             spec_options,
@@ -12030,6 +12109,14 @@ def main():
                     selected_prefix_caching_filter = None
                     if len(pc_options) > 1:
                         pc_key = f"prefix_caching_filter_{st.session_state.filter_change_key}"
+                        if pc_key not in st.session_state:
+                            url_pc = st.session_state.get(
+                                "selected_prefix_caching_filter"
+                            )
+                            if url_pc is not None:
+                                st.session_state[pc_key] = [
+                                    v for v in url_pc if v in pc_options
+                                ]
                         selected_prefix_caching_filter = st.multiselect(
                             "Prefix Caching",
                             pc_options,
@@ -12243,7 +12330,7 @@ def main():
 
                 # Exclude models that only appear under the Custom ISL/OSL profile
                 _fh_non_custom_models = set(
-                    df[df["profile"] != "Custom"]["model"].unique()
+                    df[df["profile"] != "Custom ISL/OSL"]["model"].unique()
                 )
                 _fh_df = df[df["model"].isin(_fh_non_custom_models)]
 
@@ -12572,7 +12659,7 @@ def main():
 
         custom_mask = (
             (df["custom_isl_osl"] == selected_custom_isl_osl)
-            if selected_profile == "Custom" and selected_custom_isl_osl
+            if selected_profile == "Custom ISL/OSL" and selected_custom_isl_osl
             else True
         )
         dataset_mask = (
@@ -12679,19 +12766,19 @@ def main():
             "🔍 Competitive Analysis",
             "📊 Performance Plots",
         ]
-        if selected_profile == "Custom":
+        if selected_profile == "Custom ISL/OSL":
             section_list.append("📈 Dataset Representation")
             section_list.append("🔄 Pareto Tradeoff Graphs")
         else:
             section_list.append("🔄 Pareto Tradeoff Analysis")
             section_list.append("🏆 Model Performance Comparison")
         section_list.append("⚖️ Compare Versions")
-        if selected_profile == "Custom":
+        if selected_profile == "Custom ISL/OSL":
             section_list.append("⚖️ Compare Configurations")
-        if selected_profile != "Custom":
+        if selected_profile != "Custom ISL/OSL":
             section_list.append("📈 Performance Trends")
             section_list.append("💰 Cost Analysis")
-        if selected_profile != "Custom":
+        if selected_profile != "Custom ISL/OSL":
             section_list.append("🌱 Energy Computation")
         section_list.append("💡 IntelliConfig")
         section_list.append("⚙️ Runtime Server Configs")
@@ -12825,23 +12912,39 @@ def main():
                 desired_params["versions"] = ",".join(selected_versions)
             if selected_profile:
                 desired_params["profile"] = selected_profile
-            if selected_profile == "Custom":
+            if selected_profile == "Custom ISL/OSL":
                 custom_val = st.session_state.get("selected_custom_isl_osl")
                 if custom_val:
                     desired_params["custom_isl_osl"] = custom_val
+                if custom_val == "0/0":
+                    ds_val = st.session_state.get("selected_dataset_filter")
+                    if ds_val:
+                        desired_params["dataset"] = ds_val
+                    sd_val = st.session_state.get("selected_spec_decoding_filter")
+                    if sd_val:
+                        desired_params["spec_decoding"] = ",".join(sd_val)
+                    pc_val = st.session_state.get("selected_prefix_caching_filter")
+                    if pc_val:
+                        desired_params["prefix_caching"] = ",".join(pc_val)
             if selected_profile == "Multi-turn":
                 mt_val = st.session_state.get("selected_multiturn_isl_osl")
                 if mt_val:
                     desired_params["multiturn_isl_osl"] = mt_val
+
+                def _fmt(v):
+                    return (
+                        str(int(v)) if isinstance(v, float) and v == int(v) else str(v)
+                    )
+
                 if selected_mt_turns is not None:
-                    desired_params["mt_turns"] = ",".join(map(str, selected_mt_turns))
+                    desired_params["mt_turns"] = ",".join(map(_fmt, selected_mt_turns))
                 if selected_mt_prefix_tokens is not None:
                     desired_params["mt_prefix_tokens"] = ",".join(
-                        map(str, selected_mt_prefix_tokens)
+                        map(_fmt, selected_mt_prefix_tokens)
                     )
                 if selected_mt_prefix_count is not None:
                     desired_params["mt_prefix_count"] = ",".join(
-                        map(str, selected_mt_prefix_count)
+                        map(_fmt, selected_mt_prefix_count)
                     )
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
