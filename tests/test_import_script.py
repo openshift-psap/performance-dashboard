@@ -460,7 +460,7 @@ class TestActualFunctionIntegration:
 
         # Mock the file reading in the actual module
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons_old.open",
+            "manual_runs.scripts.vllm.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             result = parse_guidellm_json(
@@ -501,7 +501,7 @@ class TestActualFunctionIntegration:
         json_content = json.dumps({"benchmarks": []})
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons_old.open",
+            "manual_runs.scripts.vllm.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -517,7 +517,7 @@ class TestActualFunctionIntegration:
         json_content = json.dumps({"some_other_key": "value"})
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons_old.open",
+            "manual_runs.scripts.vllm.import_manual_run_jsons_old.open",
             mock_open(read_data=json_content),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -531,7 +531,7 @@ class TestActualFunctionIntegration:
     def test_parse_guidellm_json_file_not_found(self):
         """Test parse_guidellm_json with non-existent file."""
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons_old.open",
+            "manual_runs.scripts.vllm.import_manual_run_jsons_old.open",
             side_effect=FileNotFoundError(),
         ):
             with patch("builtins.print"):  # Suppress print statements
@@ -547,7 +547,7 @@ class TestActualFunctionIntegration:
         invalid_json = "{ invalid json content"
 
         with patch(
-            "manual_runs.scripts.import_manual_run_jsons_old.open",
+            "manual_runs.scripts.vllm.import_manual_run_jsons_old.open",
             mock_open(read_data=invalid_json),
         ):
             with patch("builtins.print"):  # Suppress print statements
