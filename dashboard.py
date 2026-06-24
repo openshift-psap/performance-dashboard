@@ -465,7 +465,7 @@ def assign_profile_vectorized(df):
         "Profile C: Large Prompt (2k/128)",
         "Profile D: Prefill Heavy (8k/1k)",
     ]
-    return np.select(conditions, choices, default="Custom")
+    return np.select(conditions, choices, default="Custom ISL/OSL")
 
 
 def clean_profile_name(profile_name):
@@ -3019,7 +3019,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.caption(
         "Per-family rollup comparing the current release to the previous one. "
         "**Avg Tput** is the mean throughput change across all combinations "
-        "(model × accelerator × profile). "
+        "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
         "Click any family card to drill down into per-combo details."
     )
@@ -3126,7 +3126,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.caption(
         "Per-accelerator rollup comparing the current release to the previous one. "
         "**Avg Tput** is the mean throughput change across all combinations "
-        "(model × accelerator × profile). "
+        "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
         "Click any accelerator card to drill down into per-combo details."
     )
@@ -3608,7 +3608,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
         selected_profile: The currently selected ISL/OSL profile string.
         use_expander: Whether to wrap content in a collapsible expander.
     """
-    if selected_profile != "Custom":
+    if selected_profile != "Custom ISL/OSL":
         return
 
     if use_expander:
@@ -3625,7 +3625,12 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
             "in the dataset."
         )
 
-        available_datasets = ["DeepSeek-R1", "GPT-OSS Perf Eval", "ShareGPT Vicuna", "SWE-Bench Lite"]
+        available_datasets = [
+            "DeepSeek-R1",
+            "GPT-OSS Perf Eval",
+            "ShareGPT Vicuna",
+            "SWE-Bench Lite",
+        ]
         selected_dataset = st.selectbox(
             "Select Dataset",
             available_datasets,
@@ -3654,7 +3659,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
                 if selected_dataset == "ShareGPT Vicuna":
                     st.info(
                         "Note: Statistical outliers have been removed from this dataset "
-                        "using the IQR method (values beyond Q3 + 1.5 × IQR) to improve "
+                        "using the IQR method (values beyond Q3 + 1.5 x IQR) to improve "
                         "histogram readability."
                     )
 
@@ -3863,13 +3868,46 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         elif y_axis == "request_latency_median" or y_axis == "request_latency_max":
             y_axis_display_label = f"{y_axis_label} (s)"
 
+        # Build ISL/OSL subtitle from unique values in the filtered data
+        _isl_osl_subtitle = ""
+        if (
+            "prompt toks" in filtered_df_sorted.columns
+            and "output toks" in filtered_df_sorted.columns
+        ):
+            isl_osl_pairs = (
+                filtered_df_sorted[["prompt toks", "output toks"]]
+                .dropna()
+                .drop_duplicates()
+            )
+            if not isl_osl_pairs.empty:
+                pair_labels = []
+                for _, r in isl_osl_pairs.iterrows():
+                    isl, osl = int(r["prompt toks"]), int(r["output toks"])
+                    if isl == 0 and osl == 0:
+                        if "dataset" in filtered_df_sorted.columns:
+                            ds_names = (
+                                filtered_df_sorted.loc[
+                                    (filtered_df_sorted["prompt toks"] == 0)
+                                    & (filtered_df_sorted["output toks"] == 0),
+                                    "dataset",
+                                ]
+                                .dropna()
+                                .unique()
+                                .tolist()
+                            )
+                            pair_labels.extend(ds_names)
+                    else:
+                        pair_labels.append(f"{isl}/{osl}")
+                if pair_labels:
+                    _isl_osl_subtitle = f"<br><span style='font-size:14px'>ISL/OSL: {', '.join(sorted(set(pair_labels)))}</span>"
+
         fig = px.line(
             filtered_df_sorted.sort_values(by=x_axis),
             x=x_axis,
             y=y_axis,
             color="run_identifier",
             markers=True,
-            title=f"{x_axis_label} vs. {y_axis_label}",
+            title=f"{x_axis_label} vs. {y_axis_label}{_isl_osl_subtitle}",
             labels={
                 x_axis: x_axis_label,
                 y_axis: y_axis_display_label,
@@ -5374,7 +5412,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
         profile_short = clean_profile_name(selected_profile)
         trends_subtitle = ""
         if (
-            selected_profile == "Custom"
+            selected_profile == "Custom ISL/OSL"
             and st.session_state.get("selected_custom_isl_osl") == "0/0"
         ):
             ds = st.session_state.get("selected_dataset_filter", "")
@@ -5862,9 +5900,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         on_change=keep_expander_open,
                         args=("compare_versions_summary_expanded",),
                     )
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
             custom_temp = df[
-                (df["profile"] == "Custom")
+                (df["profile"] == "Custom ISL/OSL")
                 & (df["accelerator"].isin(available_accelerators))
             ]
             custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
@@ -6265,13 +6303,13 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 - Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average) of all those changes
                 - Shows the average performance difference across all concurrency levels
                 - Can be affected by outliers (extreme values)
-                - Formula: `mean([(v1 - v2) / v2 × 100 for each concurrency level])`
+                - Formula: `mean([(v1 - v2) / v2 x 100 for each concurrency level])`
 
                 **Median Change Calculation:**
                 - Calculated by taking the percentage change at each common concurrency level, then taking the median of all those changes
                 - Shows the typical performance difference across all concurrency levels
                 - More robust to outliers than mean - better represents typical performance
-                - Formula: `median([(v1 - v2) / v2 × 100 for each concurrency level])`
+                - Formula: `median([(v1 - v2) / v2 x 100 for each concurrency level])`
 
                 **Geometric Mean Change Calculation:**
 
@@ -6286,24 +6324,24 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 *Step 2: Compute Geometric Mean of Growth Factors*
                 - Multiply all growth factors together, then take the nth root
                 - Formula: `geom_mean_factor = (∏ growth_factors)^(1/n)`
-                - Example: For [1.10, 0.90], geom_mean = (1.10 × 0.90)^0.5 = 0.99^0.5 ≈ 0.995
+                - Example: For [1.10, 0.90], geom_mean = (1.10 x 0.90)^0.5 = 0.99^0.5 ≈ 0.995
 
                 *Step 3: Convert back to % change*
-                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
-                - Example: 1.10 - 1 = 0.10 → 0.10 × 100 = +10%
-                - Example: 0.95 - 1 = -0.05 → -0.05 × 100 = -5%
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) x 100`
+                - Example: 1.10 - 1 = 0.10 → 0.10 x 100 = +10%
+                - Example: 0.95 - 1 = -0.05 → -0.05 x 100 = -5%
                 - **Why subtract 1?** Because a growth factor of 1.00 means "no change" (0%). The "1" represents the original value, so we subtract it to isolate just the change portion.
 
                 *Why use Geometric Mean?*
                 - Arithmetic mean of +100% and -50% = +25% ❌ (misleading!)
-                - Geometric mean: (2.0 × 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
+                - Geometric mean: (2.0 x 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
                 - Better for ratios/percentages because it respects multiplicative relationships
 
                 **Peak Change Calculation:**
-                - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) × 100`
+                - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) x 100`
                   - Compares maximum throughput values (best = highest performance)
                   - Higher is better
-                - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) × 100`
+                - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) x 100`
                   - Compares latency values at the concurrency where max throughput occurs for each version
                   - This shows latency characteristics at peak performance
                   - Lower is better
@@ -6803,15 +6841,39 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 v1_total_throughput = v1_common.loc[v1_peak_idx, "total_tok/sec"]
                 v2_total_throughput = v2_common.loc[v2_peak_idx, "total_tok/sec"]
 
-                # Get latency metrics at peak throughput
-                v1_e2e_latency = v1_common.loc[v1_peak_idx, "request_latency_median"]
-                v2_e2e_latency = v2_common.loc[v2_peak_idx, "request_latency_median"]
+                # For latency, compare at the same concurrency (min of the two peaks)
+                # so the comparison is fair (latency scales with load)
+                latency_conc = min(v1_peak_conc, v2_peak_conc)
+                v1_at_latency_conc = v1_common[
+                    v1_common["intended concurrency"] == latency_conc
+                ]
+                v2_at_latency_conc = v2_common[
+                    v2_common["intended concurrency"] == latency_conc
+                ]
 
-                v1_ttft = v1_common.loc[v1_peak_idx, "ttft_p95"]
-                v2_ttft = v2_common.loc[v2_peak_idx, "ttft_p95"]
+                if not v1_at_latency_conc.empty and not v2_at_latency_conc.empty:
+                    v1_lat_row = v1_at_latency_conc.iloc[0]
+                    v2_lat_row = v2_at_latency_conc.iloc[0]
+                else:
+                    v1_lat_row = v1_common.loc[v1_peak_idx]
+                    v2_lat_row = v2_common.loc[v2_peak_idx]
+                    latency_conc = None
 
-                v1_itl = v1_common.loc[v1_peak_idx, "itl_p95"]
-                v2_itl = v2_common.loc[v2_peak_idx, "itl_p95"]
+                # Get latency metrics at the common concurrency
+                v1_e2e_latency = v1_lat_row["request_latency_median"]
+                v2_e2e_latency = v2_lat_row["request_latency_median"]
+
+                v1_ttft = v1_lat_row["ttft_p95"]
+                v2_ttft = v2_lat_row["ttft_p95"]
+
+                v1_itl = v1_lat_row["itl_p95"]
+                v2_itl = v2_lat_row["itl_p95"]
+
+                latency_conc_label = (
+                    f" at {latency_conc} concurrent users"
+                    if latency_conc is not None
+                    else ""
+                )
 
                 def format_value(val, unit="", decimals=0, round_up=False):
                     """Format a numeric value with optional unit."""
@@ -6877,7 +6939,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "Median E2E Latency at Peak Throughput",
+                            "Metric": f"Median E2E Latency{latency_conc_label}",
                             version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
                             version_2: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
@@ -6885,7 +6947,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "TTFT P95 at Peak Throughput",
+                            "Metric": f"TTFT P95{latency_conc_label}",
                             version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
                             if pd.notna(v1_ttft)
                             else "N/A",
@@ -6897,7 +6959,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                         {
-                            "Metric": "ITL P95 at Peak Throughput",
+                            "Metric": f"ITL P95{latency_conc_label}",
                             version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
                             version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
@@ -6944,7 +7006,7 @@ def render_compare_configurations_section(
     filtered_df, selected_profile, use_expander=True
 ):
     """⚖️ Compare Configurations Section - Compare two configurations across multiple metrics (Custom ISL/OSL only)."""
-    if selected_profile != "Custom":
+    if selected_profile != "Custom ISL/OSL":
         return
 
     if use_expander:
@@ -7157,7 +7219,7 @@ def render_compare_configurations_section(
                 - Multiply all growth factors together, then take the nth root
 
                 *Step 3: Convert back to % change*
-                - Formula: `geom_mean_% = (geom_mean_factor - 1) × 100`
+                - Formula: `geom_mean_% = (geom_mean_factor - 1) x 100`
 
                 *Why use Geometric Mean?*
                 - Arithmetic mean of +100% and -50% = +25% (misleading!)
@@ -8227,7 +8289,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                 💰 **Cost per Million Tokens (CPMT)**
                 ```
-                CPMT = (Instance Cost/hour × TTMT) ÷ 3600 seconds/hour
+                CPMT = (Instance Cost/hour x TTMT) ÷ 3600 seconds/hour
                 ```
 
                 **Where:**
@@ -8235,7 +8297,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                   - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                   - TPU: Per-core pricing, multiplied by TP count
                 - **Throughput**:
-                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput x 8 GPUs / TP)
                   - TPU: Raw throughput (you pay per core used)
                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                 """
@@ -8265,7 +8327,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🟢 B200 (NVIDIA)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$74.88/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p6-b200.48xlarge</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-B200</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xNVIDIA-B200</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -8285,7 +8347,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🔷 H200 (NVIDIA)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$41.62/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: AWS p5en.48xlarge</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×NVIDIA-H200-144GB</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xNVIDIA-H200-144GB</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -8305,7 +8367,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                     <h5 style="margin: 0; color: white; font-size: 18px;">🔶 MI300X (AMD)</h5>
                     <div style="font-size: 20px; font-weight: bold; margin: 5px 0;">$48.00/hour</div>
                     <div style="font-size: 15px; opacity: 0.9;">Instance: Azure ND96isr MI300X v5</div>
-                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8×AMD-MI300X-192GB</div>
+                    <div style="font-size: 15px; opacity: 0.8;">Configuration: 8xAMD-MI300X-192GB</div>
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -8359,7 +8421,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
         percentile_info = percentile_map[percentile_choice]
         percentile_label = percentile_choice.split(" ")[0]
 
-        latency_col1, latency_col2 = st.columns(2)
+        latency_col1, latency_col2, latency_col3 = st.columns(3)
 
         with latency_col1:
             itl_threshold = st.number_input(
@@ -8379,6 +8441,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 help=f"Time To First Token {percentile_label} threshold",
             )
             ttft_threshold = ttft_threshold_s * 1000
+
+        with latency_col3:
+            max_concurrency = st.number_input(
+                "Max Concurrency",
+                min_value=1,
+                value=300,
+                step=50,
+                help="Only consider concurrency levels up to this value for cost calculations",
+            )
 
         st.markdown("")
 
@@ -8461,8 +8532,31 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             ttft_threshold=2000,
             percentile_suffix="p95",
             debug_info=None,
+            max_concurrency=300,
         ):
             """Find the best concurrency level that meets PSAP latency SLOs and return performance at that level."""
+            if "intended concurrency" in group.columns:
+                group = group[group["intended concurrency"] <= max_concurrency]
+            if group.empty:
+                return pd.Series(
+                    {
+                        "output_tok/sec": np.nan,
+                        "throughput_version": f"No data ≤ {max_concurrency} concurrency",
+                        "throughput_tp": np.nan,
+                        "ttft_p95": np.nan,
+                        "ttft_version": f"No data ≤ {max_concurrency} concurrency",
+                        "ttft_tp": np.nan,
+                        "itl_p95": np.nan,
+                        "itl_version": f"No data ≤ {max_concurrency} concurrency",
+                        "itl_tp": np.nan,
+                        "efficiency_ratio": np.nan,
+                        "efficiency_version": f"No data ≤ {max_concurrency} concurrency",
+                        "efficiency_tp": np.nan,
+                        "error_rate": np.nan,
+                        "optimal_concurrency": np.nan,
+                    }
+                )
+
             itl_col = f"itl_{percentile_suffix}"
             ttft_col = f"ttft_{percentile_suffix}"
 
@@ -8686,6 +8780,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                 ttft_threshold,
                 percentile_info["suffix"],
                 debug_info,
+                max_concurrency=max_concurrency,
             )
 
             result_dict = result_series.to_dict()
@@ -8839,6 +8934,20 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                     cost_col1, cost_col2 = st.columns(2)
 
+                    # Sort models so the cheapest/fastest appears at the top
+                    time_order = (
+                        cost_df.groupby("model_tp_label")["ttmt_minutes"]
+                        .min()
+                        .sort_values(ascending=False)
+                        .index.tolist()
+                    )
+                    cost_order = (
+                        cost_df.groupby("model_tp_label")["cpmt_total"]
+                        .min()
+                        .sort_values(ascending=False)
+                        .index.tolist()
+                    )
+
                     with cost_col1:
                         # Time to Million Tokens chart
                         fig_time = px.bar(
@@ -8861,7 +8970,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "cpmt_total": ":.3f",
                             },
                         )
-                        fig_time.update_layout(height=400, showlegend=True)
+                        fig_time.update_layout(
+                            height=400,
+                            showlegend=True,
+                            barmode="group",
+                            yaxis={
+                                "categoryorder": "array",
+                                "categoryarray": time_order,
+                            },
+                        )
                         st.plotly_chart(fig_time, use_container_width=True, theme=None)
                         st.caption(
                             "📊 Multiple accelerator types used for results, see 'Formulas' for calculation details. Click legend items to show/hide accelerator types."
@@ -8889,7 +9006,15 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                 "ttmt_minutes": ":.1f",
                             },
                         )
-                        fig_cost.update_layout(height=400, showlegend=True)
+                        fig_cost.update_layout(
+                            height=400,
+                            showlegend=True,
+                            barmode="group",
+                            yaxis={
+                                "categoryorder": "array",
+                                "categoryarray": cost_order,
+                            },
+                        )
                         st.plotly_chart(fig_cost, use_container_width=True, theme=None)
 
                     # Cost efficiency ranking table
@@ -8924,7 +9049,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                  **Throughput**: Output tokens generated per second
 
                                  **Adjusted Throughput**:
-                                 - TP runs on B200/H200/MI300X: Raw Throughput × (8 GPUs / TP)
+                                 - TP runs on B200/H200/MI300X: Raw Throughput x (8 GPUs / TP)
                                  - DP runs: Raw throughput (each replica is independent)
                                  - TPU: Raw throughput (pay per core used)
 
@@ -8954,7 +9079,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
 
                                 💰 **Cost per Million Tokens (CPMT)**
                                 ```
-                                CPMT = (Instance Cost/hour × TTMT) ÷ 3600 seconds/hour
+                                CPMT = (Instance Cost/hour x TTMT) ÷ 3600 seconds/hour
                                 ```
 
                                 **Where:**
@@ -8962,7 +9087,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                                   - B200/H200/MI300X: Pay for full 8-GPU instance regardless of TP
                                   - TPU: Per-core pricing, multiplied by TP count
                                 - **Throughput**:
-                                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput × 8 GPUs / TP)
+                                  - B200/H200/MI300X: Adjusted throughput (Raw Throughput x 8 GPUs / TP)
                                   - TPU: Raw throughput (you pay per core used)
                                 - **Optimal Concurrency**: Best concurrency meeting PSAP SLOs
                                 """
@@ -9062,7 +9187,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Adjusted Throughput (tok/s)": st.column_config.NumberColumn(
                             "Adjusted Throughput (tok/s)",
-                            help="Effective throughput for cost calculations: B200/H200/MI300X = Raw × (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
+                            help="Effective throughput for cost calculations: B200/H200/MI300X = Raw x (8 GPUs / TP) since you pay for full instance; TPU = Raw throughput since you pay per core used",
                             format="%.1f",
                         ),
                         ttft_col_name: st.column_config.TextColumn(
@@ -9075,7 +9200,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Instance Cost ($/hour)": st.column_config.NumberColumn(
                             "Instance Cost ($/hour)",
-                            help="Cloud instance hourly cost: B200/H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP × per-core cost)",
+                            help="Cloud instance hourly cost: B200/H200/MI300X pay for full 8-GPU instance regardless of TP; TPU pays per core used (TP x per-core cost)",
                             format="%.1f",
                         ),
                         "Time to 1M Tokens (min)": st.column_config.NumberColumn(
@@ -9085,7 +9210,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
                         ),
                         "Total Cost per 1M Tokens ($)": st.column_config.NumberColumn(
                             "Total Cost per 1M Tokens ($)",
-                            help="Final cost efficiency metric = (Instance Cost/hour × Time to 1M Tokens in hours). Lower is more cost-efficient ⭐",
+                            help="Final cost efficiency metric = (Instance Cost/hour x Time to 1M Tokens in hours). Lower is more cost-efficient ⭐",
                             format="%.3f",
                         ),
                     }
@@ -9303,6 +9428,74 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     "deepseek-ai/DeepSeek-V3.2": 551.83,
                 },
             },
+            "RHAIIS-3.3": {
+                "Profile A: Balanced (1k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 630.2,
+                    "meta-llama/Llama-3.3-70B-Instruct": 624.1,
+                    "openai/gpt-oss-120b": {1: 605.1, 4: 431.5},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 572.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 549.1,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 548.5,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 542.8,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 630.2,
+                    "meta-llama/Llama-3.3-70B-Instruct": 624.1,
+                    "openai/gpt-oss-120b": {1: 605.1, 4: 431.5},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 572.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 549.1,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 548.5,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 542.8,
+                },
+                "Profile D: Prefill Heavy (8k/1k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 655.2,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 652.7,
+                    "openai/gpt-oss-120b": {1: 624.9, 4: 531.9},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 618.9,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 617.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 601.6,
+                    "deepseek-ai/DeepSeek-R1-0528": 577.7,
+                },
+            },
+            "RHAIIS-3.4-GA": {
+                "Profile A: Balanced (1k/1k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 636.5,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 624.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 600.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 585.6,
+                    "openai/gpt-oss-120b": {1: 566.1, 4: 417.2},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 560.7,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 556.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 535.9,
+                    "deepseek-ai/DeepSeek-V3.2": 530.3,
+                },
+                "Profile B: Variable Workload (512/2k)": {
+                    "meta-llama/Llama-3.3-70B-Instruct": 636.5,
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 624.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 600.5,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 585.6,
+                    "openai/gpt-oss-120b": {1: 566.1, 4: 417.2},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 560.7,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 556.4,
+                    "deepseek-ai/DeepSeek-R1-0528": 535.9,
+                    "deepseek-ai/DeepSeek-V3.2": 530.3,
+                },
+                "Profile D: Prefill Heavy (8k/1k)": {
+                    "RedHatAI/Ministral-3-14B-Instruct-2512": 653.0,
+                    "meta-llama/Llama-3.3-70B-Instruct": 634.5,
+                    "mistralai/Mistral-Medium-3.5-128B": {4: 622.3, 8: 515.8},
+                    "Qwen/Qwen3-VL-30B-A3B-Instruct": 603.3,
+                    "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic": 586.8,
+                    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8": 586.5,
+                    "openai/gpt-oss-120b": {1: 582.9, 4: 470.5},
+                    "nvidia/Llama-3.3-70B-Instruct-FP8": 580.9,
+                    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8": 569.5,
+                    "deepseek-ai/DeepSeek-R1-0528": 560.0,
+                    "deepseek-ai/DeepSeek-V3.2": 544.7,
+                },
+            },
         },
         "MI300X": {
             "RHAIIS-3.2.5": {
@@ -9435,12 +9628,12 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
                     Avg Power to run model:
                     ```
-                    P_model = PI × n
+                    P_model = PI x n
                     ```
 
                     GPU Energy (kWh):
                     ```
-                    P_GPU = (PI × n × NR) × TH
+                    P_GPU = (PI x n x NR) x TH
                     ```
 
                     Total Energy:
@@ -9467,15 +9660,15 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
 
                     **Step 1:** Average Power
                     ```
-                    P_model = PI × n
-                          = 0.275 × 2
+                    P_model = PI x n
+                          = 0.275 x 2
                           = 0.550 kW
                     ```
 
                     **Step 2:** GPU Energy
                     ```
-                    P_GPU = P_model × NR × TH
-                          = 0.550 × 2 × 3
+                    P_GPU = P_model x NR x TH
+                          = 0.550 x 2 x 3
                           = 3.3 kWh
                     ```
                     """
@@ -9709,10 +9902,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     num_concurrencies = group[conc_col].nunique()
                 else:
                     num_concurrencies = len(group)
-                if "EA1" in str(version) or "EA2" in str(version):
-                    seconds_per_conc = 450
-                else:
-                    seconds_per_conc = 600
+                seconds_per_conc = 450 if "3.4" in str(version) else 600
                 runtime_seconds = num_concurrencies * seconds_per_conc
                 runtime_minutes = runtime_seconds / 60
                 runtime_hours = runtime_seconds / 3600
@@ -9728,7 +9918,15 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                 energy_per_1m_tokens = None
 
                 if "output_tok/sec" in group.columns:
-                    avg_output_throughput = group["output_tok/sec"].mean()
+                    tput_group = group
+                    if conc_col:
+                        if profile in ("Profile D: Prefill Heavy (8k/1k)",):
+                            tput_group = group[group[conc_col] <= 100]
+                        else:
+                            tput_group = group[group[conc_col] <= 300]
+                    if tput_group.empty:
+                        tput_group = group
+                    avg_output_throughput = tput_group["output_tok/sec"].mean()
                     if pd.notna(avg_output_throughput) and avg_output_throughput > 0:
                         total_tokens = avg_output_throughput * runtime_seconds
                         if total_tokens > 0:
@@ -9925,16 +10123,16 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Concurrencies": st.column_config.NumberColumn(
                         "Concurrencies",
-                        help="Number of different concurrent user load levels tested (e.g., 1, 50, 100, 200, 300, 400, 500, 650 users). Each level runs for ~10 minutes.",
+                        help="Number of different concurrent user load levels tested (e.g., 1, 50, 100, 200, 300, 400, 500, 650 users). Each level runs for ~7.5 min (3.4+) or ~10 min (older).",
                     ),
                     "Benchmark Duration (min)": st.column_config.NumberColumn(
                         "Benchmark Duration (min)",
-                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies × 10 minutes per level.",
+                        help="Total benchmark duration in minutes. Calculated as: Number of Concurrencies x duration per level (7.5 or 10 min).",
                         format="%d",
                     ),
                     "Benchmark Duration (hrs)": st.column_config.NumberColumn(
                         "Benchmark Duration (hrs)",
-                        help="Total benchmark duration converted to hours. Used for energy calculations (kWh = kW × hours).",
+                        help="Total benchmark duration converted to hours. Used for energy calculations (kWh = kW x hours).",
                         format="%.2f",
                     ),
                     "Avg Throughput (tok/s)": st.column_config.TextColumn(
@@ -9943,7 +10141,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Total Tokens Generated": st.column_config.TextColumn(
                         "Total Tokens Generated",
-                        help="Estimated total output tokens generated during the benchmark. Formula: Avg Throughput (tok/s) × Runtime (seconds). Used for efficiency calculations.",
+                        help="Estimated total output tokens generated during the benchmark. Formula: Avg Throughput (tok/s) x Runtime (seconds). Used for efficiency calculations.",
                     ),
                     "Power per GPU (kW)": st.column_config.NumberColumn(
                         "Power per GPU (kW)",
@@ -9952,17 +10150,17 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     ),
                     "Total Power Draw (kW)": st.column_config.NumberColumn(
                         "Total Power Draw (kW)",
-                        help="Total average power for all GPUs running the model. Formula: Power per GPU × TP (number of GPUs).",
+                        help="Total average power for all GPUs running the model. Formula: Power per GPU x TP (number of GPUs).",
                         format="%.3f",
                     ),
                     "Total Energy Used (kWh)": st.column_config.NumberColumn(
                         "Total Energy Used (kWh)",
-                        help="Total GPU energy consumed during the benchmark in kilowatt-hours. Formula: Total Power Draw (kW) × No of Nodes × Benchmark Duration (hrs). Does not include CPU or storage energy.",
+                        help="Total GPU energy consumed during the benchmark in kilowatt-hours. Formula: Total Power Draw (kW) x No of Nodes x Benchmark Duration (hrs). Does not include CPU or storage energy.",
                         format="%.3f",
                     ),
                     "Energy/1M Tokens (Wh)": st.column_config.TextColumn(
                         "Energy/1M Tokens (Wh)",
-                        help="Energy efficiency metric in Watt-hours per 1 million tokens. Formula: (Total Energy Used in kWh × 1e9) ÷ Total Tokens. LOWER values = MORE efficient. Best metric for comparing energy efficiency across different models and hardware at production scale.",
+                        help="Energy efficiency metric in Watt-hours per 1 million tokens. Formula: (Total Energy Used in kWh x 1e9) ÷ Total Tokens. LOWER values = MORE efficient. Best metric for comparing energy efficiency across different models and hardware at production scale.",
                     ),
                     "Data Source": st.column_config.TextColumn(
                         "Data Source",
@@ -10047,7 +10245,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                             )
 
                 st.caption(
-                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies × duration per level "
+                    "💡 **Note:** Benchmark Duration calculated as # of Concurrencies x duration per level "
                     "(7.5 min for 3.4 releases, 10 min for previous releases). "
                     "Power per GPU values are from Grafana metrics (DCGM/ROCm-SMI). "
                     "**Energy/1M Tokens** is a normalized efficiency metric for comparing across hardware at production scale."
@@ -10489,6 +10687,11 @@ def render_filtered_data_section(filtered_df, use_expander=True):
 
         display_filtered_df["view_logs_link"] = False
 
+        # Drop internal columns not useful for display
+        for _drop_col in ("custom_isl_osl", "multiturn_isl_osl"):
+            if _drop_col in display_filtered_df.columns:
+                display_filtered_df = display_filtered_df.drop(columns=[_drop_col])
+
         # Reorder columns to place grafana_metrics_link after TP, view_logs_link after that, and Run Date at the end
         cols = display_filtered_df.columns.tolist()
         if "grafana_metrics_link" in cols and "TP" in cols:
@@ -10501,8 +10704,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             cols.insert(gml_idx + 1, "view_logs_link")
         if "request_type" in cols:
             cols.remove("request_type")
-            ver_idx = cols.index("version")
-            cols.insert(ver_idx + 1, "request_type")
+            cols.append("request_type")
         if "Run Date" in cols:
             cols.remove("Run Date")
             cols.append("Run Date")
@@ -10714,7 +10916,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             ),
             "error_rate": st.column_config.NumberColumn(
                 "error_rate",
-                help="Error rate percentage - (errored_requests / total_requests) × 100 (lower is better)",
+                help="Error rate percentage - (errored_requests / total_requests) x 100 (lower is better)",
                 format="%.2f",
             ),
             "efficiency_ratio": st.column_config.NumberColumn(
@@ -10861,6 +11063,7 @@ if "view" in st.query_params and "dashboard_view_selector" not in st.session_sta
     ]:
         st.session_state.selected_view = view_from_url
         st.session_state.dashboard_view_selector = view_from_url
+        st.session_state._initial_url_view = view_from_url
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
@@ -11080,6 +11283,12 @@ def main():
                 "tr_tp": "trends_tp_multi",
                 "tr_metric": "trends_metric",
             },
+            "energy_carbon": {
+                "ec_ver": "energy_version_filter",
+                "ec_accel": "energy_accelerator_filter",
+                "ec_profile": "energy_profile_filter",
+                "ec_models": "energy_model_filter",
+            },
         }
 
         def encode_filters_to_url(accelerators, models, versions, profile, tp_sizes):
@@ -11185,6 +11394,8 @@ def main():
 
             if "profile" in query_params:
                 profile_from_url = query_params["profile"].strip()
+                if profile_from_url == "Custom":
+                    profile_from_url = "Custom ISL/OSL"
                 if profile_from_url in all_profiles:
                     url_profile = profile_from_url
 
@@ -11206,6 +11417,22 @@ def main():
             if "custom_isl_osl" in query_params:
                 url_custom_isl_osl = query_params["custom_isl_osl"].strip()
 
+            url_dataset = None
+            if "dataset" in query_params:
+                url_dataset = query_params["dataset"].strip()
+
+            url_spec_decoding = None
+            if "spec_decoding" in query_params:
+                url_spec_decoding = [
+                    v.strip() for v in query_params["spec_decoding"].split(",")
+                ]
+
+            url_prefix_caching = None
+            if "prefix_caching" in query_params:
+                url_prefix_caching = [
+                    v.strip() for v in query_params["prefix_caching"].split(",")
+                ]
+
             url_multiturn_isl_osl = None
             if "multiturn_isl_osl" in query_params:
                 url_multiturn_isl_osl = query_params["multiturn_isl_osl"].strip()
@@ -11214,11 +11441,11 @@ def main():
             if "mt_turns" in query_params:
                 try:
                     url_mt_turns = [
-                        int(t.strip())
+                        float(t.strip())
                         for t in query_params["mt_turns"].split(",")
-                        if t.strip().isdigit()
+                        if t.strip()
                     ]
-                except Exception:
+                except (ValueError, OverflowError):
                     url_mt_turns = None
 
             url_mt_prefix_tokens = None
@@ -11227,7 +11454,7 @@ def main():
                     v.strip()
                     for v in query_params["mt_prefix_tokens"].split(",")
                     if v.strip()
-                ]
+                ] or None
 
             url_mt_prefix_count = None
             if "mt_prefix_count" in query_params:
@@ -11235,7 +11462,7 @@ def main():
                     v.strip()
                     for v in query_params["mt_prefix_count"].split(",")
                     if v.strip()
-                ]
+                ] or None
 
             url_dp_sizes = []
             if "dp_sizes" in query_params:
@@ -11255,6 +11482,8 @@ def main():
                 "pareto_version_select",
                 "trends_versions_multi",
                 "trends_tp_multi",
+                "energy_accelerator_filter",
+                "energy_model_filter",
             }
             NUMERIC_LIST_SESSION_KEYS = {"trends_tp_multi"}
             INT_SESSION_KEYS = {
@@ -11303,6 +11532,9 @@ def main():
                 url_mt_turns,
                 url_mt_prefix_tokens,
                 url_mt_prefix_count,
+                url_dataset,
+                url_spec_decoding,
+                url_prefix_caching,
             )
 
     df["profile"] = assign_profile_vectorized(df)
@@ -11312,7 +11544,7 @@ def main():
         df.loc[df["turns"].fillna(1).astype(int) > 1, "profile"] = "Multi-turn"
 
     df["custom_isl_osl"] = np.where(
-        df["profile"] == "Custom",
+        df["profile"] == "Custom ISL/OSL",
         df["prompt toks"].astype(int).astype(str)
         + "/"
         + df["output toks"].astype(int).astype(str),
@@ -11386,21 +11618,46 @@ def main():
 
     if "url_filters_loaded" not in st.session_state:
         st.session_state.url_filters_loaded = True
-        (
-            url_accelerators,
-            url_models,
-            url_versions,
-            url_profile,
-            url_tp_sizes,
-            url_section,
-            url_section_filters,
-            url_custom_isl_osl,
-            url_dp_sizes,
-            url_multiturn_isl_osl,
-            url_mt_turns,
-            url_mt_prefix_tokens,
-            url_mt_prefix_count,
-        ) = decode_filters_from_url()
+        # Only decode URL filters on a fresh page load that targeted RHAIIS
+        # (or had no view param, which defaults to RHAIIS). When switching
+        # from another view, the URL has that view's params.
+        _initial_view = st.session_state.get("_initial_url_view")
+        if _initial_view is None or _initial_view == "RHAIIS Dashboard":
+            (
+                url_accelerators,
+                url_models,
+                url_versions,
+                url_profile,
+                url_tp_sizes,
+                url_section,
+                url_section_filters,
+                url_custom_isl_osl,
+                url_dp_sizes,
+                url_multiturn_isl_osl,
+                url_mt_turns,
+                url_mt_prefix_tokens,
+                url_mt_prefix_count,
+                url_dataset,
+                url_spec_decoding,
+                url_prefix_caching,
+            ) = decode_filters_from_url()
+        else:
+            url_accelerators = []
+            url_models = []
+            url_versions = []
+            url_profile = None
+            url_tp_sizes = []
+            url_section = None
+            url_section_filters = {}
+            url_custom_isl_osl = None
+            url_dp_sizes = []
+            url_multiturn_isl_osl = None
+            url_mt_turns = None
+            url_mt_prefix_tokens = None
+            url_mt_prefix_count = None
+            url_dataset = None
+            url_spec_decoding = None
+            url_prefix_caching = None
 
         if url_section:
             st.session_state.active_section = url_section
@@ -11478,6 +11735,12 @@ def main():
         st.session_state.use_url_filters = has_url_filters
         if url_custom_isl_osl:
             st.session_state.selected_custom_isl_osl = url_custom_isl_osl
+        if url_dataset:
+            st.session_state.selected_dataset_filter = url_dataset
+        if url_spec_decoding is not None:
+            st.session_state.selected_spec_decoding_filter = url_spec_decoding
+        if url_prefix_caching is not None:
+            st.session_state.selected_prefix_caching_filter = url_prefix_caching
         if url_multiturn_isl_osl:
             st.session_state.selected_multiturn_isl_osl = url_multiturn_isl_osl
         if url_mt_turns is not None:
@@ -11535,11 +11798,15 @@ def main():
             # If no profile selected yet, determine the default that will be selected
             if not current_profile:
                 available_profiles_raw = sorted(df["profile"].unique().tolist())
-                _sp = ("Multi-turn", "Custom")
+                _sp = ("Multi-turn", "Custom ISL/OSL")
                 available_profiles = (
                     [p for p in available_profiles_raw if p not in _sp]
                     + (["Multi-turn"] if "Multi-turn" in available_profiles_raw else [])
-                    + (["Custom"] if "Custom" in available_profiles_raw else [])
+                    + (
+                        ["Custom ISL/OSL"]
+                        if "Custom ISL/OSL" in available_profiles_raw
+                        else []
+                    )
                 )
 
                 # Default to Profile A (1k/1k) when clearing or as fallback
@@ -11638,12 +11905,12 @@ def main():
                 if not temp_df.empty
                 else []
             )
-            # Sort so "Multi-turn" and "Custom" always come last
-            _special = ("Multi-turn", "Custom")
+            # Sort so "Multi-turn" and "Custom ISL/OSL" always come last
+            _special = ("Multi-turn", "Custom ISL/OSL")
             profiles = (
                 [p for p in profiles_raw if p not in _special]
                 + (["Multi-turn"] if "Multi-turn" in profiles_raw else [])
-                + (["Custom"] if "Custom" in profiles_raw else [])
+                + (["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else [])
             )
 
             # Default to Profile A (1k/1k) when clearing or as fallback
@@ -11711,10 +11978,20 @@ def main():
                     )
                 )
 
+            # Compute index from session state so the selectbox stays in sync
+            # when the options list changes (Streamlit resets to index 0 otherwise).
+            _desired_profile = st.session_state.get(
+                profile_key, profiles[0] if profiles else None
+            )
+            _profile_idx = (
+                profiles.index(_desired_profile) if _desired_profile in profiles else 0
+            )
+
             selected_profile = (
                 st.selectbox(
                     "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                     profiles,
+                    index=_profile_idx,
                     format_func=clean_profile_name,
                     key=profile_key,
                 )
@@ -11728,13 +12005,13 @@ def main():
 
             # Secondary filter: specific ISL/OSL pair when Custom is selected
             selected_custom_isl_osl = None
-            if selected_profile == "Custom":
+            if selected_profile == "Custom ISL/OSL":
                 custom_temp = df.copy()
                 if selected_accelerators:
                     custom_temp = custom_temp[
                         custom_temp["accelerator"].isin(selected_accelerators)
                     ]
-                custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+                custom_temp = custom_temp[custom_temp["profile"] == "Custom ISL/OSL"]
                 custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
                 custom_pairs = [p for p in custom_pairs if p]
                 if custom_pairs:
@@ -11762,7 +12039,10 @@ def main():
             selected_dataset_filter = None
             selected_spec_decoding_filter = None
             selected_prefix_caching_filter = None
-            if selected_profile == "Custom" and selected_custom_isl_osl == "0/0":
+            if (
+                selected_profile == "Custom ISL/OSL"
+                and selected_custom_isl_osl == "0/0"
+            ):
                 real_temp = custom_temp[custom_temp["custom_isl_osl"] == "0/0"]
                 available_datasets = sorted(
                     d for d in real_temp["dataset"].unique() if d
@@ -11773,7 +12053,12 @@ def main():
                         dataset_key not in st.session_state
                         or st.session_state.get(dataset_key) not in available_datasets
                     ):
-                        st.session_state[dataset_key] = available_datasets[0]
+                        url_ds = st.session_state.get("selected_dataset_filter")
+                        st.session_state[dataset_key] = (
+                            url_ds
+                            if url_ds and url_ds in available_datasets
+                            else available_datasets[0]
+                        )
                     selected_dataset_filter = st.selectbox(
                         "Select Dataset",
                         available_datasets,
@@ -11792,6 +12077,14 @@ def main():
                         spec_key = (
                             f"spec_decoding_filter_{st.session_state.filter_change_key}"
                         )
+                        if spec_key not in st.session_state:
+                            url_sd = st.session_state.get(
+                                "selected_spec_decoding_filter"
+                            )
+                            if url_sd is not None:
+                                st.session_state[spec_key] = [
+                                    v for v in url_sd if v in spec_options
+                                ]
                         selected_spec_decoding_filter = st.multiselect(
                             "Speculative Decoding",
                             spec_options,
@@ -11814,6 +12107,14 @@ def main():
                     selected_prefix_caching_filter = None
                     if len(pc_options) > 1:
                         pc_key = f"prefix_caching_filter_{st.session_state.filter_change_key}"
+                        if pc_key not in st.session_state:
+                            url_pc = st.session_state.get(
+                                "selected_prefix_caching_filter"
+                            )
+                            if url_pc is not None:
+                                st.session_state[pc_key] = [
+                                    v for v in url_pc if v in pc_options
+                                ]
                         selected_prefix_caching_filter = st.multiselect(
                             "Prefix Caching",
                             pc_options,
@@ -11870,18 +12171,30 @@ def main():
                         turns_key = (
                             f"mt_turns_filter_{st.session_state.filter_change_key}"
                         )
-                        _url_mt_turns = st.session_state.pop("baseline_mt_turns", None)
-                        turns_default = (
-                            [t for t in _url_mt_turns if t in turns_opts]
-                            if _url_mt_turns is not None
-                            else []
-                        )
+                        if turns_key not in st.session_state:
+                            _url_mt_turns = st.session_state.pop(
+                                "baseline_mt_turns", None
+                            )
+                            _persisted_mt_turns = st.session_state.get(
+                                "_persisted_mt_turns"
+                            )
+                            if _url_mt_turns is not None:
+                                turns_default = [
+                                    t for t in _url_mt_turns if t in turns_opts
+                                ]
+                            elif _persisted_mt_turns is not None:
+                                turns_default = [
+                                    t for t in _persisted_mt_turns if t in turns_opts
+                                ]
+                            else:
+                                turns_default = []
+                            st.session_state[turns_key] = turns_default
                         selected_mt_turns = st.multiselect(
                             "Turns",
                             turns_opts,
-                            default=turns_default,
                             key=turns_key,
                         )
+                        st.session_state._persisted_mt_turns = list(selected_mt_turns)
 
                     # Prefix tokens filter — scoped to ISL/OSL + turns
                     if selected_mt_turns:
@@ -11893,19 +12206,29 @@ def main():
                         )
                         if pt_opts:
                             pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
-                            _url_mt_pt = st.session_state.pop(
-                                "baseline_mt_prefix_tokens", None
-                            )
-                            pt_default = (
-                                [v for v in _url_mt_pt if v in pt_opts]
-                                if _url_mt_pt is not None
-                                else pt_opts
-                            )
+                            if pt_key not in st.session_state:
+                                _url_mt_pt = st.session_state.pop(
+                                    "baseline_mt_prefix_tokens", None
+                                )
+                                _persisted_mt_pt = st.session_state.get(
+                                    "_persisted_mt_prefix_tokens"
+                                )
+                                if _url_mt_pt is not None:
+                                    pt_default = [v for v in _url_mt_pt if v in pt_opts]
+                                elif _persisted_mt_pt is not None:
+                                    pt_default = [
+                                        v for v in _persisted_mt_pt if v in pt_opts
+                                    ]
+                                else:
+                                    pt_default = pt_opts
+                                st.session_state[pt_key] = pt_default or pt_opts
                             selected_mt_prefix_tokens = st.multiselect(
                                 "Prefix Tokens",
                                 pt_opts,
-                                default=pt_default or pt_opts,
                                 key=pt_key,
+                            )
+                            st.session_state._persisted_mt_prefix_tokens = list(
+                                selected_mt_prefix_tokens
                             )
 
                     # Prefix count filter — scoped to ISL/OSL + turns + prefix_tokens
@@ -11918,19 +12241,29 @@ def main():
                         )
                         if pc_opts:
                             pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
-                            _url_mt_pc = st.session_state.pop(
-                                "baseline_mt_prefix_count", None
-                            )
-                            pc_default = (
-                                [v for v in _url_mt_pc if v in pc_opts]
-                                if _url_mt_pc is not None
-                                else pc_opts
-                            )
+                            if pc_mt_key not in st.session_state:
+                                _url_mt_pc = st.session_state.pop(
+                                    "baseline_mt_prefix_count", None
+                                )
+                                _persisted_mt_pc = st.session_state.get(
+                                    "_persisted_mt_prefix_count"
+                                )
+                                if _url_mt_pc is not None:
+                                    pc_default = [v for v in _url_mt_pc if v in pc_opts]
+                                elif _persisted_mt_pc is not None:
+                                    pc_default = [
+                                        v for v in _persisted_mt_pc if v in pc_opts
+                                    ]
+                                else:
+                                    pc_default = pc_opts
+                                st.session_state[pc_mt_key] = pc_default or pc_opts
                             selected_mt_prefix_count = st.multiselect(
                                 "Prefix Count",
                                 pc_opts,
-                                default=pc_default or pc_opts,
                                 key=pc_mt_key,
+                            )
+                            st.session_state._persisted_mt_prefix_count = list(
+                                selected_mt_prefix_count
                             )
 
             # Update baseline_profile to remember user's current selection
@@ -12027,7 +12360,7 @@ def main():
 
                 # Exclude models that only appear under the Custom ISL/OSL profile
                 _fh_non_custom_models = set(
-                    df[df["profile"] != "Custom"]["model"].unique()
+                    df[df["profile"] != "Custom ISL/OSL"]["model"].unique()
                 )
                 _fh_df = df[df["model"].isin(_fh_non_custom_models)]
 
@@ -12041,11 +12374,8 @@ def main():
                 if tree_view == "Model":
                     _fh_models = sorted(_fh_df["model"].unique())
                     for _fh_model in _fh_models:
-                        _fh_short = (
-                            _fh_model.split("/")[-1] if "/" in _fh_model else _fh_model
-                        )
                         _fh_data = _fh_df[_fh_df["model"] == _fh_model]
-                        with st.expander(f"🤖 {_fh_short}", expanded=False):
+                        with st.expander(f"🤖 {_fh_model}", expanded=False):
                             combo_dict = {}
                             for _, row in _fh_data.iterrows():
                                 acc = row["accelerator"]
@@ -12089,34 +12419,29 @@ def main():
                             for _, row in _fh_vdata.iterrows():
                                 acc = row["accelerator"]
                                 model = row["model"]
-                                model_short = (
-                                    model.split("/")[-1] if "/" in model else model
-                                )
                                 profile = row["profile"]
                                 tp = row["TP"]
                                 if acc not in combo_dict:
                                     combo_dict[acc] = {}
-                                if model_short not in combo_dict[acc]:
-                                    combo_dict[acc][model_short] = {}
-                                if profile not in combo_dict[acc][model_short]:
-                                    combo_dict[acc][model_short][profile] = []
-                                if tp not in combo_dict[acc][model_short][profile]:
-                                    combo_dict[acc][model_short][profile].append(tp)
+                                if model not in combo_dict[acc]:
+                                    combo_dict[acc][model] = {}
+                                if profile not in combo_dict[acc][model]:
+                                    combo_dict[acc][model][profile] = []
+                                if tp not in combo_dict[acc][model][profile]:
+                                    combo_dict[acc][model][profile].append(tp)
                             tree_text = ""
                             for acc in sorted(combo_dict.keys()):
                                 tree_text += f"🔧 {acc}\n"
-                                for model_short in sorted(combo_dict[acc].keys()):
-                                    tree_text += f"    🤖 {model_short}\n"
+                                for model_full in sorted(combo_dict[acc].keys()):
+                                    tree_text += f"    🤖 {model_full}\n"
                                     for profile in sorted(
-                                        combo_dict[acc][model_short].keys()
+                                        combo_dict[acc][model_full].keys()
                                     ):
                                         tp_list = ", ".join(
                                             map(
                                                 str,
                                                 sorted(
-                                                    combo_dict[acc][model_short][
-                                                        profile
-                                                    ]
+                                                    combo_dict[acc][model_full][profile]
                                                 ),
                                             )
                                         )
@@ -12246,6 +12571,10 @@ def main():
             tracking_key = "previous_models_for_tp_tracking"
             prev_selected_models = st.session_state.get(tracking_key, None)
 
+            # Track previous available TP sizes to detect filter-driven changes
+            avail_tp_key = "previous_available_tp_sizes"
+            prev_available_tp = st.session_state.get(avail_tp_key, None)
+
             # Get previous TP selection
             prev_tp_key = f"tp_filter_{st.session_state.filter_change_key}_all_{select_all_checked}"
             prev_selected_tp = st.session_state.get(prev_tp_key, None)
@@ -12259,6 +12588,13 @@ def main():
                 else False
             )
 
+            # Detect TP sizes that reappeared due to filter changes (e.g. adding back an accelerator)
+            newly_available_tp = []
+            if prev_available_tp is not None:
+                newly_available_tp = [
+                    tp for tp in tp_sizes if tp not in prev_available_tp
+                ]
+
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
             ):
@@ -12271,7 +12607,10 @@ def main():
                 tp_default = tp_sizes
             elif prev_selected_tp is not None:
                 # Models didn't change - preserve user's manual TP selections (filtered to available)
-                tp_default = [tp for tp in prev_selected_tp if tp in tp_sizes]
+                # Also auto-select any TP sizes that reappeared from filter changes
+                tp_default = [
+                    tp for tp in prev_selected_tp if tp in tp_sizes
+                ] + newly_available_tp
             elif st.session_state.get("_persisted_tp", None) is not None:
                 tp_default = [
                     tp for tp in st.session_state["_persisted_tp"] if tp in tp_sizes
@@ -12300,8 +12639,9 @@ def main():
                 )
                 st.rerun()
 
-            # Update the tracking variable with current selection
+            # Update tracking variables with current selection
             st.session_state[tracking_key] = selected_models
+            st.session_state[avail_tp_key] = tp_sizes
 
         if st.session_state.get("clear_all_filters", False):
             st.session_state.clear_all_filters = False
@@ -12341,7 +12681,7 @@ def main():
 
         custom_mask = (
             (df["custom_isl_osl"] == selected_custom_isl_osl)
-            if selected_profile == "Custom" and selected_custom_isl_osl
+            if selected_profile == "Custom ISL/OSL" and selected_custom_isl_osl
             else True
         )
         dataset_mask = (
@@ -12448,19 +12788,19 @@ def main():
             "🔍 Competitive Analysis",
             "📊 Performance Plots",
         ]
-        if selected_profile == "Custom":
+        if selected_profile == "Custom ISL/OSL":
             section_list.append("📈 Dataset Representation")
             section_list.append("🔄 Pareto Tradeoff Graphs")
         else:
             section_list.append("🔄 Pareto Tradeoff Analysis")
             section_list.append("🏆 Model Performance Comparison")
         section_list.append("⚖️ Compare Versions")
-        if selected_profile == "Custom":
+        if selected_profile == "Custom ISL/OSL":
             section_list.append("⚖️ Compare Configurations")
-        if selected_profile != "Custom":
+        if selected_profile != "Custom ISL/OSL":
             section_list.append("📈 Performance Trends")
             section_list.append("💰 Cost Analysis")
-        if selected_profile != "Custom":
+        if selected_profile != "Custom ISL/OSL":
             section_list.append("🌱 Energy Computation")
         section_list.append("💡 IntelliConfig")
         section_list.append("⚙️ Runtime Server Configs")
@@ -12594,23 +12934,39 @@ def main():
                 desired_params["versions"] = ",".join(selected_versions)
             if selected_profile:
                 desired_params["profile"] = selected_profile
-            if selected_profile == "Custom":
+            if selected_profile == "Custom ISL/OSL":
                 custom_val = st.session_state.get("selected_custom_isl_osl")
                 if custom_val:
                     desired_params["custom_isl_osl"] = custom_val
+                if custom_val == "0/0":
+                    ds_val = st.session_state.get("selected_dataset_filter")
+                    if ds_val:
+                        desired_params["dataset"] = ds_val
+                    sd_val = st.session_state.get("selected_spec_decoding_filter")
+                    if sd_val:
+                        desired_params["spec_decoding"] = ",".join(sd_val)
+                    pc_val = st.session_state.get("selected_prefix_caching_filter")
+                    if pc_val:
+                        desired_params["prefix_caching"] = ",".join(pc_val)
             if selected_profile == "Multi-turn":
                 mt_val = st.session_state.get("selected_multiturn_isl_osl")
                 if mt_val:
                     desired_params["multiturn_isl_osl"] = mt_val
+
+                def _fmt(v):
+                    return (
+                        str(int(v)) if isinstance(v, float) and v == int(v) else str(v)
+                    )
+
                 if selected_mt_turns is not None:
-                    desired_params["mt_turns"] = ",".join(map(str, selected_mt_turns))
+                    desired_params["mt_turns"] = ",".join(map(_fmt, selected_mt_turns))
                 if selected_mt_prefix_tokens is not None:
                     desired_params["mt_prefix_tokens"] = ",".join(
-                        map(str, selected_mt_prefix_tokens)
+                        map(_fmt, selected_mt_prefix_tokens)
                     )
                 if selected_mt_prefix_count is not None:
                     desired_params["mt_prefix_count"] = ",".join(
-                        map(str, selected_mt_prefix_count)
+                        map(_fmt, selected_mt_prefix_count)
                     )
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
