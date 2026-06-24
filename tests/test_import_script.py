@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 # Import the actual functions to test (from the old script for guidellm 0.3.x/0.4.x)
-from manual_runs.scripts.import_manual_run_jsons_old import (
+from manual_runs.scripts.vllm.import_manual_run_jsons_old import (
     parse_guidellm_json,
     process_benchmark_section,
 )

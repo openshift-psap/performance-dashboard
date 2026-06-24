@@ -336,10 +336,10 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
                 & (df_prev["replicas"] == replicas)
             )
             cd, pd_ = df_curr[mask_c], df_prev[mask_p]
-            all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
+            common_conc = set(cd["intended concurrency"].dropna().unique()) & set(
                 pd_["intended concurrency"].dropna().unique()
             )
-            conc_for_geomean = {c for c in all_conc if c > 1}
+            conc_for_geomean = {c for c in common_conc if c > 1}
             suffix = current.split("-", 2)[-1] if "-" in current else current
             row = {
                 "model": model,
@@ -546,10 +546,10 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
                     & (df_ups["replicas"] == replicas)
                 )
                 cd, ud = df_cur[mask_c], df_ups[mask_u]
-                all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
+                common_conc = set(cd["intended concurrency"].dropna().unique()) & set(
                     ud["intended concurrency"].dropna().unique()
                 )
-                conc_for_geomean = {c for c in all_conc if c > 1}
+                conc_for_geomean = {c for c in common_conc if c > 1}
                 pct, better, _, _, similar = _compare_two_datasets(
                     cd, ud, tput_cfg, conc_for_geomean
                 )
@@ -2217,10 +2217,32 @@ def render_compare_versions_section(df, use_expander=True):
 
         # Secondary custom ISL/OSL pair filter
         selected_custom_pair = None
-        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
-            custom_temp = df[df["profile"] == "Custom ISL/OSL"]
-            custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
-            custom_pairs = [p for p in custom_pairs if p]
+        if (
+            selected_profile == "Custom ISL/OSL"
+            and version_2
+            and "custom_isl_osl" in df.columns
+        ):
+            v1_pairs = set(
+                df.loc[
+                    (df["version"] == version_1)
+                    & (df["accelerator"] == selected_accelerator)
+                    & (df["profile"] == "Custom ISL/OSL"),
+                    "custom_isl_osl",
+                ]
+                .dropna()
+                .tolist()
+            )
+            v2_pairs = set(
+                df.loc[
+                    (df["version"] == version_2)
+                    & (df["accelerator"] == selected_accelerator)
+                    & (df["profile"] == "Custom ISL/OSL"),
+                    "custom_isl_osl",
+                ]
+                .dropna()
+                .tolist()
+            )
+            custom_pairs = sorted(p for p in v1_pairs & v2_pairs if p)
             if custom_pairs:
                 selected_custom_pair = st.selectbox(
                     "Select Custom ISL/OSL Pair",
@@ -3030,7 +3052,7 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are neutral.<br><br>
 </summary>
 <div class="overview-card-detail">
 Non-regression rate: {data["win_rate"]:.0f} %
-= ({data["total_cmp"]} − {n_losses_h} losses) / {data["total_cmp"]} total.<br>
+= ({data["total_cmp"]} - {n_losses_h} losses) / {data["total_cmp"]} total.<br>
 Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br>
 • <b>Healthy</b> — ≥ 90 %<br>
 • <b>Warning</b> — ≥ 70 %<br>
