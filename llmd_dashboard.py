@@ -49,6 +49,114 @@ S3_REGION = os.environ.get("S3_REGION", "us-east-1")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
+# ── Overview version configuration ────────────────────────────────
+LLMD_NEUTRAL_THRESHOLD_PCT = 2.0
+
+LLMD_OVERVIEW_RELEASE_PAIRS = [
+    {
+        "label": "RHOAI 3.4 vs 3.3",
+        "pairs": [
+            {"current": "RHOAI-3.4-approximate", "previous": "RHOAI-3.3-approximate"},
+            {"current": "RHOAI-3.4-default", "previous": "RHOAI-3.3-default"},
+            {"current": "RHOAI-3.4-precise", "previous": "RHOAI-3.3-precise"},
+        ],
+        "upstream": [
+            {"current": "RHOAI-3.4-approximate", "upstream": "llm-d-0.4-approximate"},
+            {"current": "RHOAI-3.4-precise", "upstream": "llm-d-0.4-precise"},
+        ],
+    },
+]
+
+LLMD_ACCELERATOR_DISPLAY_NAMES = {
+    "H200": "NVIDIA H200",
+    "MI300X": "AMD MI300X",
+    "B200": "NVIDIA B200",
+    "B300": "NVIDIA B300",
+}
+
+_LLMD_FAMILY_PATTERNS = [
+    ("Llama", ["llama"]),
+    ("Qwen", ["qwen"]),
+    ("Mixtral", ["mixtral"]),
+    ("Mistral", ["mistral"]),
+    ("DeepSeek", ["deepseek"]),
+    ("Granite", ["granite"]),
+    ("Gemma", ["gemma"]),
+    ("GPT-OSS", ["gpt-oss"]),
+]
+
+
+def _llmd_accel_display(name):
+    """Return the full display name for an accelerator."""
+    return LLMD_ACCELERATOR_DISPLAY_NAMES.get(name, name)
+
+
+def _llmd_short_model_name(full_name):
+    """Extract a short display name from a full model path."""
+    name = full_name.split("/")[-1] if "/" in full_name else full_name
+    for suffix in ["-Instruct", "-instruct", "-dynamic", "-FP8"]:
+        name = name.replace(suffix, "")
+    return name
+
+
+def _llmd_model_family(model_name):
+    """Map a full model name to its model family."""
+    lower = model_name.lower()
+    for family, keywords in _LLMD_FAMILY_PATTERNS:
+        if any(kw in lower for kw in keywords):
+            return family
+    if "/" in model_name:
+        return model_name.split("/")[0]
+    return model_name
+
+
+def _llmd_health_dots_html(health):
+    """Return traffic-light dot HTML for a health status string."""
+    if health == "Healthy":
+        dots = (
+            '<span class="health-dot dot-grey"></span>'
+            '<span class="health-dot dot-grey"></span>'
+            '<span class="health-dot dot-green"></span>'
+        )
+    elif health == "Warning":
+        dots = (
+            '<span class="health-dot dot-grey"></span>'
+            '<span class="health-dot dot-amber"></span>'
+            '<span class="health-dot dot-grey"></span>'
+        )
+    else:
+        dots = (
+            '<span class="health-dot dot-red"></span>'
+            '<span class="health-dot dot-grey"></span>'
+            '<span class="health-dot dot-grey"></span>'
+        )
+    return f'<span class="health-dots">{dots}</span>'
+
+
+def _llmd_display_profile(profile, custom_isl_osl=""):
+    """Return display string for a profile."""
+    if custom_isl_osl:
+        parts = str(custom_isl_osl).split("/")
+        if len(parts) == 2:
+            return f"{parts[0]}/{parts[1]}"
+    return str(profile)
+
+
+def _llmd_hm_cell(pct, higher_is_better):
+    """Return styled heatmap cell HTML for a % delta."""
+    if pct is None:
+        return '<span class="hm-cell hm-neutral">N/A</span>'
+    norm = pct if higher_is_better else -pct
+    sign = "+" if pct > 0 else ""
+    label = f"{sign}{pct:.1f} %"
+    if norm > 5:
+        cls = "hm-improve-strong"
+    elif norm >= -5:
+        cls = "hm-similar"
+    else:
+        cls = "hm-regress-strong"
+    return f'<span class="hm-cell {cls}">{label}</span>'
+
 
 def _read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.DataFrame:
     """Read a CSV file from S3 bucket.
@@ -159,6 +267,372 @@ def _compare_two_datasets(data_a, data_b, metric_config, user_conc_set):
     return pct_diff, a_better, a_peak_conc, b_peak_conc, abs(pct_diff) < 5
 
 
+def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
+    """Compute overview metrics comparing LLM-D release versions across multiple pairs."""
+    metrics_cfg = {
+        "Throughput": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "TTFT P95": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P95": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "E2E Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
+    def _combos(d):
+        return set(
+            zip(
+                d["model"],
+                d["TP"],
+                d["accelerator"],
+                d["profile"],
+                d["DP"],
+                d["EP"],
+                d["replicas"],
+            )
+        )
+
+    combo_results = []
+    all_curr_versions = []
+    for pair in version_pairs:
+        current = pair["current"]
+        previous = pair["previous"]
+        all_curr_versions.append(current)
+        df_curr = df[df["version"] == current].copy()
+        df_prev = df[df["version"] == previous].copy()
+
+        common_combos = sorted(_combos(df_curr) & _combos(df_prev))
+
+        for model, tp, accel, profile, dp, ep, replicas in common_combos:
+            mask_c = (
+                (df_curr["model"] == model)
+                & (df_curr["TP"] == tp)
+                & (df_curr["accelerator"] == accel)
+                & (df_curr["profile"] == profile)
+                & (df_curr["DP"] == dp)
+                & (df_curr["EP"] == ep)
+                & (df_curr["replicas"] == replicas)
+            )
+            mask_p = (
+                (df_prev["model"] == model)
+                & (df_prev["TP"] == tp)
+                & (df_prev["accelerator"] == accel)
+                & (df_prev["profile"] == profile)
+                & (df_prev["DP"] == dp)
+                & (df_prev["EP"] == ep)
+                & (df_prev["replicas"] == replicas)
+            )
+            cd, pd_ = df_curr[mask_c], df_prev[mask_p]
+            common_conc = set(cd["intended concurrency"].dropna().unique()) & set(
+                pd_["intended concurrency"].dropna().unique()
+            )
+            conc_for_geomean = {c for c in common_conc if c > 1}
+            suffix = current.split("-", 2)[-1] if "-" in current else current
+            row = {
+                "model": model,
+                "short_name": _llmd_short_model_name(model),
+                "tp": tp,
+                "accelerator": accel,
+                "profile": profile,
+                "dp": dp,
+                "ep": ep,
+                "replicas": replicas,
+                "version_current": current,
+                "version_previous": previous,
+                "variant": suffix,
+            }
+            for mname, mc in metrics_cfg.items():
+                pct, better, _, _, similar = _compare_two_datasets(
+                    cd, pd_, mc, conc_for_geomean
+                )
+                row[f"{mname}_pct"] = pct
+                row[f"{mname}_better"] = better
+                row[f"{mname}_similar"] = similar
+            combo_results.append(row)
+
+    df_all_curr = df[df["version"].isin(all_curr_versions)]
+
+    # Aggregate KPIs
+    tput_pcts = [
+        r["Throughput_pct"] for r in combo_results if r["Throughput_pct"] is not None
+    ]
+    best_gain = max(tput_pcts) if tput_pcts else 0.0
+
+    all_normalised = []
+    for r in combo_results:
+        for mname, mc in metrics_cfg.items():
+            pct = r.get(f"{mname}_pct")
+            if pct is not None:
+                all_normalised.append(pct if mc["higher_is_better"] else -pct)
+    worst_regression = min(all_normalised) if all_normalised else 0.0
+
+    total_cmp = sum(1 for r in combo_results if r.get("Throughput_pct") is not None)
+    losses = sum(
+        1
+        for r in combo_results
+        if r.get("Throughput_pct") is not None
+        and not r.get("Throughput_better")
+        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+    )
+    win_rate = ((total_cmp - losses) / total_cmp * 100) if total_cmp > 0 else 100.0
+
+    models_tested = df_all_curr["model"].nunique()
+    models_list = sorted(df_all_curr["model"].unique())
+    accels_covered = df_all_curr["accelerator"].nunique()
+    accels_list = sorted(df_all_curr["accelerator"].unique())
+    health = (
+        "Healthy" if win_rate >= 90 else ("Warning" if win_rate >= 70 else "Regression")
+    )
+
+    best_gain_combo = None
+    for r in combo_results:
+        if r.get("Throughput_pct") == best_gain and best_gain > 0:
+            best_gain_combo = r
+            break
+
+    worst_reg_combo = None
+    worst_reg_metric = None
+    for r in combo_results:
+        for mname, mc in metrics_cfg.items():
+            pct = r.get(f"{mname}_pct")
+            if pct is not None:
+                norm = pct if mc["higher_is_better"] else -pct
+                if abs(norm - worst_regression) < 0.01:
+                    worst_reg_combo = r
+                    worst_reg_metric = mname
+
+    win_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_better") is True
+        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+    ]
+    loss_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_pct") is not None
+        and not r.get("Throughput_better")
+        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+    ]
+    neutral_combos = [
+        r
+        for r in combo_results
+        if r.get("Throughput_pct") is not None
+        and abs(r.get("Throughput_pct", 0)) <= LLMD_NEUTRAL_THRESHOLD_PCT
+    ]
+
+    # Per-accelerator rollup
+    accel_rollup = {}
+    for accel in sorted({r["accelerator"] for r in combo_results}):
+        ar = [r for r in combo_results if r["accelerator"] == accel]
+        tv = [r["Throughput_pct"] for r in ar if r["Throughput_pct"] is not None]
+        avg_tput = float(np.mean(tv)) if tv else 0.0
+        at = sum(1 for r in ar if r.get("Throughput_pct") is not None)
+        al = sum(
+            1
+            for r in ar
+            if r.get("Throughput_pct") is not None
+            and not r.get("Throughput_better")
+            and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+        )
+        awr = ((at - al) / at * 100) if at > 0 else 100.0
+
+        worst_m, worst_v, worst_raw = None, 0.0, 0.0
+        for r in ar:
+            for mname, mc in metrics_cfg.items():
+                pct = r.get(f"{mname}_pct")
+                if pct is not None:
+                    norm = pct if mc["higher_is_better"] else -pct
+                    if norm < worst_v:
+                        worst_v, worst_m, worst_raw = norm, mname, pct
+
+        ah = "Healthy" if awr >= 90 else ("Warning" if awr >= 70 else "Regression")
+        accel_rollup[accel] = {
+            "n_models": len({r["model"] for r in ar}),
+            "avg_tput_pct": avg_tput,
+            "win_rate": awr,
+            "health": ah,
+            "worst_metric": worst_m,
+            "worst_val": worst_v,
+            "worst_raw_pct": worst_raw,
+            "results": ar,
+        }
+
+    # Per-model-family rollup
+    family_buckets = {}
+    for r in combo_results:
+        fam = _llmd_model_family(r["model"])
+        family_buckets.setdefault(fam, []).append(r)
+
+    family_rollup = {}
+    for fam, results in sorted(family_buckets.items()):
+        tv = [r["Throughput_pct"] for r in results if r["Throughput_pct"] is not None]
+        avg_tput = float(np.mean(tv)) if tv else 0.0
+        ft = sum(1 for r in results if r.get("Throughput_pct") is not None)
+        fl = sum(
+            1
+            for r in results
+            if r.get("Throughput_pct") is not None
+            and not r.get("Throughput_better")
+            and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+        )
+        fwr = ((ft - fl) / ft * 100) if ft > 0 else 100.0
+
+        worst_m, worst_v, worst_raw = None, 0.0, 0.0
+        for r in results:
+            for mname, mc in metrics_cfg.items():
+                pct = r.get(f"{mname}_pct")
+                if pct is not None:
+                    norm = pct if mc["higher_is_better"] else -pct
+                    if norm < worst_v:
+                        worst_v, worst_m, worst_raw = norm, mname, pct
+
+        fh = "Healthy" if fwr >= 90 else ("Warning" if fwr >= 70 else "Regression")
+        family_rollup[fam] = {
+            "n_models": len({r["model"] for r in results}),
+            "avg_tput_pct": avg_tput,
+            "win_rate": fwr,
+            "health": fh,
+            "worst_metric": worst_m,
+            "worst_val": worst_v,
+            "worst_raw_pct": worst_raw,
+            "results": results,
+        }
+
+    # --- Upstream parity comparison ---
+    tput_cfg = metrics_cfg["Throughput"]
+    ttft_cfg = metrics_cfg["TTFT P95"]
+    itl_cfg = metrics_cfg["ITL P95"]
+
+    upstream_results = []
+    if upstream_pairs:
+        for up in upstream_pairs:
+            cur_ver = up["current"]
+            ups_ver = up["upstream"]
+            df_cur = df[df["version"] == cur_ver].copy()
+            df_ups = df[df["version"] == ups_ver].copy()
+            common = sorted(_combos(df_cur) & _combos(df_ups))
+            suffix = cur_ver.split("-", 2)[-1] if "-" in cur_ver else cur_ver
+            for model, tp, accel, profile, dp, ep, replicas in common:
+                mask_c = (
+                    (df_cur["model"] == model)
+                    & (df_cur["TP"] == tp)
+                    & (df_cur["accelerator"] == accel)
+                    & (df_cur["profile"] == profile)
+                    & (df_cur["DP"] == dp)
+                    & (df_cur["EP"] == ep)
+                    & (df_cur["replicas"] == replicas)
+                )
+                mask_u = (
+                    (df_ups["model"] == model)
+                    & (df_ups["TP"] == tp)
+                    & (df_ups["accelerator"] == accel)
+                    & (df_ups["profile"] == profile)
+                    & (df_ups["DP"] == dp)
+                    & (df_ups["EP"] == ep)
+                    & (df_ups["replicas"] == replicas)
+                )
+                cd, ud = df_cur[mask_c], df_ups[mask_u]
+                common_conc = set(cd["intended concurrency"].dropna().unique()) & set(
+                    ud["intended concurrency"].dropna().unique()
+                )
+                conc_for_geomean = {c for c in common_conc if c > 1}
+                pct, better, _, _, similar = _compare_two_datasets(
+                    cd, ud, tput_cfg, conc_for_geomean
+                )
+                ttft_pct, ttft_better, _, _, ttft_similar = _compare_two_datasets(
+                    cd, ud, ttft_cfg, conc_for_geomean
+                )
+                itl_pct, itl_better, _, _, itl_similar = _compare_two_datasets(
+                    cd, ud, itl_cfg, conc_for_geomean
+                )
+                upstream_results.append(
+                    {
+                        "model": model,
+                        "short_name": _llmd_short_model_name(model),
+                        "tp": tp,
+                        "accelerator": accel,
+                        "profile": profile,
+                        "dp": dp,
+                        "ep": ep,
+                        "replicas": replicas,
+                        "version_current": cur_ver,
+                        "version_upstream": ups_ver,
+                        "variant": suffix,
+                        "pct": pct,
+                        "better": better,
+                        "similar": similar,
+                        "ttft_pct": ttft_pct,
+                        "ttft_better": ttft_better,
+                        "ttft_similar": ttft_similar,
+                        "itl_pct": itl_pct,
+                        "itl_better": itl_better,
+                        "itl_similar": itl_similar,
+                    }
+                )
+
+    ups_with_data = [r for r in upstream_results if r.get("pct") is not None]
+    ups_wins = sum(1 for r in ups_with_data if r["better"] and not r["similar"])
+    ups_ties = sum(1 for r in ups_with_data if r["similar"])
+    ups_losses = sum(1 for r in ups_with_data if not r["better"] and not r["similar"])
+    ups_pcts = [r["pct"] for r in ups_with_data]
+    ups_avg = float(np.mean(ups_pcts)) if ups_pcts else 0.0
+    ups_n_models = len({r["model"] for r in ups_with_data})
+    ups_n_profiles = len({r["profile"] for r in ups_with_data})
+
+    ups_ttft_data = [r for r in upstream_results if r.get("ttft_pct") is not None]
+    ups_ttft_avg = (
+        float(np.mean([r["ttft_pct"] for r in ups_ttft_data])) if ups_ttft_data else 0.0
+    )
+    ups_itl_data = [r for r in upstream_results if r.get("itl_pct") is not None]
+    ups_itl_avg = (
+        float(np.mean([r["itl_pct"] for r in ups_itl_data])) if ups_itl_data else 0.0
+    )
+
+    return {
+        "best_gain": best_gain,
+        "best_gain_combo": best_gain_combo,
+        "worst_regression": worst_regression,
+        "worst_reg_combo": worst_reg_combo,
+        "worst_reg_metric": worst_reg_metric,
+        "win_rate": win_rate,
+        "win_combos": win_combos,
+        "loss_combos": loss_combos,
+        "neutral_combos": neutral_combos,
+        "total_cmp": total_cmp,
+        "models_tested": models_tested,
+        "models_list": models_list,
+        "accels_covered": accels_covered,
+        "accels_list": accels_list,
+        "health": health,
+        "accel_rollup": accel_rollup,
+        "family_rollup": family_rollup,
+        "combo_results": combo_results,
+        "ups_avg": ups_avg,
+        "ups_wins": ups_wins,
+        "ups_ties": ups_ties,
+        "ups_losses": ups_losses,
+        "ups_n_models": ups_n_models,
+        "ups_n_profiles": ups_n_profiles,
+        "ups_results": ups_with_data,
+        "ups_ttft_avg": ups_ttft_avg,
+        "ups_itl_avg": ups_itl_avg,
+    }
+
+
 def _keep_expander_open(expander_key):
     """Helper to keep an expander open after widget interaction."""
     st.session_state[expander_key] = True
@@ -169,7 +643,7 @@ def assign_profile(row):
     prompt_toks = int(row["prompt toks"])
     output_toks = int(row["output toks"])
     if prompt_toks == 0 and output_toks == 0:
-        return "Custom"
+        return "Custom ISL/OSL"
     return f"{prompt_toks}/{output_toks}"
 
 
@@ -252,7 +726,7 @@ def load_llmd_data(file_path: str) -> Optional[pd.DataFrame]:
         if "prompt toks" in df.columns and "output toks" in df.columns:
             df["profile"] = df.apply(assign_profile, axis=1)
             df["custom_isl_osl"] = np.where(
-                df["profile"] == "Custom",
+                df["profile"] == "Custom ISL/OSL",
                 df["prompt toks"].astype(int).astype(str)
                 + "/"
                 + df["output toks"].astype(int).astype(str),
@@ -324,8 +798,10 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if not current_profile:
             available_profiles_raw = sorted(df["profile"].unique().tolist())
             available_profiles = [
-                p for p in available_profiles_raw if p != "Custom"
-            ] + (["Custom"] if "Custom" in available_profiles_raw else [])
+                p for p in available_profiles_raw if p != "Custom ISL/OSL"
+            ] + (
+                ["Custom ISL/OSL"] if "Custom ISL/OSL" in available_profiles_raw else []
+            )
 
             if st.session_state.get(
                 "llmd_clear_all_filters", False
@@ -392,8 +868,8 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         profiles_raw = (
             sorted(temp_df["profile"].unique().tolist()) if not temp_df.empty else []
         )
-        profiles = [p for p in profiles_raw if p != "Custom"] + (
-            ["Custom"] if "Custom" in profiles_raw else []
+        profiles = [p for p in profiles_raw if p != "Custom ISL/OSL"] + (
+            ["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else []
         )
 
         if st.session_state.get(
@@ -449,13 +925,13 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
         # Secondary filter: specific ISL/OSL pair when Custom is selected
         selected_custom_isl_osl = None
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
+        if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
             custom_temp = df.copy()
             if selected_accelerators:
                 custom_temp = custom_temp[
                     custom_temp["accelerator"].isin(selected_accelerators)
                 ]
-            custom_temp = custom_temp[custom_temp["profile"] == "Custom"]
+            custom_temp = custom_temp[custom_temp["profile"] == "Custom ISL/OSL"]
             custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
             custom_pairs = [p for p in custom_pairs if p]
             if custom_pairs:
@@ -464,7 +940,14 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                     custom_key not in st.session_state
                     or st.session_state.get(custom_key) not in custom_pairs
                 ):
-                    st.session_state[custom_key] = custom_pairs[0]
+                    persisted_custom = st.session_state.get(
+                        "llmd_selected_custom_isl_osl"
+                    )
+                    st.session_state[custom_key] = (
+                        persisted_custom
+                        if persisted_custom in custom_pairs
+                        else custom_pairs[0]
+                    )
                 selected_custom_isl_osl = st.selectbox(
                     "Select Custom ISL/OSL Pair",
                     custom_pairs,
@@ -1659,9 +2142,9 @@ def render_compare_versions_section(df, use_expander=True):
         available_versions = sorted(df["version"].unique().tolist())
         available_accelerators = sorted(df["accelerator"].unique().tolist())
         available_profiles_raw = sorted(df["profile"].unique().tolist())
-        available_profiles = [p for p in available_profiles_raw if p != "Custom"] + (
-            ["Custom"] if "Custom" in available_profiles_raw else []
-        )
+        available_profiles = [
+            p for p in available_profiles_raw if p != "Custom ISL/OSL"
+        ] + (["Custom ISL/OSL"] if "Custom ISL/OSL" in available_profiles_raw else [])
 
         if len(available_versions) < 2:
             st.warning("⚠️ Need at least 2 versions in the data to compare.")
@@ -1734,10 +2217,32 @@ def render_compare_versions_section(df, use_expander=True):
 
         # Secondary custom ISL/OSL pair filter
         selected_custom_pair = None
-        if selected_profile == "Custom" and "custom_isl_osl" in df.columns:
-            custom_temp = df[df["profile"] == "Custom"]
-            custom_pairs = sorted(custom_temp["custom_isl_osl"].unique().tolist())
-            custom_pairs = [p for p in custom_pairs if p]
+        if (
+            selected_profile == "Custom ISL/OSL"
+            and version_2
+            and "custom_isl_osl" in df.columns
+        ):
+            v1_pairs = set(
+                df.loc[
+                    (df["version"] == version_1)
+                    & (df["accelerator"] == selected_accelerator)
+                    & (df["profile"] == "Custom ISL/OSL"),
+                    "custom_isl_osl",
+                ]
+                .dropna()
+                .tolist()
+            )
+            v2_pairs = set(
+                df.loc[
+                    (df["version"] == version_2)
+                    & (df["accelerator"] == selected_accelerator)
+                    & (df["profile"] == "Custom ISL/OSL"),
+                    "custom_isl_osl",
+                ]
+                .dropna()
+                .tolist()
+            )
+            custom_pairs = sorted(p for p in v1_pairs & v2_pairs if p)
             if custom_pairs:
                 selected_custom_pair = st.selectbox(
                     "Select Custom ISL/OSL Pair",
@@ -2368,6 +2873,1113 @@ def render_compare_versions_section(df, use_expander=True):
             st.info("No comparison data available for the selected filters.")
 
 
+def render_llmd_overview_section(df):
+    """Render the Overview page for the LLM-D dashboard."""
+    header_col, _spacer, dropdown_col = st.columns([2, 5, 3])
+    with header_col:
+        st.header("Overview")
+    with dropdown_col:
+        st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
+        ov_labels = [cfg["label"] for cfg in LLMD_OVERVIEW_RELEASE_PAIRS]
+        selected_label = st.selectbox(
+            "Select release comparison",
+            ov_labels,
+            index=0,
+            key="llmd_overview_release_pair",
+            label_visibility="collapsed",
+        )
+        selected_cfg = LLMD_OVERVIEW_RELEASE_PAIRS[ov_labels.index(selected_label)]
+
+    version_pairs = selected_cfg["pairs"]
+    pair_summary = ", ".join(
+        f"{p['current']} vs {p['previous']}" for p in version_pairs
+    )
+    st.markdown(
+        f"Executive summary: **{selected_cfg['label']}** — comparing {pair_summary}."
+    )
+
+    upstream_pairs = selected_cfg.get("upstream", [])
+    data = _compute_llmd_overview_data(
+        df, version_pairs=version_pairs, upstream_pairs=upstream_pairs
+    )
+
+    _METRIC_SHORT = {"TTFT P95": "TTFT", "ITL P95": "ITL", "Throughput": "Tput"}
+
+    # ── Row 1: Top-level KPI cards ──────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        color_cls = "val-green" if data["best_gain"] > 0 else "val-red"
+        bg = data.get("best_gain_combo")
+        bg_detail = ""
+        if bg:
+            bg_detail = (
+                f"<b>{bg['short_name']}</b> on {_llmd_accel_display(bg['accelerator'])} "
+                f"(TP{bg['tp']}, {_llmd_display_profile(bg['profile'])}) "
+                f"[{bg.get('variant', '')}]"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Best Throughput Gain</div>
+<div class="overview-card-value {color_cls}">
+<span class="icon">↑</span> +{data["best_gain"]:.1f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+Largest throughput improvement (geometric mean of
+<code>output_tok/sec</code>) across {data["total_cmp"]} compared
+combinations.<br><br>
+<b>Where:</b> {bg_detail}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        wr_val = data["worst_regression"]
+        if wr_val < -5:
+            wr_cls = "val-red"
+        elif wr_val < 0:
+            wr_cls = "val-amber"
+        else:
+            wr_cls = "val-green"
+        wr_icon = "⊖" if wr_val < 0 else "✓"
+        wc = data.get("worst_reg_combo")
+        wm = data.get("worst_reg_metric", "")
+        wr_detail = ""
+        if wc:
+            wr_detail = (
+                f"<b>{wc['short_name']}</b> on {_llmd_accel_display(wc['accelerator'])} "
+                f"(TP{wc['tp']}, {_llmd_display_profile(wc['profile'])}) "
+                f"[{wc.get('variant', '')}]"
+                f" — metric: <b>{wm}</b>"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Worst Regression</div>
+<div class="overview-card-value {wr_cls}">
+<span class="icon">{wr_icon}</span> {wr_val:+.1f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+Single largest degradation across Throughput, E2E Latency, P95 TTFT, or
+P95 ITL (normalised: negative = regression).<br><br>
+<b>Where:</b> {wr_detail}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    with c3:
+        n_wins = len(data["win_combos"])
+        n_losses = len(data["loss_combos"])
+        n_neutral = len(data["neutral_combos"])
+        loss_lines = ""
+        for r in data["loss_combos"]:
+            pct = r.get("Throughput_pct")
+            loss_lines += (
+                f"• {r['short_name']} on {_llmd_accel_display(r['accelerator'])} "
+                f"(TP{r['tp']}, {_llmd_display_profile(r['profile'])}) "
+                f"[{r.get('variant', '')}]: "
+                f"<span class='val-red'>{pct:+.1f} %</span><br>"
+            )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Release Win Rate (Throughput)</div>
+<div class="overview-card-value val-blue">
+<span class="icon">🏆</span> {data["win_rate"]:.0f} %
+</div>
+</summary>
+<div class="overview-card-detail">
+{n_wins} wins / {n_losses} losses / {n_neutral} neutral out of {data["total_cmp"]}
+compared combinations (geometric mean throughput).<br>
+Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are neutral.<br><br>
+{"<b>Losses:</b><br>" + loss_lines if loss_lines else "<b>No losses.</b>"}
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    # ── Row 2: Coverage + Health ─────────────────────────────────────
+    c4, c5, c6 = st.columns(3)
+
+    with c4:
+        model_items = "".join(
+            f"• {_llmd_short_model_name(m)}<br>" for m in data["models_list"]
+        )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+                <div class="overview-card-title">Models Tested</div>
+                <div class="overview-card-value">
+                    <span class="icon">🔬</span> {data["models_tested"]}
+                </div>
+            </summary>
+            <div class="overview-card-detail">
+                {model_items}
+            </div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    with c5:
+        accel_items = "".join(
+            f"• {_llmd_accel_display(a)}<br>" for a in data["accels_list"]
+        )
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+                <div class="overview-card-title">Accelerators Covered</div>
+                <div class="overview-card-value">
+                    <span class="icon">▦</span> {data["accels_covered"]}
+                </div>
+            </summary>
+            <div class="overview-card-detail">
+                {accel_items}
+            </div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    with c6:
+        h = data["health"]
+        h_cls = {
+            "Healthy": "val-green",
+            "Warning": "val-amber",
+            "Regression": "val-red",
+        }[h]
+        dots = _llmd_health_dots_html(h)
+        n_losses_h = len(data["loss_combos"])
+        st.markdown(
+            f"""<div class="overview-card"><details><summary>
+<div class="overview-card-title">Release Health Score</div>
+<div class="overview-card-value {h_cls}">
+{h} {dots}
+</div>
+</summary>
+<div class="overview-card-detail">
+Non-regression rate: {data["win_rate"]:.0f} %
+= ({data["total_cmp"]} - {n_losses_h} losses) / {data["total_cmp"]} total.<br>
+Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br>
+• <b>Healthy</b> — ≥ 90 %<br>
+• <b>Warning</b> — ≥ 70 %<br>
+• <b>Regression</b> — &lt; 70 %
+</div></details></div>""",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ── Upstream Parity Scorecard ───────────────────────────────────
+    if not upstream_pairs:
+        st.markdown("### Upstream llm-d Parity")
+        st.info("Upstream parity data is not configured for this release pair.")
+    elif not data["ups_results"]:
+        st.markdown("### Upstream llm-d Parity")
+        st.info("No common combos found between RHOAI and upstream llm-d versions.")
+    else:
+        st.markdown("### Upstream llm-d Parity")
+        ups_versions_str = ", ".join(sorted({p["upstream"] for p in upstream_pairs}))
+        st.caption(
+            f"Comparing RHOAI releases against their upstream llm-d equivalents "
+            f"({ups_versions_str}). "
+            '"At parity" means within 5 %.'
+        )
+
+        ups_avg_cls = "val-green" if data["ups_avg"] >= 0 else "val-red"
+        parity_count = data["ups_ties"] + data["ups_wins"]
+        total_compared = data["ups_wins"] + data["ups_ties"] + data["ups_losses"]
+        parity_pct = (parity_count / total_compared * 100) if total_compared else 0
+        parity_cls = (
+            "val-green"
+            if parity_pct >= 80
+            else ("val-amber" if parity_pct >= 60 else "val-red")
+        )
+        hue = (
+            "green"
+            if data["ups_losses"] == 0
+            else ("yellow" if data["ups_losses"] <= data["ups_wins"] else "red")
+        )
+        ups_ttft_avg_cls = "val-green" if data["ups_ttft_avg"] <= 0 else "val-red"
+        ups_itl_avg_cls = "val-green" if data["ups_itl_avg"] <= 0 else "val-red"
+
+        def _ups_metric_cell(pct, better, similar):
+            if pct is None:
+                return '<td style="text-align:right;opacity:0.4">—</td>'
+            icon = "🟢" if (better and not similar) else ("🟡" if similar else "🔴")
+            return f'<td style="text-align:right">{icon} {pct:+.1f} %</td>'
+
+        _ups_dialog_metrics = {
+            "Output Throughput": {
+                "column": "output_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "Total Throughput": {
+                "column": "total_tok/sec",
+                "aggregation": "geom_mean",
+                "higher_is_better": True,
+            },
+            "End-to-End Latency": {
+                "column": "request_latency_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "TTFT P95": {
+                "column": "ttft_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+            "ITL P95": {
+                "column": "itl_p95",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+            },
+        }
+
+        @st.dialog("Upstream Parity — Metric Details", width="large")
+        def _show_ups_compare_dialog(r):
+            short_name = r["short_name"]
+            profile_display = _llmd_display_profile(r["profile"])
+            variant = r.get("variant", "")
+            ver_curr = r["version_current"]
+            ver_ups = r["version_upstream"]
+
+            mask_common = (
+                (df["model"] == r["model"])
+                & (df["TP"] == r["tp"])
+                & (df["accelerator"] == r["accelerator"])
+                & (df["profile"] == r["profile"])
+                & (df["DP"] == r["dp"])
+                & (df["EP"] == r["ep"])
+                & (df["replicas"] == r["replicas"])
+            )
+            df_v1 = df[mask_common & (df["version"] == ver_curr)]
+            df_v2 = df[mask_common & (df["version"] == ver_ups)]
+
+            if df_v1.empty or df_v2.empty:
+                st.warning("No data available for this comparison.")
+                return
+
+            v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+            v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+            common_conc = sorted(v1_conc & v2_conc)
+            if not common_conc:
+                st.warning("No common concurrency levels found between versions.")
+                return
+
+            conc_for_geomean = {c for c in common_conc if c > 1}
+
+            summary_rows = []
+            for mname, mcfg in _ups_dialog_metrics.items():
+                pct, better, _, _, similar = _compare_two_datasets(
+                    df_v1, df_v2, mcfg, conc_for_geomean
+                )
+                if pct is not None:
+                    sign = "+" if pct > 0 else ""
+                    status = "🟡" if similar else ("🟢" if better else "🔴")
+                    cell_text = f"{status} {ver_curr} ({sign}{pct:.1f}%)"
+                else:
+                    cell_text = "N/A"
+                summary_rows.append(
+                    {"Metric": mname, f"{ver_curr} vs {ver_ups}": cell_text}
+                )
+
+            variant_tag = f" [{variant}]" if variant else ""
+            st.markdown(
+                f"**Comparing:** {ver_curr} vs {ver_ups} &nbsp;|&nbsp; "
+                f"**{_llmd_accel_display(r['accelerator'])}** &nbsp;|&nbsp; "
+                f"ISL/OSL: **{profile_display}**{variant_tag}"
+            )
+            st.dataframe(
+                pd.DataFrame(summary_rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            st.markdown("**📊 View detailed graphs** — click any metric to compare:")
+            btn_cols = st.columns(len(_ups_dialog_metrics))
+            for i, mname in enumerate(_ups_dialog_metrics):
+                with btn_cols[i]:
+                    if st.button(
+                        f"📊 {mname}",
+                        key=f"llmd_ups_dlg_btn_{i}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state._llmd_ups_dlg_selected_metric = mname
+
+            selected_metric = st.session_state.get("_llmd_ups_dlg_selected_metric")
+            if selected_metric and selected_metric in _ups_dialog_metrics:
+                mcfg = _ups_dialog_metrics[selected_metric]
+                col_name = mcfg["column"]
+
+                st.markdown(f"#### {selected_metric} vs Concurrency")
+                v1_vals, v2_vals = [], []
+                for c in common_conc:
+                    g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                    g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                    v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                    v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
+
+                if col_name == "ttft_p95":
+                    v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                    v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+                x_vals = [int(c) for c in common_conc]
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v1_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ver_curr})",
+                        line={"color": "#EF553B", "width": 2.5},
+                        marker={"size": 8},
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=x_vals,
+                        y=v2_vals,
+                        mode="lines+markers",
+                        name=f"{short_name} ({ver_ups})",
+                        line={"color": "#636EFA", "width": 2.5},
+                        marker={"size": 8},
+                    )
+                )
+
+                if "tok/sec" in col_name:
+                    y_title = "Tokens / sec"
+                elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                    y_title = "Seconds"
+                else:
+                    y_title = "Milliseconds"
+
+                fig.update_layout(
+                    height=600,
+                    xaxis_title="Concurrency",
+                    yaxis_title=y_title,
+                    margin={"t": 30, "b": 60},
+                    hovermode="x unified",
+                    legend={
+                        "orientation": "v",
+                        "yanchor": "top",
+                        "y": 1,
+                        "xanchor": "left",
+                        "x": 1.02,
+                    },
+                    xaxis={
+                        "type": "category",
+                        "categoryorder": "array",
+                        "categoryarray": x_vals,
+                    },
+                )
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"llmd_ups_dlg_{selected_metric}",
+                    theme=None,
+                )
+
+        sorted_ups = sorted(
+            data["ups_results"], key=lambda x: x["pct"] or 0, reverse=True
+        )
+
+        # Group by variant for sub-headers
+        variant_order = []
+        variant_buckets = {}
+        for r in sorted_ups:
+            v = r.get("variant", "")
+            if v not in variant_buckets:
+                variant_order.append(v)
+                variant_buckets[v] = []
+            variant_buckets[v].append(r)
+
+        st.markdown(
+            f"""<div class="vllm-scorecard vllm-hue-{hue}">
+<div class="vllm-scorecard-title">RHOAI vs Upstream llm-d ({ups_versions_str})</div>
+<div class="vllm-stat-row">
+<div class="vllm-stat">
+<div class="vllm-stat-label">At or Above Parity</div>
+<div class="vllm-stat-value {parity_cls}">{parity_pct:.0f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg Throughput Δ</div>
+<div class="vllm-stat-value {ups_avg_cls}">{data["ups_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg TTFT P95 Δ</div>
+<div class="vllm-stat-value {ups_ttft_avg_cls}">{data["ups_ttft_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Avg ITL P95 Δ</div>
+<div class="vllm-stat-value {ups_itl_avg_cls}">{data["ups_itl_avg"]:+.1f} %</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Ahead</div>
+<div class="vllm-stat-value val-green">{data["ups_wins"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">At Parity</div>
+<div class="vllm-stat-value val-amber">{data["ups_ties"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Behind</div>
+<div class="vllm-stat-value val-red">{data["ups_losses"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Models Compared</div>
+<div class="vllm-stat-value">{data["ups_n_models"]}</div>
+</div>
+<div class="vllm-stat">
+<div class="vllm-stat-label">Workload Profiles</div>
+<div class="vllm-stat-value">{data["ups_n_profiles"]}</div>
+</div>
+</div>
+</div>""",
+            unsafe_allow_html=True,
+        )
+
+        _ups_col_widths = [3, 0.6, 1.2, 1.2, 1.2, 1.2, 0.5]
+
+        with st.expander("Per-model details & comparison", expanded=False):
+            st.caption(
+                "Per-model delta (geometric mean across concurrency levels). "
+                "🟢 Ahead (> 5 %) · 🟡 At Parity (± 5 %) · 🔴 Behind (> 5 %). "
+                "For latency metrics (TTFT/ITL), lower is better."
+            )
+
+            _ups_hdr_style = (
+                "font-weight:600;color:#6b7280;font-size:0.85rem;"
+                "border-bottom:2px solid #e5e7eb;"
+                "display:flex;align-items:flex-end;min-height:2.5rem;"
+                "padding-bottom:0.3rem"
+            )
+
+            ups_row_idx = 0
+            for variant_name in variant_order:
+                if variant_name:
+                    st.markdown(
+                        f'<div style="font-weight:600;font-size:0.92rem;color:#4b5563;'
+                        f'margin:0.8rem 0 0.3rem 0;text-transform:capitalize">'
+                        f"{variant_name}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                hdr = st.columns(_ups_col_widths)
+                hdr[0].markdown(
+                    f'<div style="{_ups_hdr_style}">Model</div>',
+                    unsafe_allow_html=True,
+                )
+                hdr[1].markdown(
+                    f'<div style="{_ups_hdr_style};justify-content:center">TP</div>',
+                    unsafe_allow_html=True,
+                )
+                for ci, lbl in enumerate(["Throughput Δ", "TTFT P95 Δ", "ITL P95 Δ"]):
+                    hdr[ci + 2].markdown(
+                        f'<div style="{_ups_hdr_style};justify-content:center;'
+                        f'text-align:center">{lbl}</div>',
+                        unsafe_allow_html=True,
+                    )
+                hdr[5].markdown(
+                    f'<div style="{_ups_hdr_style};justify-content:center;'
+                    f'text-align:center">Profile</div>',
+                    unsafe_allow_html=True,
+                )
+                hdr[6].markdown(
+                    f'<div style="{_ups_hdr_style}">&nbsp;</div>',
+                    unsafe_allow_html=True,
+                )
+
+                for i, r in enumerate(variant_buckets[variant_name]):
+                    if i > 0:
+                        st.markdown(
+                            '<hr style="margin:0;border:none;'
+                            'border-top:1px solid #e5e7eb">',
+                            unsafe_allow_html=True,
+                        )
+
+                    def _ups_cell(pct, better, similar):
+                        if pct is None:
+                            return '<span style="opacity:0.4">—</span>'
+                        icon = (
+                            "🟢"
+                            if (better and not similar)
+                            else ("🟡" if similar else "🔴")
+                        )
+                        return f"{icon} {pct:+.1f} %"
+
+                    row_cols = st.columns(_ups_col_widths)
+                    row_cols[0].markdown(
+                        f'<div style="font-weight:600;color:#1a1f36;'
+                        f'font-size:0.88rem;padding:0.45rem 0">'
+                        f"{r['short_name']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    row_cols[1].markdown(
+                        f'<div style="text-align:center;padding:0.45rem 0">'
+                        f"{r['tp']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    row_cols[2].markdown(
+                        f'<div style="text-align:center;padding:0.45rem 0">'
+                        f"{_ups_cell(r.get('pct'), r.get('better'), r.get('similar'))}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    row_cols[3].markdown(
+                        f'<div style="text-align:center;padding:0.45rem 0">'
+                        f"{_ups_cell(r.get('ttft_pct'), r.get('ttft_better'), r.get('ttft_similar'))}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    row_cols[4].markdown(
+                        f'<div style="text-align:center;padding:0.45rem 0">'
+                        f"{_ups_cell(r.get('itl_pct'), r.get('itl_better'), r.get('itl_similar'))}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                    row_cols[5].markdown(
+                        f'<div style="text-align:center;padding:0.45rem 0">'
+                        f"{_llmd_display_profile(r['profile'])}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    with row_cols[6]:
+                        if st.button(
+                            "📊",
+                            key=f"llmd_ups_cmp_{ups_row_idx}",
+                            help=f"Compare {r['short_name']} (TP{r['tp']})",
+                        ):
+                            _show_ups_compare_dialog(r)
+                    ups_row_idx += 1
+
+    st.markdown("---")
+
+    # ── Release Health by Model Family ──────────────────────────────
+    st.markdown("### Release Health by Model Family")
+    st.caption(
+        "Per-family rollup comparing the current release to the previous one. "
+        "**Avg Tput** is the mean throughput change across all combinations. "
+        "**Win Rate** is the percentage of combinations where throughput improved. "
+        "Click any family card to drill down into per-combo details."
+    )
+
+    families = list(data["family_rollup"].items())
+    for row_start in range(0, len(families), 3):
+        row = families[row_start : row_start + 3]
+        cols = st.columns(3)
+        for idx, (family, info) in enumerate(row):
+            with cols[idx]:
+                status_cls = {
+                    "Healthy": "status-healthy",
+                    "Warning": "status-warning",
+                    "Regression": "status-regression",
+                }[info["health"]]
+                badge_cls = {
+                    "Healthy": "badge-healthy",
+                    "Warning": "badge-warning",
+                    "Regression": "badge-regression",
+                }[info["health"]]
+                dots = _llmd_health_dots_html(info["health"])
+
+                worst_label = _METRIC_SHORT.get(
+                    info["worst_metric"], info["worst_metric"] or ""
+                )
+                worst_line = (
+                    (
+                        f'<div class="family-card-stat">'
+                        f"Worst: <b>{worst_label}</b> {info['worst_raw_pct']:+.1f} %"
+                        f"</div>"
+                    )
+                    if info["worst_metric"]
+                    else ""
+                )
+
+                wr_cls = (
+                    "val-green"
+                    if info["win_rate"] >= 90
+                    else ("val-red" if info["win_rate"] < 70 else "")
+                )
+                tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
+
+                fam_accels = sorted(
+                    {_llmd_accel_display(r["accelerator"]) for r in info["results"]}
+                )
+                fam_profiles = sorted(
+                    {_llmd_display_profile(r["profile"]) for r in info["results"]}
+                )
+                n_combos = len(info["results"])
+
+                detail_lines = ""
+                for r in sorted(
+                    info["results"], key=lambda x: (x["short_name"], x["accelerator"])
+                ):
+                    pct = r.get("Throughput_pct")
+                    if pct is None:
+                        continue
+                    icon = (
+                        "🟢"
+                        if pct > LLMD_NEUTRAL_THRESHOLD_PCT
+                        else ("🟡" if pct >= -LLMD_NEUTRAL_THRESHOLD_PCT else "🔴")
+                    )
+                    prof = _llmd_display_profile(r["profile"])
+                    variant = r.get("variant", "")
+                    variant_tag = f" [{variant}]" if variant else ""
+                    detail_lines += (
+                        f"• {icon} <b>{r['short_name']}</b> "
+                        f"TP{r['tp']} · {_llmd_accel_display(r['accelerator'])} · {prof}"
+                        f"{variant_tag}: "
+                        f"{pct:+.1f} %<br>"
+                    )
+
+                st.markdown(
+                    f"""<div class="overview-family-card {status_cls}"><details><summary>
+<div class="family-card-header">
+<span class="family-card-name">{family}</span>
+<span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
+</div>
+<div class="family-card-stat">{info["n_models"]} model{"s" if info["n_models"] != 1 else ""} &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
+{worst_line}
+<div class="family-card-stat">Competitive Win Rate: <b class="{wr_cls}">{info["win_rate"]:.0f} %</b></div>
+</summary>
+<div class="overview-card-detail">
+<b>Coverage:</b> {", ".join(fam_accels)} &mdash; {n_combos} combo{"s" if n_combos != 1 else ""} across {", ".join(fam_profiles)}<br><br>
+<b>Per-combo throughput delta (geometric mean):</b><br><br>
+{detail_lines}
+</div></details></div>""",
+                    unsafe_allow_html=True,
+                )
+
+    st.caption(
+        "**Worst** shows the single largest regression across Throughput, TTFT, and ITL. "
+        f"Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are excluded from win/loss (neutral). "
+        "**Status** is derived from win rate: "
+        "Healthy ≥ 90 %, Warning ≥ 70 %, Regression < 70 %."
+    )
+
+    st.markdown("---")
+
+    # ── Per-Accelerator Health Cards ────────────────────────────────
+    st.markdown("### Performance by Accelerator")
+    st.caption(
+        "Per-accelerator rollup comparing the current release to the previous one. "
+        "**Avg Tput** is the mean throughput change across all combinations. "
+        "**Win Rate** is the percentage of combinations where throughput improved. "
+        "Click any accelerator card to drill down into per-combo details."
+    )
+    n_accels = len(data["accel_rollup"]) or 1
+    accel_cols = st.columns(n_accels)
+    for idx, (accel, info) in enumerate(data["accel_rollup"].items()):
+        with accel_cols[idx]:
+            status_cls = {
+                "Healthy": "status-healthy",
+                "Warning": "status-warning",
+                "Regression": "status-regression",
+            }[info["health"]]
+            badge_cls = {
+                "Healthy": "badge-healthy",
+                "Warning": "badge-warning",
+                "Regression": "badge-regression",
+            }[info["health"]]
+            dots = _llmd_health_dots_html(info["health"])
+
+            worst_label = _METRIC_SHORT.get(
+                info["worst_metric"], info["worst_metric"] or ""
+            )
+            worst_line = (
+                (
+                    f'<div class="family-card-stat">'
+                    f"Worst: <b>{worst_label}</b> {info['worst_raw_pct']:+.1f} %"
+                    f"</div>"
+                )
+                if info["worst_metric"]
+                else ""
+            )
+
+            wr_cls = (
+                "val-green"
+                if info["win_rate"] >= 90
+                else ("val-red" if info["win_rate"] < 70 else "")
+            )
+            tput_cls = "val-green" if info["avg_tput_pct"] >= 0 else "val-red"
+
+            accel_families = sorted(
+                {_llmd_model_family(r["model"]) for r in info["results"]}
+            )
+            accel_profiles = sorted(
+                {_llmd_display_profile(r["profile"]) for r in info["results"]}
+            )
+            n_combos = len(info["results"])
+
+            detail_lines = ""
+            for r in sorted(
+                info["results"], key=lambda x: (x["short_name"], x["profile"])
+            ):
+                pct = r.get("Throughput_pct")
+                if pct is None:
+                    continue
+                icon = (
+                    "🟢"
+                    if pct > LLMD_NEUTRAL_THRESHOLD_PCT
+                    else ("🟡" if pct >= -LLMD_NEUTRAL_THRESHOLD_PCT else "🔴")
+                )
+                prof = _llmd_display_profile(r["profile"])
+                variant = r.get("variant", "")
+                variant_tag = f" [{variant}]" if variant else ""
+                detail_lines += (
+                    f"• {icon} <b>{r['short_name']}</b> "
+                    f"TP{r['tp']} · {prof}{variant_tag}: "
+                    f"{pct:+.1f} %<br>"
+                )
+
+            st.markdown(
+                f"""<div class="overview-family-card {status_cls}"><details><summary>
+<div class="family-card-header">
+<span class="family-card-name">{_llmd_accel_display(accel)}</span>
+<span>{dots} <span class="family-card-badge {badge_cls}">{info["health"]}</span></span>
+</div>
+<div class="family-card-stat">{info["n_models"]} model{"s" if info["n_models"] != 1 else ""} &nbsp;&nbsp; Avg Tput: <b class="{tput_cls}">{info["avg_tput_pct"]:+.1f} %</b></div>
+{worst_line}
+<div class="family-card-stat">Competitive Win Rate: <b class="{wr_cls}">{info["win_rate"]:.0f} %</b></div>
+</summary>
+<div class="overview-card-detail">
+<b>Coverage:</b> {", ".join(accel_families)} &mdash; {n_combos} combo{"s" if n_combos != 1 else ""} across {", ".join(accel_profiles)}<br><br>
+<b>Per-combo throughput delta (geometric mean):</b><br><br>
+{detail_lines}
+</div></details></div>""",
+                unsafe_allow_html=True,
+            )
+
+    st.caption(
+        "**Worst** shows the single largest regression across Throughput, TTFT, and ITL "
+        "(the specific metric varies by accelerator). "
+        f"Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are excluded from win/loss (neutral). "
+        "**Status** is derived from win rate: "
+        "Healthy ≥ 90 %, Warning ≥ 70 %, Regression < 70 %."
+    )
+
+    st.markdown("---")
+
+    # ── Regression Heatmap ──────────────────────────────────────────
+    st.markdown(
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap">'
+        '<div><h3 style="margin:0">Regression Heatmap</h3></div>'
+        '<div style="font-size:0.8rem;color:#6b7280">'
+        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement (&gt;5 %)</span> &nbsp; '
+        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (±5 %)</span> &nbsp; '
+        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression (&gt;5 %)</span>'
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "% delta vs. previous release (geometric mean across concurrency levels)."
+    )
+
+    heatmap_cols = [
+        ("Throughput", True, "Mean Output Throughput (tok/s)"),
+        ("E2E Latency", False, "Median E2E Latency (s)"),
+        ("TTFT P95", False, "P95 TTFT (ms)"),
+        ("ITL P95", False, "P95 ITL (ms)"),
+    ]
+
+    _hm_n_metrics = len(heatmap_cols)
+    _hm_widths = [3.5] + [1.5] * _hm_n_metrics + [0.5]
+
+    _accel_colors = {
+        "H200": "#22c55e",
+        "MI300X": "#f97316",
+        "B200": "#3b82f6",
+        "B300": "#8b5cf6",
+    }
+    _accel_default_color = "#6b7280"
+
+    _hm_dialog_metrics = {
+        "Output Throughput": {
+            "column": "output_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "Total Throughput": {
+            "column": "total_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        },
+        "End-to-End Latency": {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "TTFT P95": {
+            "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P95": {
+            "column": "itl_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
+    @st.dialog("Version Comparison — Metric Details", width="large")
+    def _show_llmd_hm_compare_dialog(r):
+        short_name = r["short_name"]
+        profile_display = _llmd_display_profile(r["profile"])
+        variant = r.get("variant", "")
+        ver_curr = r["version_current"]
+        ver_prev = r["version_previous"]
+
+        mask_common = (
+            (df["model"] == r["model"])
+            & (df["TP"] == r["tp"])
+            & (df["accelerator"] == r["accelerator"])
+            & (df["profile"] == r["profile"])
+            & (df["DP"] == r["dp"])
+            & (df["EP"] == r["ep"])
+            & (df["replicas"] == r["replicas"])
+        )
+        df_v1 = df[mask_common & (df["version"] == ver_curr)]
+        df_v2 = df[mask_common & (df["version"] == ver_prev)]
+
+        if df_v1.empty or df_v2.empty:
+            st.warning("No data available for this comparison.")
+            return
+
+        v1_conc = set(df_v1["intended concurrency"].dropna().unique())
+        v2_conc = set(df_v2["intended concurrency"].dropna().unique())
+        common_conc = sorted(v1_conc & v2_conc)
+        if not common_conc:
+            st.warning("No common concurrency levels found between versions.")
+            return
+
+        conc_for_geomean = {c for c in common_conc if c > 1}
+
+        summary_rows = []
+        for mname, mcfg in _hm_dialog_metrics.items():
+            pct, better, _, _, similar = _compare_two_datasets(
+                df_v1, df_v2, mcfg, conc_for_geomean
+            )
+            if pct is not None:
+                sign = "+" if pct > 0 else ""
+                status = "🟡" if similar else ("🟢" if better else "🔴")
+                cell_text = f"{status} {ver_curr} ({sign}{pct:.1f}%)"
+            else:
+                cell_text = "N/A"
+            summary_rows.append(
+                {"Metric": mname, f"{ver_curr} vs {ver_prev}": cell_text}
+            )
+
+        variant_tag = f" [{variant}]" if variant else ""
+        st.markdown(f"#### {short_name} (TP{r['tp']}) {profile_display}{variant_tag}")
+        st.markdown(
+            f"**Comparing:** {ver_curr} vs {ver_prev} &nbsp;|&nbsp; "
+            f"**{_llmd_accel_display(r['accelerator'])}**"
+        )
+        st.dataframe(
+            pd.DataFrame(summary_rows),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        st.markdown(
+            "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
+        )
+        btn_cols = st.columns(len(_hm_dialog_metrics))
+        for i, mname in enumerate(_hm_dialog_metrics):
+            with btn_cols[i]:
+                if st.button(
+                    f"📊 {mname}",
+                    key=f"llmd_hm_dlg_btn_{i}",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    st.session_state._llmd_hm_dlg_selected_metric = mname
+
+        selected_metric = st.session_state.get("_llmd_hm_dlg_selected_metric")
+        if selected_metric and selected_metric in _hm_dialog_metrics:
+            mcfg = _hm_dialog_metrics[selected_metric]
+            col_name = mcfg["column"]
+
+            st.markdown(f"#### {selected_metric} vs Concurrency")
+            st.markdown(
+                f"**{ver_curr}** vs **{ver_prev}** &nbsp;|&nbsp; "
+                f"**{_llmd_accel_display(r['accelerator'])}** &nbsp;|&nbsp; "
+                f"ISL/OSL: **{profile_display}**"
+            )
+
+            v1_vals, v2_vals = [], []
+            for c in common_conc:
+                g1 = df_v1[df_v1["intended concurrency"] == c][col_name]
+                g2 = df_v2[df_v2["intended concurrency"] == c][col_name]
+                v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
+                v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
+
+            if col_name == "ttft_p95":
+                v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
+                v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
+
+            x_vals = [int(c) for c in common_conc]
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v1_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ver_curr})",
+                    line={"color": "#EF553B", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ver_curr}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_vals,
+                    y=v2_vals,
+                    mode="lines+markers",
+                    name=f"{short_name} ({ver_prev})",
+                    line={"color": "#636EFA", "width": 2.5},
+                    marker={"size": 8},
+                    hovertemplate=(
+                        f"<b>{short_name}</b> — {ver_prev}<br>"
+                        "Concurrency: %{x}<br>"
+                        "Value: %{y:,.2f}<extra></extra>"
+                    ),
+                )
+            )
+
+            if "tok/sec" in col_name:
+                y_title = "Tokens / sec"
+            elif "latency" in col_name.lower() or col_name == "ttft_p95":
+                y_title = "Seconds"
+            else:
+                y_title = "Milliseconds"
+
+            fig.update_layout(
+                height=600,
+                xaxis_title="Concurrency",
+                yaxis_title=y_title,
+                margin={"t": 30, "b": 60},
+                hovermode="x unified",
+                legend={
+                    "orientation": "v",
+                    "yanchor": "top",
+                    "y": 1,
+                    "xanchor": "left",
+                    "x": 1.02,
+                    "font": {"size": 11},
+                    "itemclick": "toggle",
+                    "itemdoubleclick": "toggleothers",
+                },
+                xaxis={
+                    "type": "category",
+                    "categoryorder": "array",
+                    "categoryarray": x_vals,
+                },
+            )
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"llmd_hm_dlg_{selected_metric}",
+                theme=None,
+            )
+            st.caption(
+                "💡 **Tip:** Click a legend entry to toggle it. "
+                "Double-click to isolate a single trace."
+            )
+            conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
+            st.caption(
+                f"ℹ️ Graph shows all common concurrency levels. "
+                f"Geometric mean uses: {conc_str}."
+            )
+
+    for accel, info in data["accel_rollup"].items():
+        _accel_clr = _accel_colors.get(accel, _accel_default_color)
+        st.markdown(
+            f'<div style="border-left:4px solid {_accel_clr};padding:0.4rem 0.8rem;'
+            f"margin:1rem 0 0.5rem 0;background:linear-gradient(90deg,{_accel_clr}11,transparent);"
+            f'border-radius:0 6px 6px 0;font-weight:700;font-size:1rem;color:#1a1f36">'
+            f"{_llmd_accel_display(accel)}</div>",
+            unsafe_allow_html=True,
+        )
+        seen = {}
+        for r in info["results"]:
+            key = (
+                r["model"],
+                r["tp"],
+                r["profile"],
+                r.get("dp"),
+                r.get("ep"),
+                r.get("replicas"),
+                r.get("variant", ""),
+            )
+            if key not in seen:
+                seen[key] = r
+
+        variant_groups = {}
+        for _key, r in seen.items():
+            v = r.get("variant", "")
+            variant_groups.setdefault(v, []).append(r)
+
+        _hdr_base = (
+            "font-weight:600;color:#6b7280;font-size:0.88rem;"
+            "border-bottom:2px solid #e5e7eb;"
+            "display:flex;align-items:flex-end;min-height:2.8rem;padding-bottom:0.4rem"
+        )
+
+        row_idx = 0
+        for variant_name, variant_results in variant_groups.items():
+            if variant_name:
+                st.markdown(
+                    f'<div style="font-weight:600;font-size:0.92rem;color:#4b5563;'
+                    f'margin:0.8rem 0 0.3rem 0.5rem;text-transform:capitalize">'
+                    f"{variant_name}</div>",
+                    unsafe_allow_html=True,
+                )
+
+            hdr = st.columns(_hm_widths)
+            hdr[0].markdown(
+                f'<div style="{_hdr_base}">Model</div>',
+                unsafe_allow_html=True,
+            )
+            for j, (_, _, label) in enumerate(heatmap_cols):
+                hdr[j + 1].markdown(
+                    f'<div style="{_hdr_base};justify-content:center;text-align:center">{label}</div>',
+                    unsafe_allow_html=True,
+                )
+            hdr[-1].markdown(
+                f'<div style="{_hdr_base}">&nbsp;</div>',
+                unsafe_allow_html=True,
+            )
+
+            for i, r in enumerate(variant_results):
+                sname = r["short_name"]
+                profile_short = _llmd_display_profile(r["profile"])
+                if i > 0:
+                    st.markdown(
+                        '<hr style="margin:0;border:none;border-top:1px solid #e5e7eb">',
+                        unsafe_allow_html=True,
+                    )
+                row_cols = st.columns(_hm_widths)
+                row_cols[0].markdown(
+                    f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
+                    f'padding:0.45rem 0">'
+                    f"{sname} (TP{r['tp']}) {profile_short}</div>",
+                    unsafe_allow_html=True,
+                )
+                for j, (mname, hib, _) in enumerate(heatmap_cols):
+                    row_cols[j + 1].markdown(
+                        f'<div style="text-align:center">'
+                        f"{_llmd_hm_cell(r.get(f'{mname}_pct'), hib)}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with row_cols[-1]:
+                    if st.button(
+                        "📊",
+                        key=f"llmd_hm_cmp_{accel}_{row_idx}",
+                        help=f"Compare {sname} (TP{r['tp']}) {profile_short}",
+                    ):
+                        _show_llmd_hm_compare_dialog(r)
+                row_idx += 1
+
+
 def render_performance_plots_section(filtered_df, use_expander=True):
     """Render performance plots section for LLM-D dashboard."""
     if use_expander:
@@ -2453,13 +4065,50 @@ def render_performance_plots_section(filtered_df, use_expander=True):
         elif y_axis == "request_latency_median" or y_axis == "request_latency_max":
             y_axis_display_label = f"{y_axis_label} (s)"
 
+        # Build ISL/OSL subtitle from unique values in the filtered data
+        _isl_osl_subtitle = ""
+        if (
+            "prompt toks" in filtered_df_sorted.columns
+            and "output toks" in filtered_df_sorted.columns
+        ):
+            isl_osl_pairs = (
+                filtered_df_sorted[["prompt toks", "output toks"]]
+                .apply(pd.to_numeric, errors="coerce")
+                .dropna()
+                .drop_duplicates()
+            )
+            if not isl_osl_pairs.empty:
+                pair_labels = []
+                for _, r in isl_osl_pairs.iterrows():
+                    isl, osl = int(r["prompt toks"]), int(r["output toks"])
+                    if isl == 0 and osl == 0:
+                        if "dataset" in filtered_df_sorted.columns:
+                            _tok_numeric = filtered_df_sorted[
+                                ["prompt toks", "output toks"]
+                            ].apply(pd.to_numeric, errors="coerce")
+                            ds_names = (
+                                filtered_df_sorted.loc[
+                                    _tok_numeric["prompt toks"].eq(0)
+                                    & _tok_numeric["output toks"].eq(0),
+                                    "dataset",
+                                ]
+                                .dropna()
+                                .unique()
+                                .tolist()
+                            )
+                            pair_labels.extend(ds_names)
+                    else:
+                        pair_labels.append(f"{isl}/{osl}")
+                if pair_labels:
+                    _isl_osl_subtitle = f"<br><span style='font-size:14px'>ISL/OSL: {', '.join(sorted(set(pair_labels)))}</span>"
+
         fig = px.line(
             filtered_df_sorted.sort_values(by=x_axis),
             x=x_axis,
             y=y_axis,
             color="run_identifier",
             markers=True,
-            title=f"{x_axis_label} vs. {y_axis_label}",
+            title=f"{x_axis_label} vs. {y_axis_label}{_isl_osl_subtitle}",
             labels={
                 x_axis: x_axis_label,
                 y_axis: y_axis_display_label,
@@ -2913,6 +4562,8 @@ def _decode_llmd_url_filters(df: pd.DataFrame) -> dict:
         ]
     if "profile" in qp:
         p = qp["profile"].strip()
+        if p == "Custom":
+            p = "Custom ISL/OSL"
         if p in all_profiles:
             result["profile"] = p
     if "custom_isl_osl" in qp:
@@ -3534,6 +5185,7 @@ def render_llmd_competitive_analysis_section(df):
                                     f"(C=1 excluded — not representative of "
                                     f"production workloads)."
                                 )
+
                                 st.markdown(
                                     "**📊 Click a metric to open a "
                                     "detailed comparison graph:**"
@@ -3771,6 +5423,7 @@ def render_llmd_dashboard(llmd_csv_path: str):
 
     # --- URL filter decoding (once per session) ---
     LLMD_SECTION_SLUG_MAP = {
+        "📊 Overview": "overview",
         "📈 Performance Plots": "performance_plots",
         "⚖️ Compare Versions": "compare_versions",
         "🔄 Compare with RHAIIS": "rhaiis_comparison",
@@ -3782,7 +5435,13 @@ def render_llmd_dashboard(llmd_csv_path: str):
 
     if "llmd_url_filters_loaded" not in st.session_state:
         st.session_state.llmd_url_filters_loaded = True
-        url_filters = _decode_llmd_url_filters(df)
+        # Only decode URL filters on a fresh page load that targeted LLM-D.
+        # When switching from another view (e.g. RHAIIS), the URL still has
+        # that view's params, which would produce wrong filter state.
+        if st.session_state.get("_initial_url_view") == "LLM-D Dashboard":
+            url_filters = _decode_llmd_url_filters(df)
+        else:
+            url_filters = {}
 
         has_url_filters = bool(url_filters)
 
@@ -3823,6 +5482,7 @@ def render_llmd_dashboard(llmd_csv_path: str):
 
     # Section navigation via sidebar
     section_list = [
+        "📊 Overview",
         "📈 Performance Plots",
         "⚖️ Compare Versions",
         "🔄 Compare with RHAIIS",
@@ -3835,6 +5495,7 @@ def render_llmd_dashboard(llmd_csv_path: str):
         (
             "Dashboard",
             [
+                "📊 Overview",
                 "🏆 Competitive Analysis",
             ],
         ),
@@ -3855,13 +5516,14 @@ def render_llmd_dashboard(llmd_csv_path: str):
         ),
     ]
 
-    _default_section = "📈 Performance Plots"
+    _default_section = "📊 Overview"
     current_section = st.session_state.get("llmd_active_section", _default_section)
     if current_section not in section_list:
         current_section = section_list[0]
     st.session_state.llmd_active_section = current_section
 
     LLMD_SECTIONS_WITHOUT_GLOBAL_FILTERS = {
+        "📊 Overview",
         "⚖️ Compare Versions",
         "🔄 Compare with RHAIIS",
         "🏆 Competitive Analysis",
@@ -3901,7 +5563,9 @@ def render_llmd_dashboard(llmd_csv_path: str):
     if not filtered_df.empty:
 
         def _render_selected_section(sel):
-            if sel == "📈 Performance Plots":
+            if sel == "📊 Overview":
+                render_llmd_overview_section(df)
+            elif sel == "📈 Performance Plots":
                 render_performance_plots_section(filtered_df, use_expander=False)
             elif sel == "⚖️ Compare Versions":
                 render_compare_versions_section(df, use_expander=False)
@@ -4041,9 +5705,10 @@ def render_llmd_dashboard(llmd_csv_path: str):
                 desired_params["versions"] = ",".join(sel_ver)
             if sel_prof:
                 desired_params["profile"] = sel_prof[0]
-            custom_val = st.session_state.get("llmd_selected_custom_isl_osl")
-            if custom_val:
-                desired_params["custom_isl_osl"] = custom_val
+            if sel_prof and sel_prof[0] == "Custom ISL/OSL":
+                custom_val = st.session_state.get("llmd_selected_custom_isl_osl")
+                if custom_val:
+                    desired_params["custom_isl_osl"] = custom_val
             if sel_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, sel_tp))
             if sel_rep:

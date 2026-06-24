@@ -119,7 +119,7 @@ python import_manual_runs_json_v2.py \
 After generating a CSV file, append it to the main dashboard (skip the header):
 
 ```bash
-tail -n +2 my-benchmark.csv >> ../consolidated_dashboard.csv
+tail -n +2 my-benchmark.csv >> ../../../consolidated_dashboard.csv
 ```
 
 ## Output CSV Columns
