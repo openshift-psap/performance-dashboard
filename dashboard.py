@@ -10687,6 +10687,11 @@ def render_filtered_data_section(filtered_df, use_expander=True):
 
         display_filtered_df["view_logs_link"] = False
 
+        # Drop internal columns not useful for display
+        for _drop_col in ("custom_isl_osl", "multiturn_isl_osl"):
+            if _drop_col in display_filtered_df.columns:
+                display_filtered_df = display_filtered_df.drop(columns=[_drop_col])
+
         # Reorder columns to place grafana_metrics_link after TP, view_logs_link after that, and Run Date at the end
         cols = display_filtered_df.columns.tolist()
         if "grafana_metrics_link" in cols and "TP" in cols:
@@ -10699,8 +10704,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             cols.insert(gml_idx + 1, "view_logs_link")
         if "request_type" in cols:
             cols.remove("request_type")
-            ver_idx = cols.index("version")
-            cols.insert(ver_idx + 1, "request_type")
+            cols.append("request_type")
         if "Run Date" in cols:
             cols.remove("Run Date")
             cols.append("Run Date")
@@ -12370,11 +12374,8 @@ def main():
                 if tree_view == "Model":
                     _fh_models = sorted(_fh_df["model"].unique())
                     for _fh_model in _fh_models:
-                        _fh_short = (
-                            _fh_model.split("/")[-1] if "/" in _fh_model else _fh_model
-                        )
                         _fh_data = _fh_df[_fh_df["model"] == _fh_model]
-                        with st.expander(f"🤖 {_fh_short}", expanded=False):
+                        with st.expander(f"🤖 {_fh_model}", expanded=False):
                             combo_dict = {}
                             for _, row in _fh_data.iterrows():
                                 acc = row["accelerator"]
@@ -12418,34 +12419,29 @@ def main():
                             for _, row in _fh_vdata.iterrows():
                                 acc = row["accelerator"]
                                 model = row["model"]
-                                model_short = (
-                                    model.split("/")[-1] if "/" in model else model
-                                )
                                 profile = row["profile"]
                                 tp = row["TP"]
                                 if acc not in combo_dict:
                                     combo_dict[acc] = {}
-                                if model_short not in combo_dict[acc]:
-                                    combo_dict[acc][model_short] = {}
-                                if profile not in combo_dict[acc][model_short]:
-                                    combo_dict[acc][model_short][profile] = []
-                                if tp not in combo_dict[acc][model_short][profile]:
-                                    combo_dict[acc][model_short][profile].append(tp)
+                                if model not in combo_dict[acc]:
+                                    combo_dict[acc][model] = {}
+                                if profile not in combo_dict[acc][model]:
+                                    combo_dict[acc][model][profile] = []
+                                if tp not in combo_dict[acc][model][profile]:
+                                    combo_dict[acc][model][profile].append(tp)
                             tree_text = ""
                             for acc in sorted(combo_dict.keys()):
                                 tree_text += f"🔧 {acc}\n"
-                                for model_short in sorted(combo_dict[acc].keys()):
-                                    tree_text += f"    🤖 {model_short}\n"
+                                for model_full in sorted(combo_dict[acc].keys()):
+                                    tree_text += f"    🤖 {model_full}\n"
                                     for profile in sorted(
-                                        combo_dict[acc][model_short].keys()
+                                        combo_dict[acc][model_full].keys()
                                     ):
                                         tp_list = ", ".join(
                                             map(
                                                 str,
                                                 sorted(
-                                                    combo_dict[acc][model_short][
-                                                        profile
-                                                    ]
+                                                    combo_dict[acc][model_full][profile]
                                                 ),
                                             )
                                         )
