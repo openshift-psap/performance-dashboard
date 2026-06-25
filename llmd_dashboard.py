@@ -4150,7 +4150,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 "**Runtime configurations for your current filter selections:**"
             )
             st.info(
-                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version + Pod Configuration combination that matches your current filters."
+                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version + TP + Pod Configuration combination that matches your current filters."
             )
 
             unique_configs = filtered_df.drop_duplicates(
@@ -4158,6 +4158,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                     "model",
                     "accelerator",
                     "version",
+                    "TP",
                     "replicas",
                     "prefill_pod_count",
                     "decode_pod_count",
@@ -4170,6 +4171,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                         "model",
                         "accelerator",
                         "version",
+                        "TP",
                         "replicas",
                         "prefill_pod_count",
                         "decode_pod_count",
@@ -4184,6 +4186,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                         "model": "Model",
                         "accelerator": "Accelerator",
                         "version": "Version",
+                        "TP": "TP",
                         "replicas": "Replicas",
                         "prefill_pod_count": "Prefill Pods",
                         "decode_pod_count": "Decode Pods",
@@ -4212,6 +4215,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                             "Model",
                             "Accelerator",
                             "Version",
+                            "TP",
                             "Replicas",
                             "Prefill Pods",
                             "Decode Pods",
@@ -4234,6 +4238,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                         "Version": st.column_config.TextColumn(
                             "Version", width=100, pinned=True
                         ),
+                        "TP": st.column_config.NumberColumn("TP", width=60),
                         "Replicas": st.column_config.NumberColumn("Replicas", width=80),
                         "Prefill Pods": st.column_config.TextColumn(
                             "Prefill Pods", width=100
@@ -4250,7 +4255,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 options = [
                     (
                         i,
-                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']} / R{r['Replicas']}-P{r['Prefill Pods']}-D{r['Decode Pods']}",
+                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']} / TP{r['TP']} / R{r['Replicas']}-P{r['Prefill Pods']}-D{r['Decode Pods']}",
                     )
                     for i, r in configs_df.iterrows()
                 ]
