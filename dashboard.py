@@ -91,15 +91,35 @@ S3_LOGS_BUCKET = os.environ.get("S3_LOGS_BUCKET", "psap-model-furnace")
 S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 
 # ── Overview version configuration (single source of truth) ──────
-OVERVIEW_CURRENT = "RHAIIS-3.4-GA"
-OVERVIEW_PREVIOUS = "RHAIIS-3.3"
-OVERVIEW_UPSTREAM = "vLLM-0.18.0"
-OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
+OVERVIEW_CURRENT = "RHAIIS-3.5-EA2"
+OVERVIEW_PREVIOUS = "RHAIIS-3.5-EA1"
+OVERVIEW_UPSTREAM = "vLLM-0.21.0"
+OVERVIEW_ADDITIONAL = []
 
 # Ordered list of back-to-back release pairs for the Overview dropdown.
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    # ── RHAIIS 3.5 release pairs ────────────────────────────────────
+    {
+        "current": "RHAIIS-3.5-EA2",
+        "previous": "RHAIIS-3.5-EA1",
+        "upstream": "vLLM-0.21.0",
+        "additional": [],
+    },
+    {
+        "current": "RHAIIS-3.5-EA2",
+        "previous": "RHAIIS-3.4-GA",
+        "upstream": "vLLM-0.21.0",
+        "additional": [],
+    },
+    {
+        "current": "RHAIIS-3.5-EA1",
+        "previous": "RHAIIS-3.4-GA",
+        "upstream": "vLLM-0.19.1",
+        "additional": [],
+    },
+    # ── RHAIIS 3.4 release pairs ────────────────────────────────────
     {
         "current": "RHAIIS-3.4-GA",
         "previous": "RHAIIS-3.3",
@@ -124,6 +144,7 @@ OVERVIEW_RELEASE_PAIRS = [
         "upstream": "vLLM-0.14.1",
         "additional": ["vLLM-0.17.1"],
     },
+    # ── RHAIIS 3.3 and earlier ──────────────────────────────────────
     {
         "current": "RHAIIS-3.3",
         "previous": "RHAIIS-3.2.5",
@@ -131,6 +152,24 @@ OVERVIEW_RELEASE_PAIRS = [
         "additional": [],
     },
     # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
+    {
+        "current": "vLLM-0.22.0",
+        "previous": "vLLM-0.21.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.21.0",
+        "previous": "vLLM-0.19.1",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.19.1",
+        "previous": "vLLM-0.19.0",
+        "upstream": None,
+        "additional": [],
+    },
     {
         "current": "vLLM-0.20.0",
         "previous": "vLLM-0.19.0",
@@ -163,6 +202,7 @@ NEUTRAL_THRESHOLD_PCT = 2.0
 ACCELERATOR_DISPLAY_NAMES = {
     "H200": "NVIDIA H200",
     "MI300X": "AMD MI300X",
+    "MI355X": "AMD MI355X",
     "B200": "NVIDIA B200",
     "B300": "NVIDIA B300",
     "TPU": "Google TPU",
