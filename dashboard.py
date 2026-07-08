@@ -94,7 +94,7 @@ S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 OVERVIEW_CURRENT = "RHAIIS-3.5-EA2"
 OVERVIEW_PREVIOUS = "RHAIIS-3.5-EA1"
 OVERVIEW_UPSTREAM = "vLLM-0.21.0"
-OVERVIEW_ADDITIONAL = []
+OVERVIEW_ADDITIONAL: list[str] = []
 
 # Ordered list of back-to-back release pairs for the Overview dropdown.
 # Most recent pair first. `upstream` / `additional` can be None / [] when
@@ -10659,6 +10659,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "dashboard_id": "cd77e3aa2b40e0",
                 "dashboard_name": "vllm-2b-dcgm-metrics-rhaiis-ibm-dc-h200",
             },
+            "H200_HERA2": {
+                "dashboard_id": "psap-hera-dashboard",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-hera-h200",
+            },
             "MI300X": {
                 "dashboard_id": "amd-ods-az-amd-01",
                 "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
@@ -10678,6 +10682,13 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 return False
             upper = run_name.upper()
             return upper.startswith("H200-HERA-") or upper.startswith("H200_HERA-")
+
+        def _is_hera2_run(run_name):
+            """Check if a run belongs to the H200 Hera2 cluster."""
+            if not isinstance(run_name, str):
+                return False
+            upper = run_name.upper()
+            return upper.startswith("H200-HERA2-") or upper.startswith("H200_HERA2-")
 
         def create_grafana_link(row):
             """Create Grafana dashboard link if timestamps are available."""
@@ -10701,7 +10712,9 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 end_ms = int(end_time)
 
                 # Determine which dashboard to use based on accelerator, cluster, and date
-                if _is_hera_run(run_name):
+                if _is_hera2_run(run_name):
+                    dashboard_key = "H200_HERA2"
+                elif _is_hera_run(run_name):
                     dashboard_key = "H200_HERA"
                 elif accelerator == "H200":
                     if start_ms >= H200_DASHBOARD_CUTOFF_MS:
