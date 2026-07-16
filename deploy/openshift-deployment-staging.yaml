@@ -78,11 +78,11 @@ spec:
           # Resource limits
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "500m"
-            limits:
               memory: "1Gi"
               cpu: "1000m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
 
           # Health checks
           livenessProbe:
@@ -90,10 +90,10 @@ spec:
               path: /_stcore/health
               port: 8501
               scheme: HTTP
-            initialDelaySeconds: 60
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 10
-            failureThreshold: 3
+            failureThreshold: 5
             successThreshold: 1
 
           readinessProbe:
@@ -101,10 +101,10 @@ spec:
               path: /_stcore/health
               port: 8501
               scheme: HTTP
-            initialDelaySeconds: 30
+            initialDelaySeconds: 90
             periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 5
             successThreshold: 1
 
           # Container security context for OpenShift

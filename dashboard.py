@@ -1771,6 +1771,7 @@ def _render_three_way_comparison(
                 )
 
 
+@st.fragment
 def render_competitive_analysis_section(df):
     """Render the Competitive Analysis page.
 
@@ -2506,6 +2507,7 @@ def render_competitive_analysis_section(df):
             st.markdown("---")
 
 
+@st.fragment
 def render_overview_section(df):
     """Render the Overview page — executive summary of the latest release."""
     header_col, _spacer, dropdown_col = st.columns([2, 5, 3])
@@ -3643,6 +3645,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     )
 
 
+@st.fragment
 def render_dataset_representation_section(selected_profile, use_expander=True):
     """Render the Dataset Representation section (visible only for Custom ISL/OSL).
 
@@ -3776,6 +3779,7 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
                     st.error("Could not generate histograms from the dataset.")
 
 
+@st.fragment
 def render_performance_plots_section(filtered_df, use_expander=True):
     """📊 Performance Plots Section - Complete functionality from original."""
     if use_expander:
@@ -4106,6 +4110,7 @@ def load_pareto_data(csv_file_path, preloaded_df=None):
         return []
 
 
+@st.fragment
 def render_pareto_plots_section(preloaded_df=None, use_expander=True):
     """🔄 Pareto Tradeoff Analysis Section - Interactive plots showing performance vs latency tradeoffs."""
     if use_expander:
@@ -4721,6 +4726,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 )
 
 
+@st.fragment
 def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
     """🔄 Pareto Tradeoff Graphs — multi-model view for Custom ISL/OSL profiles.
 
@@ -5044,6 +5050,7 @@ def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
             )
 
 
+@st.fragment
 def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> None:
     """📈 Performance Trends Section - Show performance evolution across releases.
 
@@ -7050,6 +7057,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.query_params.update(_cv_url_params)
 
 
+@st.fragment
 def render_compare_configurations_section(
     filtered_df, selected_profile, use_expander=True
 ):
@@ -7829,6 +7837,7 @@ def render_compare_configurations_section(
             st.info("No comparison data available for the selected filters.")
 
 
+@st.fragment
 def render_model_performance_comparison_section(
     filtered_df, accelerator_color_map, use_expander=True
 ):
@@ -8302,6 +8311,7 @@ def render_model_performance_comparison_section(
             st.plotly_chart(fig_itl, use_container_width=True, theme=None)
 
 
+@st.fragment
 def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expander=True):
     """💰 Cost Analysis Section - Complete functionality with cloud pricing calculations from original."""
     if use_expander:
@@ -9388,6 +9398,7 @@ def render_cost_analysis_section(filtered_df, accelerator_color_map, use_expande
             st.warning("⚠️ No performance data available for cost calculations.")
 
 
+@st.fragment
 def render_energy_carbon_methodology_section(full_df, use_expander=True):
     """🌱 Energy Computation  Section for GPU Services.
 
@@ -10319,6 +10330,7 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                 )
 
 
+@st.fragment
 def render_runtime_configs_section(filtered_df, use_expander=True):
     """⚙️ Runtime Server Configs Section - Complete functionality from original."""
     if use_expander:
@@ -10450,6 +10462,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
             )
 
 
+@st.fragment
 def render_view_logs_section(filtered_df, use_expander=True):
     """📋 View Logs Section - Fetch and display logs from S3 for selected runs."""
     if use_expander:
@@ -10569,7 +10582,7 @@ def render_view_logs_section(filtered_df, use_expander=True):
                                 use_container_width=True,
                             ):
                                 st.session_state._show_full_log = True
-                                st.rerun()
+                                st.rerun(scope="fragment")
                             st.markdown("</div>", unsafe_allow_html=True)
                         with col_dl:
                             st.markdown(
@@ -10609,6 +10622,7 @@ def render_view_logs_section(filtered_df, use_expander=True):
                     st.warning(content)
 
 
+@st.fragment
 def render_filtered_data_section(filtered_df, use_expander=True):
     """📄 Filtered Data Display Section - View only, no download functionality."""
     if use_expander:

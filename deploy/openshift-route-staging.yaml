@@ -3,6 +3,9 @@ kind: Route
 metadata:
   name: staging-aidash
   namespace: perf-aidashboard
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+    haproxy.router.openshift.io/timeout-tunnel: 300s
   labels:
     app: perf-aidashboard-staging
     app.kubernetes.io/name: perf-aidashboard-staging

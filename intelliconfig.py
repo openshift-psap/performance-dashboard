@@ -468,6 +468,7 @@ def _render_step_export():
 # ---------------------------------------------------------------------------
 
 
+@st.fragment
 def render_intelliconfig_section(df):
     """Render the IntelliConfig guided optimization wizard."""
     for key, default in [
