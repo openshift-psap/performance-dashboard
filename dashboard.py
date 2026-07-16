@@ -3859,10 +3859,13 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 "Throughput (Output tokens/second generated)": "output_tok/sec",
                 "Efficiency (Output tokens/sec per TP unit)": "efficiency_ratio",
                 "Inter-Token Latency P95 (Time between tokens)": "itl_p95",
+                "Inter-Token Latency Median (Time between tokens)": "itl_median",
                 "Time to First Token P95 (Response start delay)": "ttft_p95_s",
+                "Time to First Token Median (Response start delay)": "ttft_median_s",
                 "Request Latency Median (Total request processing time)": "request_latency_median",
                 "Request Latency Max (Maximum request processing time)": "request_latency_max",
                 "Time Per Output Token P95 (Token generation time)": "tpot_p95",
+                "Time Per Output Token Median (Token generation time)": "tpot_median",
                 "Total Throughput (Total tokens/second processed)": "total_tok/sec",
                 "Request Count (Successful completions)": "successful_requests",
                 "Error Rate (% Failed requests)": "error_rate",
@@ -3906,9 +3909,9 @@ def render_performance_plots_section(filtered_df, use_expander=True):
 
         # Add units to y-axis label for certain metrics
         y_axis_display_label = y_axis_label
-        if y_axis == "ttft_p95_s":
+        if y_axis in ("ttft_p95_s", "ttft_median_s"):
             y_axis_display_label = f"{y_axis_label} (s)"
-        elif y_axis == "itl_p95" or y_axis == "tpot_p95":
+        elif y_axis in ("itl_p95", "itl_median", "tpot_p95", "tpot_median"):
             y_axis_display_label = f"{y_axis_label} (ms)"
         elif y_axis == "request_latency_median" or y_axis == "request_latency_max":
             y_axis_display_label = f"{y_axis_label} (s)"
@@ -11676,6 +11679,10 @@ def main():
         df["ttft_p95_s"] = df["ttft_p95"] / 1000
     else:
         df["ttft_p95_s"] = np.nan
+    if "ttft_median" in df.columns:
+        df["ttft_median_s"] = df["ttft_median"] / 1000
+    else:
+        df["ttft_median_s"] = np.nan
 
     if "url_filters_loaded" not in st.session_state:
         st.session_state.url_filters_loaded = True
