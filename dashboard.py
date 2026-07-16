@@ -10286,22 +10286,23 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 "**Runtime configurations for your current filter selections:**"
             )
             st.info(
-                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version combination that matches your current filters."
+                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version + TP combination that matches your current filters."
             )
 
             unique_configs = filtered_df.drop_duplicates(
-                subset=["model", "accelerator", "version"]
+                subset=["model", "accelerator", "version", "TP"]
             )
 
             if not unique_configs.empty:
                 display_runtime_df = unique_configs[
-                    ["model", "accelerator", "version", "runtime_args"]
+                    ["model", "accelerator", "version", "TP", "runtime_args"]
                 ].copy()
                 display_runtime_df = display_runtime_df.rename(
                     columns={
                         "model": "Model",
                         "accelerator": "Accelerator",
                         "version": "Version",
+                        "TP": "TP",
                         "runtime_args": "Runtime Arguments",
                     }
                 )
@@ -10341,6 +10342,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                             "Model",
                             "Accelerator",
                             "Version",
+                            "TP",
                             "Runtime Arguments",
                         ]
                     ],
@@ -10360,6 +10362,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                         "Version": st.column_config.TextColumn(
                             "Version", width=120, pinned=True
                         ),
+                        "TP": st.column_config.NumberColumn("TP", width=60),
                         "Runtime Arguments": st.column_config.TextColumn(
                             "Runtime Args", width=1800
                         ),
@@ -10369,7 +10372,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 options = [
                     (
                         i,
-                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']}",
+                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']} / TP{r['TP']}",
                     )
                     for i, r in df.iterrows()
                 ]
