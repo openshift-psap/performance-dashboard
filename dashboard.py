@@ -90,15 +90,34 @@ S3_LOGS_BUCKET = os.environ.get("S3_LOGS_BUCKET", "psap-model-furnace")
 S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 
 # ── Overview version configuration (single source of truth) ──────
-OVERVIEW_CURRENT = "RHAIIS-3.4-GA"
-OVERVIEW_PREVIOUS = "RHAIIS-3.3"
-OVERVIEW_UPSTREAM = "vLLM-0.18.0"
-OVERVIEW_ADDITIONAL = ["vLLM-0.17.1"]
+OVERVIEW_CURRENT = "RHAIIS-3.5-EA2"
+OVERVIEW_PREVIOUS = "RHAIIS-3.5-EA1"
+OVERVIEW_UPSTREAM = "vLLM-0.21.0"
+OVERVIEW_ADDITIONAL: list[str] = []
 
 # Ordered list of back-to-back release pairs for the Overview dropdown.
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    {
+        "current": "RHAIIS-3.5-EA2",
+        "previous": "RHAIIS-3.5-EA1",
+        "upstream": "vLLM-0.21.0",
+        "additional": [],
+    },
+    {
+        "current": "RHAIIS-3.5-EA2",
+        "previous": "RHAIIS-3.4-GA",
+        "upstream": "vLLM-0.21.0",
+        "additional": [],
+    },
+    {
+        "current": "RHAIIS-3.5-EA1",
+        "previous": "RHAIIS-3.4-GA",
+        "upstream": "vLLM-0.19.1",
+        "additional": [],
+    },
+    # ── RHAIIS 3.4 release pairs ────────────────────────────────────
     {
         "current": "RHAIIS-3.4-GA",
         "previous": "RHAIIS-3.3",
