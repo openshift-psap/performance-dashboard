@@ -2068,6 +2068,7 @@ def _render_version_selector(mlperf_versions: dict, selected_version: str) -> st
     return version_selector
 
 
+@st.fragment
 def render_mlperf_dashboard(mlperf_versions: dict):
     """Main function to render the MLPerf Datacenter dashboard.
 

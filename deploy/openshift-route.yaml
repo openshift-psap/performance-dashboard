@@ -3,6 +3,9 @@ kind: Route
 metadata:
   name: rhaiis-dashboard-route
   namespace: rhaiis-dashboard
+  annotations:
+    haproxy.router.openshift.io/timeout: 300s
+    haproxy.router.openshift.io/timeout-tunnel: 300s
   labels:
     app: rhaiis-dashboard
     app.kubernetes.io/name: rhaiis-dashboard
