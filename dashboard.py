@@ -5838,6 +5838,13 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
             )
+            aic_mode = st.toggle(
+                "AIC Mode",
+                key="compare_aic_mode",
+                help="Enable for AIC comparisons. Swaps metrics to those available in AIC data (e.g. TTFT/TPOT Median instead of P95, removes Total Throughput & ITL P95).",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
 
         with col2:
             version_2_options = [v for v in available_versions if v != version_1]
@@ -6426,7 +6433,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     """)
         st.markdown(f"**Comparing:** {version_1} vs {version_2}")
 
-        # Define metrics to compare
+        # Define metrics to compare (AIC mode hides metrics unavailable in AIC data)
         metrics_config = {
             "Peak Output Throughput": {
                 "column": "output_tok/sec",
@@ -6440,31 +6447,46 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 "higher_is_better": True,
                 "show_concurrency": False,
             },
-            "Total Throughput (Geometric Mean)": {
+        }
+        if not aic_mode:
+            metrics_config["Total Throughput (Geometric Mean)"] = {
                 "column": "total_tok/sec",
                 "aggregation": "geom_mean",
                 "higher_is_better": True,
                 "show_concurrency": False,
-            },
-            "End-to-End Latency (Geometric Mean)": {
-                "column": "request_latency_median",
+            }
+        metrics_config["End-to-End Latency (Geometric Mean)"] = {
+            "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+            "show_concurrency": False,
+        }
+        if aic_mode:
+            metrics_config["TTFT Median (Geometric Mean)"] = {
+                "column": "ttft_median",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
                 "show_concurrency": False,
-            },
-            "TTFT P95 (Geometric Mean)": {
+            }
+            metrics_config["TPOT Median (Geometric Mean)"] = {
+                "column": "tpot_median",
+                "aggregation": "geom_mean",
+                "higher_is_better": False,
+                "show_concurrency": False,
+            }
+        else:
+            metrics_config["TTFT P95 (Geometric Mean)"] = {
                 "column": "ttft_p95",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
                 "show_concurrency": False,
-            },
-            "ITL P95 (Geometric Mean)": {
+            }
+            metrics_config["ITL P95 (Geometric Mean)"] = {
                 "column": "itl_p95",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
                 "show_concurrency": False,
-            },
-        }
+            }
 
         get_comparison_result = compare_two_datasets
 
@@ -6654,8 +6676,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     st.warning("No data available for this metric.")
                     return
 
-                # Convert TTFT P95 from ms → seconds
-                if col == "ttft_p95":
+                # Convert TTFT from ms → seconds
+                if col in ("ttft_p95", "ttft_median"):
                     for md in per_model:
                         md["v1"] = [
                             v / 1000 if v is not None else None for v in md["v1"]
@@ -6827,6 +6849,14 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     "ITL P95 (Geometric Mean)",
                     help="Geometric mean of Inter-Token Latency (P95) across all concurrency levels",
                 ),
+                "TTFT Median (Geometric Mean)": st.column_config.TextColumn(
+                    "TTFT Median (Geometric Mean)",
+                    help="Geometric mean of Time-to-First-Token (Median) across selected concurrency levels (AIC mode)",
+                ),
+                "TPOT Median (Geometric Mean)": st.column_config.TextColumn(
+                    "TPOT Median (Geometric Mean)",
+                    help="Geometric mean of Time-per-Output-Token (Median) across selected concurrency levels (AIC mode)",
+                ),
             }
 
             # Display the table with column tooltips
@@ -6924,6 +6954,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 v1_itl = v1_lat_row["itl_p95"]
                 v2_itl = v2_lat_row["itl_p95"]
 
+                v1_ttft_median = v1_lat_row["ttft_median"]
+                v2_ttft_median = v2_lat_row["ttft_median"]
+
+                v1_tpot_median = v1_lat_row["tpot_median"]
+                v2_tpot_median = v2_lat_row["tpot_median"]
+
                 latency_conc_label = (
                     f" at {latency_conc} concurrent users"
                     if latency_conc is not None
@@ -6982,17 +7018,22 @@ def render_compare_versions_summary_section(df, use_expander=True):
                                 "peak output throughput",
                             ),
                         },
-                        {
-                            "Metric": "Total Throughput (input + output tok/s)",
-                            version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                            version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
-                            "Difference/Winner": get_winner_text(
-                                v1_total_throughput,
-                                v2_total_throughput,
-                                True,
-                                "total throughput",
-                            ),
-                        },
+                    ]
+                    if not aic_mode:
+                        detail_rows.append(
+                            {
+                                "Metric": "Total Throughput (input + output tok/s)",
+                                version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                                version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                                "Difference/Winner": get_winner_text(
+                                    v1_total_throughput,
+                                    v2_total_throughput,
+                                    True,
+                                    "total throughput",
+                                ),
+                            }
+                        )
+                    detail_rows.append(
                         {
                             "Metric": f"Median E2E Latency{latency_conc_label}",
                             version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
@@ -7000,28 +7041,62 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             "Difference/Winner": get_winner_text(
                                 v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
                             ),
-                        },
-                        {
-                            "Metric": f"TTFT P95{latency_conc_label}",
-                            version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
-                            if pd.notna(v1_ttft)
-                            else "N/A",
-                            version_2: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
-                            if pd.notna(v2_ttft)
-                            else "N/A",
-                            "Difference/Winner": get_winner_text(
-                                v1_ttft, v2_ttft, False, "P95 TTFT"
-                            ),
-                        },
-                        {
-                            "Metric": f"ITL P95{latency_conc_label}",
-                            version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
-                            version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
-                            "Difference/Winner": get_winner_text(
-                                v1_itl, v2_itl, False, "P95 ITL"
-                            ),
-                        },
-                    ]
+                        }
+                    )
+                    if aic_mode:
+                        detail_rows.append(
+                            {
+                                "Metric": f"TTFT Median{latency_conc_label}",
+                                version_1: f"{format_value(v1_ttft_median, 'ms', 2, round_up=True)}"
+                                if pd.notna(v1_ttft_median)
+                                else "N/A",
+                                version_2: f"{format_value(v2_ttft_median, 'ms', 2, round_up=True)}"
+                                if pd.notna(v2_ttft_median)
+                                else "N/A",
+                                "Difference/Winner": get_winner_text(
+                                    v1_ttft_median, v2_ttft_median, False, "Median TTFT"
+                                ),
+                            }
+                        )
+                        detail_rows.append(
+                            {
+                                "Metric": f"TPOT Median{latency_conc_label}",
+                                version_1: f"{format_value(v1_tpot_median, 'ms', 2, round_up=True)}"
+                                if pd.notna(v1_tpot_median)
+                                else "N/A",
+                                version_2: f"{format_value(v2_tpot_median, 'ms', 2, round_up=True)}"
+                                if pd.notna(v2_tpot_median)
+                                else "N/A",
+                                "Difference/Winner": get_winner_text(
+                                    v1_tpot_median, v2_tpot_median, False, "Median TPOT"
+                                ),
+                            }
+                        )
+                    else:
+                        detail_rows.append(
+                            {
+                                "Metric": f"TTFT P95{latency_conc_label}",
+                                version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
+                                if pd.notna(v1_ttft)
+                                else "N/A",
+                                version_2: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
+                                if pd.notna(v2_ttft)
+                                else "N/A",
+                                "Difference/Winner": get_winner_text(
+                                    v1_ttft, v2_ttft, False, "P95 TTFT"
+                                ),
+                            }
+                        )
+                        detail_rows.append(
+                            {
+                                "Metric": f"ITL P95{latency_conc_label}",
+                                version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
+                                version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
+                                "Difference/Winner": get_winner_text(
+                                    v1_itl, v2_itl, False, "P95 ITL"
+                                ),
+                            }
+                        )
 
                     detail_df = pd.DataFrame(detail_rows)
                     st.dataframe(
