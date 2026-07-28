@@ -6448,13 +6448,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 "show_concurrency": False,
             },
         }
-        if not aic_mode:
-            metrics_config["Total Throughput (Geometric Mean)"] = {
-                "column": "total_tok/sec",
-                "aggregation": "geom_mean",
-                "higher_is_better": True,
-                "show_concurrency": False,
-            }
+        metrics_config["Total Throughput (Geometric Mean)"] = {
+            "column": "total_tok/sec",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+            "show_concurrency": False,
+        }
         metrics_config["End-to-End Latency (Geometric Mean)"] = {
             "column": "request_latency_median",
             "aggregation": "geom_mean",
@@ -6462,6 +6461,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             "show_concurrency": False,
         }
         if aic_mode:
+            del metrics_config["Total Throughput (Geometric Mean)"]
             metrics_config["TTFT Median (Geometric Mean)"] = {
                 "column": "ttft_median",
                 "aggregation": "geom_mean",
@@ -7019,20 +7019,19 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             ),
                         },
                     ]
-                    if not aic_mode:
-                        detail_rows.append(
-                            {
-                                "Metric": "Total Throughput (input + output tok/s)",
-                                version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                                version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
-                                "Difference/Winner": get_winner_text(
-                                    v1_total_throughput,
-                                    v2_total_throughput,
-                                    True,
-                                    "total throughput",
-                                ),
-                            }
-                        )
+                    detail_rows.append(
+                        {
+                            "Metric": "Total Throughput (input + output tok/s)",
+                            version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            "Difference/Winner": get_winner_text(
+                                v1_total_throughput,
+                                v2_total_throughput,
+                                True,
+                                "total throughput",
+                            ),
+                        }
+                    )
                     detail_rows.append(
                         {
                             "Metric": f"Median E2E Latency{latency_conc_label}",
@@ -7044,6 +7043,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         }
                     )
                     if aic_mode:
+                        detail_rows = [
+                            row
+                            for row in detail_rows
+                            if row["Metric"]
+                            != "Total Throughput (input + output tok/s)"
+                        ]
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT Median{latency_conc_label}",
