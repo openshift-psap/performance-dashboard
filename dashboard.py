@@ -7049,13 +7049,15 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             if row["Metric"]
                             != "Total Throughput (input + output tok/s)"
                         ]
+                        v1_ttft_median_s = v1_ttft_median / 1000 if pd.notna(v1_ttft_median) else v1_ttft_median
+                        v2_ttft_median_s = v2_ttft_median / 1000 if pd.notna(v2_ttft_median) else v2_ttft_median
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT Median{latency_conc_label}",
-                                version_1: f"{format_value(v1_ttft_median, 'ms', 2, round_up=True)}"
+                                version_1: f"{format_value(v1_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v1_ttft_median)
                                 else "N/A",
-                                version_2: f"{format_value(v2_ttft_median, 'ms', 2, round_up=True)}"
+                                version_2: f"{format_value(v2_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v2_ttft_median)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
