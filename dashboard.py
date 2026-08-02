@@ -10657,6 +10657,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "dashboard_id": "psap-b200-mlperf",
                 "dashboard_name": "vllm-2b-dcgm-metrics-psap-b200-mlperf",
             },
+            "H200_ZEUS2": {
+                "dashboard_id": "d35f19c8f56250",
+                "dashboard_name": "vllm-2b-dcgm-metrics-psap-zeus-syd",
+            },
         }
 
         _SGLANG_H200_DASHBOARD = {
@@ -10667,6 +10671,7 @@ def render_filtered_data_section(filtered_df, use_expander=True):
         SGLANG_GRAFANA_DASHBOARDS = {
             "H200": _SGLANG_H200_DASHBOARD,
             "H200_HERA2": _SGLANG_H200_DASHBOARD,
+            "H200_ZEUS2": _SGLANG_H200_DASHBOARD,
         }
 
         # Jan 1, 2026 00:00:00 UTC in milliseconds
