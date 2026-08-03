@@ -11642,6 +11642,23 @@ def main():
         df["prefix_caching"] = ""
     df["prefix_caching"] = df["prefix_caching"].fillna("").astype(str)
 
+    # Derive prefix_caching from runtime_args when not explicitly set
+    if "runtime_args" in df.columns:
+        mask = (df["prefix_caching"] == "") & df["runtime_args"].notna()
+
+        def _extract_prefix_caching(args_str):
+            for part in str(args_str).split(";"):
+                part = part.strip()
+                if part.startswith("no-enable-prefix-caching:"):
+                    val = part.split(":", 1)[1].strip()
+                    # Double-negative: no-enable-prefix-caching: True means OFF
+                    return "no" if val.lower() == "true" else "yes"
+            return ""
+
+        df.loc[mask, "prefix_caching"] = df.loc[mask, "runtime_args"].apply(
+            _extract_prefix_caching
+        )
+
     if "turns" not in df.columns:
         df["turns"] = 1
     df["turns"] = df["turns"].fillna(1).astype(int)
