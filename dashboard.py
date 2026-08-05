@@ -89,6 +89,8 @@ AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 S3_LOGS_BUCKET = os.environ.get("S3_LOGS_BUCKET", "psap-model-furnace")
 S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
+MLFLOW_BASE_URL = os.environ.get("MLFLOW_BASE_URL", "")
+MLFLOW_WORKSPACE = os.environ.get("MLFLOW_WORKSPACE", "forge-rhaiis")
 
 # ── Overview version configuration (single source of truth) ──────
 OVERVIEW_CURRENT = "RHAIIS-3.5-EA2"
@@ -10936,23 +10938,57 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             create_grafana_link, axis=1
         )
 
+        # Add MLflow link for rows with mlflow_run_id
+        if MLFLOW_BASE_URL:
+
+            def create_mlflow_link(row):
+                run_id = row.get("mlflow_run_id")
+                experiment_id = row.get("mlflow_experiment_id")
+                if (
+                    pd.notna(run_id)
+                    and run_id != ""
+                    and pd.notna(experiment_id)
+                    and experiment_id != ""
+                ):
+                    exp_id = int(float(experiment_id))
+                    return (
+                        f"{MLFLOW_BASE_URL}/#/experiments/{exp_id}"
+                        f"/runs/{run_id}/artifacts?workspace={MLFLOW_WORKSPACE}"
+                    )
+                return None
+
+            display_filtered_df["mlflow_link"] = display_filtered_df.apply(
+                create_mlflow_link, axis=1
+            )
+        else:
+            display_filtered_df["mlflow_link"] = None
+
         display_filtered_df["view_logs_link"] = False
 
         # Drop internal columns not useful for display
-        for _drop_col in ("custom_isl_osl", "multiturn_isl_osl"):
+        for _drop_col in (
+            "custom_isl_osl",
+            "multiturn_isl_osl",
+            "mlflow_run_id",
+            "mlflow_experiment_id",
+        ):
             if _drop_col in display_filtered_df.columns:
                 display_filtered_df = display_filtered_df.drop(columns=[_drop_col])
 
-        # Reorder columns to place grafana_metrics_link after TP, view_logs_link after that, and Run Date at the end
+        # Reorder columns to place grafana_metrics_link after TP, mlflow_link after that, view_logs_link after that, and Run Date at the end
         cols = display_filtered_df.columns.tolist()
         if "grafana_metrics_link" in cols and "TP" in cols:
             cols.remove("grafana_metrics_link")
             tp_idx = cols.index("TP")
             cols.insert(tp_idx + 1, "grafana_metrics_link")
-        if "view_logs_link" in cols and "grafana_metrics_link" in cols:
-            cols.remove("view_logs_link")
+        if "mlflow_link" in cols and "grafana_metrics_link" in cols:
+            cols.remove("mlflow_link")
             gml_idx = cols.index("grafana_metrics_link")
-            cols.insert(gml_idx + 1, "view_logs_link")
+            cols.insert(gml_idx + 1, "mlflow_link")
+        if "view_logs_link" in cols and "mlflow_link" in cols:
+            cols.remove("view_logs_link")
+            ml_idx = cols.index("mlflow_link")
+            cols.insert(ml_idx + 1, "view_logs_link")
         if "request_type" in cols:
             cols.remove("request_type")
             cols.append("request_type")
@@ -11179,6 +11215,11 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "Grafana Metrics",
                 help="Link to Grafana dashboard showing detailed metrics for this benchmark run (available only for runs with timestamp data)",
                 display_text="View Metrics 📊",
+            ),
+            "mlflow_link": st.column_config.LinkColumn(
+                "MLflow",
+                help="Link to MLflow run artifacts for this benchmark (available only for runs with MLflow tracking data)",
+                display_text="View Run 🧪",
             ),
             "view_logs_link": st.column_config.CheckboxColumn(
                 "View Logs 📋",
