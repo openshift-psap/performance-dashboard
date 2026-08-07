@@ -5787,7 +5787,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             return
 
         # Filters row
-        col1, col2, col3, col4 = st.columns(4)
+        col1, swap_col, col2, col3, col4 = st.columns([4, 1, 4, 4, 4])
 
         # Set default versions
         default_v1 = OVERVIEW_CURRENT
@@ -5807,6 +5807,16 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
             )
+
+        with swap_col:
+            st.markdown("<div style='height: 1.65rem'></div>", unsafe_allow_html=True)
+            if st.button("⇄", key="compare_swap_versions", help="Swap versions"):
+                v1 = st.session_state.get("compare_summary_v1")
+                v2 = st.session_state.get("compare_summary_v2")
+                if v1 and v2:
+                    st.session_state["compare_summary_v1"] = v2
+                    st.session_state["compare_summary_v2"] = v1
+                    st.rerun()
 
         with col2:
             version_2_options = [v for v in available_versions if v != version_1]
