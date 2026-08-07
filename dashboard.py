@@ -102,6 +102,18 @@ OVERVIEW_ADDITIONAL: list[str] = []
 OVERVIEW_RELEASE_PAIRS = [
     # ── RHAIIS 3.5 release pairs ────────────────────────────────────
     {
+        "current": "RHAIIS-3.5-GA",
+        "previous": "RHAIIS-3.4-GA",
+        "upstream": "vLLM-0.24.0",
+        "additional": [],
+    },
+    {
+        "current": "RHAIIS-3.5-GA",
+        "previous": "RHAIIS-3.5-EA2",
+        "upstream": "vLLM-0.24.0",
+        "additional": [],
+    },
+    {
         "current": "RHAIIS-3.5-EA2",
         "previous": "RHAIIS-3.5-EA1",
         "upstream": "vLLM-0.21.0",
