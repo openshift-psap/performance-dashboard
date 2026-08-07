@@ -4116,33 +4116,28 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
         filter_col1, filter_col2, filter_col3, filter_col4, filter_col5 = st.columns(5)
 
         with filter_col1:
-            # Get unique models from results
             unique_models = sorted({r.get("model", "Unknown") for r in results})
 
-            # Set default model
             default_model = "openai/gpt-oss-120b"
-            if default_model not in unique_models and unique_models:
-                default_model = unique_models[0]
-
-            default_idx = (
-                unique_models.index(default_model)
-                if default_model in unique_models
-                else 0
+            default_models = (
+                [default_model] if default_model in unique_models else unique_models[:1]
             )
 
-            selected_model = st.selectbox(
-                "Select Model",
+            selected_models = st.multiselect(
+                "Select Model(s)",
                 options=unique_models,
-                index=default_idx,
+                default=default_models,
                 key="pareto_model_select",
                 on_change=keep_expander_open,
                 args=("pareto_expanded",),
             )
 
-        # Filter by selected model
-        results = [r for r in results if r.get("model", "Unknown") == selected_model]
+        if not selected_models:
+            st.warning("Please select at least one model")
+            return
+        results = [r for r in results if r.get("model", "Unknown") in selected_models]
         if not results:
-            st.warning(f"No results found for model: '{selected_model}'")
+            st.warning("No results found for selected models")
             return
 
         with filter_col2:
@@ -4276,17 +4271,20 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
             "#20B2AA",
         ]
 
-        # Create unique color mapping for each version+accelerator+parallelism combination
-        hw_tp_version_color_map = {}
+        unique_models_in_results = sorted({r.get("model", "Unknown") for r in results})
+
+        # Create unique color mapping for each model+version+accelerator+parallelism combination
+        trace_color_map = {}
         color_idx = 0
-        for version in sorted(unique_versions_in_results):
-            for hw in sorted(unique_hw):
-                for par_label in sorted(unique_par_labels):
-                    hw_tp_version_key = f"{version}_{hw.lower()}_{par_label}"
-                    hw_tp_version_color_map[hw_tp_version_key] = color_palette[
-                        color_idx % len(color_palette)
-                    ]
-                    color_idx += 1
+        for model in unique_models_in_results:
+            for version in sorted(unique_versions_in_results):
+                for hw in sorted(unique_hw):
+                    for par_label in sorted(unique_par_labels):
+                        trace_key = f"{model}_{version}_{hw.lower()}_{par_label}"
+                        trace_color_map[trace_key] = color_palette[
+                            color_idx % len(color_palette)
+                        ]
+                        color_idx += 1
 
         # Create tabs for different plot types with larger buttons
         st.markdown(
@@ -4324,82 +4322,84 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, accelerator, and parallelism config
-                for version in sorted(unique_versions_in_results):
-                    for hw in sorted(unique_hw):
-                        for par_label in sorted(unique_par_labels):
-                            hw_tp_version_results = [
-                                r
-                                for r in filtered_results
-                                if r.get("version", "Unknown") == version
-                                and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("parallelism_label", "TP=1") == par_label
-                            ]
-
-                            if hw_tp_version_results:
-                                hw_tp_version_results_sorted = sorted(
-                                    hw_tp_version_results,
-                                    key=lambda x: x.get("conc", 0),
-                                )
-
-                                xs = [
-                                    r.get("median_e2el", 0)
-                                    for r in hw_tp_version_results_sorted
-                                ]
-                                ys = [
-                                    r.get(selected_throughput_key, 0)
-                                    for r in hw_tp_version_results_sorted
-                                ]
-                                concs = [
-                                    r.get("conc", "N/A")
-                                    for r in hw_tp_version_results_sorted
+                for model in unique_models_in_results:
+                    model_short = _short_model_name(model)
+                    for version in sorted(unique_versions_in_results):
+                        for hw in sorted(unique_hw):
+                            for par_label in sorted(unique_par_labels):
+                                trace_results = [
+                                    r
+                                    for r in filtered_results
+                                    if r.get("model", "Unknown") == model
+                                    and r.get("version", "Unknown") == version
+                                    and r.get("hw", "unknown").lower() == hw.lower()
+                                    and r.get("parallelism_label", "TP=1") == par_label
                                 ]
 
-                                hw_tp_version_key = (
-                                    f"{version}_{hw.lower()}_{par_label}"
-                                )
-                                color = hw_tp_version_color_map.get(
-                                    hw_tp_version_key, "#999999"
-                                )
-
-                                metric_hover_labels = {
-                                    "tput_per_gpu": "Total Throughput",
-                                    "output_tput_per_gpu": "Output Throughput",
-                                    "input_tput_per_gpu": "Input Throughput",
-                                }
-                                metric_hover_label = metric_hover_labels.get(
-                                    selected_throughput_key, "Throughput"
-                                )
-
-                                hover_text = [
-                                    f"Version: {version}<br>"
-                                    f"Accelerator: {hw.upper()}<br>"
-                                    f"Config: {par_label}<br>"
-                                    f"Concurrent Requests: {conc} Users<br>"
-                                    f"Latency: {x:.2f}s<br>"
-                                    f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, x, y in zip(concs, xs, ys)
-                                ]
-
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=xs,
-                                        y=ys,
-                                        mode="markers+lines+text",
-                                        name=f"{version} | {hw.upper()} ({par_label})",
-                                        marker={
-                                            "size": 10,
-                                            "color": color,
-                                            "line": {"width": 1, "color": "white"},
-                                        },
-                                        line={"color": color, "width": 2},
-                                        text=[str(c) for c in concs],
-                                        textposition="top center",
-                                        textfont={"size": 9},
-                                        hovertext=hover_text,
-                                        hoverinfo="text",
+                                if trace_results:
+                                    trace_sorted = sorted(
+                                        trace_results,
+                                        key=lambda x: x.get("conc", 0),
                                     )
-                                )
+
+                                    xs = [r.get("median_e2el", 0) for r in trace_sorted]
+                                    ys = [
+                                        r.get(selected_throughput_key, 0)
+                                        for r in trace_sorted
+                                    ]
+                                    concs = [r.get("conc", "N/A") for r in trace_sorted]
+
+                                    trace_key = (
+                                        f"{model}_{version}_{hw.lower()}_{par_label}"
+                                    )
+                                    color = trace_color_map.get(trace_key, "#999999")
+
+                                    metric_hover_labels = {
+                                        "tput_per_gpu": "Total Throughput",
+                                        "output_tput_per_gpu": "Output Throughput",
+                                        "input_tput_per_gpu": "Input Throughput",
+                                    }
+                                    metric_hover_label = metric_hover_labels.get(
+                                        selected_throughput_key, "Throughput"
+                                    )
+
+                                    hover_text = [
+                                        f"Model: {model_short}<br>"
+                                        f"Version: {version}<br>"
+                                        f"Accelerator: {hw.upper()}<br>"
+                                        f"Config: {par_label}<br>"
+                                        f"Concurrent Requests: {conc} Users<br>"
+                                        f"Latency: {x:.2f}s<br>"
+                                        f"{metric_hover_label}: {y:.2f} tok/s/gpu"
+                                        for conc, x, y in zip(concs, xs, ys)
+                                    ]
+
+                                    multi_model = len(unique_models_in_results) > 1
+                                    trace_name = (
+                                        f"{model_short} | {version} | {hw.upper()} ({par_label})"
+                                        if multi_model
+                                        else f"{version} | {hw.upper()} ({par_label})"
+                                    )
+
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=xs,
+                                            y=ys,
+                                            mode="markers+lines+text",
+                                            name=trace_name,
+                                            marker={
+                                                "size": 10,
+                                                "color": color,
+                                                "line": {"width": 1, "color": "white"},
+                                            },
+                                            line={"color": color, "width": 2},
+                                            text=[str(c) for c in concs],
+                                            textposition="top center",
+                                            textfont={"size": 9},
+                                            hovertext=hover_text,
+                                            hoverinfo="text",
+                                        )
+                                    )
 
                 metric_titles = {
                     "tput_per_gpu": (
@@ -4416,8 +4416,11 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     ),
                 }
                 tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                models_label = ", ".join(
+                    _short_model_name(m) for m in unique_models_in_results
+                )
                 plot_title = (
-                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"{models_label} | ISL/OSL: {selected_isl_osl}"
                     f"<br><sup>{tput_note}</sup>"
                 )
 
@@ -4429,7 +4432,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (Config)",
+                        "title": "Model | Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
@@ -4466,82 +4469,86 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
                 fig = go.Figure()
 
-                # Group by version, accelerator, and parallelism config
-                for version in sorted(unique_versions_in_results):
-                    for hw in sorted(unique_hw):
-                        for par_label in sorted(unique_par_labels):
-                            hw_tp_version_results = [
-                                r
-                                for r in filtered_results
-                                if r.get("version", "Unknown") == version
-                                and r.get("hw", "unknown").lower() == hw.lower()
-                                and r.get("parallelism_label", "TP=1") == par_label
-                            ]
-
-                            if hw_tp_version_results:
-                                hw_tp_version_results_sorted = sorted(
-                                    hw_tp_version_results,
-                                    key=lambda x: x.get("conc", 0),
-                                )
-
-                                xs = [
-                                    r.get("median_intvty", 0)
-                                    for r in hw_tp_version_results_sorted
-                                ]
-                                ys = [
-                                    r.get(selected_throughput_key, 0)
-                                    for r in hw_tp_version_results_sorted
-                                ]
-                                concs = [
-                                    r.get("conc", "N/A")
-                                    for r in hw_tp_version_results_sorted
+                for model in unique_models_in_results:
+                    model_short = _short_model_name(model)
+                    for version in sorted(unique_versions_in_results):
+                        for hw in sorted(unique_hw):
+                            for par_label in sorted(unique_par_labels):
+                                trace_results = [
+                                    r
+                                    for r in filtered_results
+                                    if r.get("model", "Unknown") == model
+                                    and r.get("version", "Unknown") == version
+                                    and r.get("hw", "unknown").lower() == hw.lower()
+                                    and r.get("parallelism_label", "TP=1") == par_label
                                 ]
 
-                                hw_tp_version_key = (
-                                    f"{version}_{hw.lower()}_{par_label}"
-                                )
-                                color = hw_tp_version_color_map.get(
-                                    hw_tp_version_key, "#999999"
-                                )
-
-                                metric_hover_labels = {
-                                    "tput_per_gpu": "Total Throughput",
-                                    "output_tput_per_gpu": "Output Throughput",
-                                    "input_tput_per_gpu": "Input Throughput",
-                                }
-                                metric_hover_label = metric_hover_labels.get(
-                                    selected_throughput_key, "Throughput"
-                                )
-
-                                hover_text = [
-                                    f"Version: {version}<br>"
-                                    f"Accelerator: {hw.upper()}<br>"
-                                    f"Config: {par_label}<br>"
-                                    f"Concurrent Requests: {conc} Users<br>"
-                                    f"Interactivity: {x:.2f} tok/s/user<br>"
-                                    f"{metric_hover_label}: {y:.2f} tok/s/gpu"
-                                    for conc, x, y in zip(concs, xs, ys)
-                                ]
-
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=xs,
-                                        y=ys,
-                                        mode="markers+lines+text",
-                                        name=f"{version} | {hw.upper()} ({par_label})",
-                                        marker={
-                                            "size": 10,
-                                            "color": color,
-                                            "line": {"width": 1, "color": "white"},
-                                        },
-                                        line={"color": color, "width": 2},
-                                        text=[str(c) for c in concs],
-                                        textposition="top center",
-                                        textfont={"size": 9},
-                                        hovertext=hover_text,
-                                        hoverinfo="text",
+                                if trace_results:
+                                    trace_sorted = sorted(
+                                        trace_results,
+                                        key=lambda x: x.get("conc", 0),
                                     )
-                                )
+
+                                    xs = [
+                                        r.get("median_intvty", 0) for r in trace_sorted
+                                    ]
+                                    ys = [
+                                        r.get(selected_throughput_key, 0)
+                                        for r in trace_sorted
+                                    ]
+                                    concs = [r.get("conc", "N/A") for r in trace_sorted]
+
+                                    trace_key = (
+                                        f"{model}_{version}_{hw.lower()}_{par_label}"
+                                    )
+                                    color = trace_color_map.get(trace_key, "#999999")
+
+                                    metric_hover_labels = {
+                                        "tput_per_gpu": "Total Throughput",
+                                        "output_tput_per_gpu": "Output Throughput",
+                                        "input_tput_per_gpu": "Input Throughput",
+                                    }
+                                    metric_hover_label = metric_hover_labels.get(
+                                        selected_throughput_key, "Throughput"
+                                    )
+
+                                    hover_text = [
+                                        f"Model: {model_short}<br>"
+                                        f"Version: {version}<br>"
+                                        f"Accelerator: {hw.upper()}<br>"
+                                        f"Config: {par_label}<br>"
+                                        f"Concurrent Requests: {conc} Users<br>"
+                                        f"Interactivity: {x:.2f} tok/s/user<br>"
+                                        f"{metric_hover_label}: {y:.2f} tok/s/gpu"
+                                        for conc, x, y in zip(concs, xs, ys)
+                                    ]
+
+                                    multi_model = len(unique_models_in_results) > 1
+                                    trace_name = (
+                                        f"{model_short} | {version} | {hw.upper()} ({par_label})"
+                                        if multi_model
+                                        else f"{version} | {hw.upper()} ({par_label})"
+                                    )
+
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=xs,
+                                            y=ys,
+                                            mode="markers+lines+text",
+                                            name=trace_name,
+                                            marker={
+                                                "size": 10,
+                                                "color": color,
+                                                "line": {"width": 1, "color": "white"},
+                                            },
+                                            line={"color": color, "width": 2},
+                                            text=[str(c) for c in concs],
+                                            textposition="top center",
+                                            textfont={"size": 9},
+                                            hovertext=hover_text,
+                                            hoverinfo="text",
+                                        )
+                                    )
 
                 metric_titles = {
                     "tput_per_gpu": (
@@ -4558,8 +4565,11 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     ),
                 }
                 tput_note, y_axis_label = metric_titles[selected_throughput_key]
+                models_label = ", ".join(
+                    _short_model_name(m) for m in unique_models_in_results
+                )
                 plot_title = (
-                    f"{selected_model} | ISL/OSL: {selected_isl_osl}"
+                    f"{models_label} | ISL/OSL: {selected_isl_osl}"
                     f"<br><sup>{tput_note}</sup>"
                 )
 
@@ -4571,7 +4581,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                     hovermode="closest",
                     showlegend=True,
                     legend={
-                        "title": "Version | Accelerator (Config)",
+                        "title": "Model | Version | Accelerator (Config)",
                         "font": {"size": 12},
                     },
                     height=600,
