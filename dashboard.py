@@ -337,6 +337,16 @@ def load_data(file_path, cache_key=None):
         df["model"] = df["model"].str.strip()
         df["version"] = df["version"].str.strip()
         df["TP"] = pd.to_numeric(df["TP"], errors="coerce")
+
+        # Filter out rows with missing critical fields - these indicate data quality issues
+        initial_row_count = len(df)
+        df = df.dropna(subset=["accelerator", "model", "version"])
+        dropped_rows = initial_row_count - len(df)
+        if dropped_rows > 0:
+            logger.warning(
+                f"Dropped {dropped_rows} rows with missing accelerator/model/version"
+            )
+
         return df
     except FileNotFoundError:
         st.error(
@@ -11406,7 +11416,7 @@ def main():
             all_accelerators = sorted(df["accelerator"].unique().tolist())
             all_models = sorted(df["model"].unique().tolist())
             all_versions = sorted(df["version"].unique().tolist())
-            all_profiles = sorted(df["profile"].unique().tolist())
+            all_profiles = sorted(df["profile"].dropna().astype(str).unique().tolist())
             all_tp_sizes = sorted(df["TP"].dropna().unique().tolist())
 
             url_accelerators = []
