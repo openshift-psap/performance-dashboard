@@ -4745,330 +4745,6 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
 
 
 @st.fragment
-def render_custom_pareto_tradeoff_section(filtered_df, use_expander=True):
-    """🔄 Pareto Tradeoff Graphs — multi-model view for Custom ISL/OSL profiles.
-
-    Plots all models present in *filtered_df* on Pareto-style throughput-vs-latency
-    and throughput-vs-interactivity charts for a user-selected version.
-
-    Args:
-        filtered_df: DataFrame already filtered by the sidebar (accelerator, models,
-                     Custom ISL/OSL profile, TP).
-        use_expander: Whether to wrap content in a collapsible expander.
-    """
-    if use_expander:
-        if "custom_pareto_expanded" not in st.session_state:
-            st.session_state.custom_pareto_expanded = False
-        ctx = st.expander(
-            "🔄 Pareto Tradeoff Graphs",
-            expanded=st.session_state.custom_pareto_expanded,
-        )
-    else:
-        ctx = contextlib.nullcontext()
-    with ctx:
-        if not use_expander:
-            st.subheader("🔄 Pareto Tradeoff Graphs")
-        if filtered_df.empty:
-            st.warning("No data available for the current filter selection.")
-            return
-
-        st.markdown(
-            "These Pareto curves compare **all selected models** on the same chart "
-            "for a chosen version, showing the **throughput vs. latency / interactivity "
-            "tradeoff** across hardware and TP configurations."
-        )
-
-        filter_c1, filter_c2, filter_c3 = st.columns(3)
-
-        with filter_c1:
-            unique_versions = sorted(filtered_df["version"].dropna().unique())
-            if not unique_versions:
-                st.warning("No versions available.")
-                return
-            selected_version = st.selectbox(
-                "Select Version",
-                options=unique_versions,
-                key="custom_pareto_version",
-                on_change=keep_expander_open,
-                args=("custom_pareto_expanded",),
-            )
-
-        with filter_c2:
-            unique_accel = sorted(filtered_df["accelerator"].dropna().unique())
-            selected_accel = st.selectbox(
-                "Select Accelerator",
-                options=["All Accelerators"] + list(unique_accel),
-                key="custom_pareto_accel",
-                on_change=keep_expander_open,
-                args=("custom_pareto_expanded",),
-            )
-
-        with filter_c3:
-            throughput_options = {
-                "Total Tokens/sec/GPU": "total",
-                "Output Tokens/sec/GPU": "output",
-                "Input Tokens/sec/GPU": "input",
-            }
-            selected_tput_label = st.selectbox(
-                "Throughput Metric",
-                options=list(throughput_options.keys()),
-                key="custom_pareto_tput",
-                on_change=keep_expander_open,
-                args=("custom_pareto_expanded",),
-                help="Total = prompt + output tokens, Output = output tokens only, Input = prompt tokens only",
-            )
-            tput_mode = throughput_options[selected_tput_label]
-
-        vdf = filtered_df[filtered_df["version"] == selected_version].copy()
-        if selected_accel != "All Accelerators":
-            vdf = vdf[vdf["accelerator"] == selected_accel]
-
-        if vdf.empty:
-            st.warning("No data for the selected version / accelerator combination.")
-            return
-
-        vdf["tp_safe"] = vdf["TP"].fillna(1).astype(int).clip(lower=1)
-        if "DP" in vdf.columns:
-            vdf["dp_safe"] = vdf["DP"].fillna(1).astype(int).clip(lower=1)
-        else:
-            vdf["dp_safe"] = 1
-        vdf["total_gpus"] = vdf["tp_safe"] * vdf["dp_safe"]
-        if tput_mode == "total":
-            vdf["tput_per_gpu"] = vdf["total_tok/sec"] / vdf["total_gpus"]
-            y_col, y_label = (
-                "tput_per_gpu",
-                "Total Token Throughput per GPU (tok/s/gpu)",
-            )
-            metric_hover = "Total Throughput"
-        elif tput_mode == "input":
-            vdf["tput_per_gpu"] = (vdf["total_tok/sec"] - vdf["output_tok/sec"]) / vdf[
-                "total_gpus"
-            ]
-            y_col, y_label = (
-                "tput_per_gpu",
-                "Input Token Throughput per GPU (tok/s/gpu)",
-            )
-            metric_hover = "Input Throughput"
-        else:
-            vdf["tput_per_gpu"] = vdf["output_tok/sec"] / vdf["total_gpus"]
-            y_col, y_label = (
-                "tput_per_gpu",
-                "Output Token Throughput per GPU (tok/s/gpu)",
-            )
-            metric_hover = "Output Throughput"
-
-        vdf["median_intvty"] = vdf["tpot_median"].apply(
-            lambda t: 1000.0 / t if pd.notna(t) and t > 0 else 0
-        )
-
-        color_palette = [
-            "#E6194B",
-            "#3CB44B",
-            "#4363D8",
-            "#F58231",
-            "#911EB4",
-            "#42D4F4",
-            "#F032E6",
-            "#FFE119",
-            "#469990",
-            "#9A6324",
-            "#800000",
-            "#000075",
-            "#BFEF45",
-            "#FF1493",
-            "#7B68EE",
-            "#2E8B57",
-            "#DAA520",
-            "#00FF7F",
-            "#4B0082",
-            "#20B2AA",
-        ]
-
-        groups = (
-            vdf.groupby(["model", "accelerator", "tp_safe"], sort=True)
-            .size()
-            .reset_index()
-            .drop(columns=0)
-        )
-
-        color_map = {}
-        for idx, row in groups.iterrows():
-            key = (row["model"], row["accelerator"], row["tp_safe"])
-            color_map[key] = color_palette[idx % len(color_palette)]
-
-        st.markdown(
-            "<style>div[data-testid='stTabs'] button[data-baseweb='tab'] "
-            "{font-size:1.2rem;padding:12px 24px;font-weight:600;}</style>",
-            unsafe_allow_html=True,
-        )
-        tab1, tab2 = st.tabs(
-            ["📊 Throughput vs. End-to-End Latency", "📈 Throughput vs. Interactivity"]
-        )
-
-        def _build_traces(fig, x_col, x_hover_label, x_fmt):
-            for (model, accel, tp), color in color_map.items():
-                subset = vdf[
-                    (vdf["model"] == model)
-                    & (vdf["accelerator"] == accel)
-                    & (vdf["tp_safe"] == tp)
-                ].sort_values("intended concurrency")
-
-                if subset.empty:
-                    continue
-
-                model_short = model.split("/")[-1] if "/" in model else model
-                trace_name = f"{model_short} | {accel.upper()} (TP={tp})"
-
-                hover_text = [
-                    f"Model: {model_short}<br>"
-                    f"Accelerator: {accel.upper()}<br>"
-                    f"TP Size: {tp}<br>"
-                    f"Concurrent Requests: {int(r['intended concurrency'])} Users<br>"
-                    f"{x_hover_label}: {r[x_col]:{x_fmt}}<br>"
-                    f"{metric_hover}: {r[y_col]:.2f} tok/s/gpu"
-                    for _, r in subset.iterrows()
-                ]
-
-                conc_labels = [
-                    str(int(c)) for c in subset["intended concurrency"].tolist()
-                ]
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=subset[x_col].tolist(),
-                        y=subset[y_col].tolist(),
-                        mode="markers+lines+text",
-                        name=trace_name,
-                        marker={
-                            "size": 10,
-                            "color": color,
-                            "line": {"width": 1, "color": "white"},
-                        },
-                        line={"color": color, "width": 2},
-                        text=conc_labels,
-                        textposition="top center",
-                        textfont={"size": 9},
-                        hovertext=hover_text,
-                        hoverinfo="text",
-                    )
-                )
-
-        import plotly.graph_objects as go
-
-        isl_osl_values = vdf[["prompt toks", "output toks"]].drop_duplicates()
-        if len(isl_osl_values) == 1:
-            isl_osl_label = f"{int(isl_osl_values.iloc[0]['prompt toks'])}/{int(isl_osl_values.iloc[0]['output toks'])}"
-        else:
-            isl_osl_label = ", ".join(
-                f"{int(r['prompt toks'])}/{int(r['output toks'])}"
-                for _, r in isl_osl_values.iterrows()
-            )
-
-        models_in_view = sorted(vdf["model"].unique())
-        models_label = ", ".join(
-            m.split("/")[-1] if "/" in m else m for m in models_in_view
-        )
-
-        tput_title_map = {
-            "total": "Throughput = Total Tokens/s (prompt + output)",
-            "output": "Throughput = Output Tokens/s only",
-            "input": "Throughput = Input Tokens/s (prompt only)",
-        }
-
-        with tab1:
-            st.markdown("### Token Throughput per GPU vs. End-to-end Latency")
-            fig1 = go.Figure()
-            _build_traces(fig1, "request_latency_median", "Latency", ".2f")
-            fig1.update_layout(
-                title=(
-                    f"{models_label} | ISL/OSL: {isl_osl_label}"
-                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
-                ),
-                xaxis_title="End-to-end Latency (s)",
-                yaxis_title=y_label,
-                template="plotly_white_light",
-                hovermode="closest",
-                showlegend=True,
-                legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
-                height=600,
-            )
-            fig1.add_annotation(
-                text="Numbers on points = number of concurrent requests",
-                xref="paper",
-                yref="paper",
-                x=0.0,
-                y=1.05,
-                showarrow=False,
-                font={"size": 11, "color": "gray"},
-                xanchor="left",
-            )
-            st.plotly_chart(fig1, use_container_width=True, theme=None)
-
-        with tab2:
-            st.markdown("### Token Throughput per GPU vs. Interactivity")
-            fig2 = go.Figure()
-            _build_traces(fig2, "median_intvty", "Interactivity", ".2f")
-            fig2.update_layout(
-                title=(
-                    f"{models_label} | ISL/OSL: {isl_osl_label}"
-                    f"<br><sup>{tput_title_map[tput_mode]}</sup>"
-                ),
-                xaxis_title="Interactivity (tok/s/user)",
-                yaxis_title=y_label,
-                template="plotly_white_light",
-                hovermode="closest",
-                showlegend=True,
-                legend={"title": "Model | Accelerator (TP)", "font": {"size": 12}},
-                height=600,
-            )
-            fig2.add_annotation(
-                text="Numbers on points = number of concurrent requests",
-                xref="paper",
-                yref="paper",
-                x=0.0,
-                y=1.05,
-                showarrow=False,
-                font={"size": 11, "color": "gray"},
-                xanchor="left",
-            )
-            st.plotly_chart(fig2, use_container_width=True, theme=None)
-
-        with st.expander("📋 Summary Statistics"):
-            display_df = vdf[
-                [
-                    "accelerator",
-                    "model",
-                    "version",
-                    "TP",
-                    "intended concurrency",
-                    "tput_per_gpu",
-                    "request_latency_median",
-                    "median_intvty",
-                ]
-            ].copy()
-            display_df = display_df.rename(
-                columns={
-                    "accelerator": "Accelerator",
-                    "model": "Model",
-                    "version": "Version",
-                    "intended concurrency": "Concurrency",
-                    "tput_per_gpu": "Throughput/GPU",
-                    "request_latency_median": "E2E Latency (s)",
-                    "median_intvty": "Interactivity",
-                }
-            )
-            display_df["Throughput/GPU"] = display_df["Throughput/GPU"].round(2)
-            display_df["E2E Latency (s)"] = display_df["E2E Latency (s)"].round(3)
-            display_df["Interactivity"] = display_df["Interactivity"].round(2)
-            st.dataframe(
-                display_df.sort_values("Throughput/GPU", ascending=False).reset_index(
-                    drop=True
-                ),
-                use_container_width=True,
-            )
-
-
-@st.fragment
 def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> None:
     """📈 Performance Trends Section - Show performance evolution across releases.
 
@@ -11526,7 +11202,6 @@ def main():
             "📊 Performance Plots": "performance_plots",
             "📈 Dataset Representation": "dataset_representation",
             "🔄 Pareto Tradeoff Analysis": "pareto",
-            "🔄 Pareto Tradeoff Graphs": "pareto_custom",
             "🏆 Model Performance Comparison": "model_comparison",
             "⚖️ Compare Versions": "compare_versions",
             "⚖️ Compare Configurations": "compare_configs",
@@ -11556,11 +11231,6 @@ def main():
                 "par_profile": "pareto_isl_osl_select",
                 "par_hw": "pareto_hw_select",
                 "par_tput": "pareto_throughput_metric",
-            },
-            "pareto_custom": {
-                "cpar_version": "custom_pareto_version",
-                "cpar_accel": "custom_pareto_accel",
-                "cpar_tput": "custom_pareto_tput",
             },
             "model_comparison": {
                 "mc_conc": "model_comparison_concurrency",
@@ -13095,9 +12765,8 @@ def main():
         ]
         if selected_profile == "Custom ISL/OSL":
             section_list.append("📈 Dataset Representation")
-            section_list.append("🔄 Pareto Tradeoff Graphs")
-        else:
-            section_list.append("🔄 Pareto Tradeoff Analysis")
+        section_list.append("🔄 Pareto Tradeoff Analysis")
+        if selected_profile != "Custom ISL/OSL":
             section_list.append("🏆 Model Performance Comparison")
         section_list.append("⚖️ Compare Versions")
         if selected_profile == "Custom ISL/OSL":
@@ -13143,7 +12812,6 @@ def main():
                 [
                     "💡 IntelliConfig",
                     "🔄 Pareto Tradeoff Analysis",
-                    "🔄 Pareto Tradeoff Graphs",
                     "⚙️ Runtime Server Configs",
                     "📋 View Logs",
                     "📄 Filtered Data",
@@ -13193,8 +12861,6 @@ def main():
                 )
             elif sel == "🔄 Pareto Tradeoff Analysis":
                 render_pareto_plots_section(preloaded_df=df, use_expander=False)
-            elif sel == "🔄 Pareto Tradeoff Graphs":
-                render_custom_pareto_tradeoff_section(filtered_df, use_expander=False)
             elif sel == "🏆 Model Performance Comparison":
                 render_model_performance_comparison_section(
                     filtered_df, accelerator_color_map, use_expander=False
