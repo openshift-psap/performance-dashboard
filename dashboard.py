@@ -93,9 +93,9 @@ MLFLOW_BASE_URL = os.environ.get("MLFLOW_BASE_URL", "")
 MLFLOW_WORKSPACE = os.environ.get("MLFLOW_WORKSPACE", "forge-rhaiis")
 
 # ── Overview version configuration (single source of truth) ──────
-OVERVIEW_CURRENT = "RHAIIS-3.5-EA2"
-OVERVIEW_PREVIOUS = "RHAIIS-3.5-EA1"
-OVERVIEW_UPSTREAM = "vLLM-0.21.0"
+OVERVIEW_CURRENT = "RHAIIS-3.5-GA"
+OVERVIEW_PREVIOUS = "RHAIIS-3.5-EA2"
+OVERVIEW_UPSTREAM = "vLLM-0.24.0"
 OVERVIEW_ADDITIONAL: list[str] = []
 
 # Ordered list of back-to-back release pairs for the Overview dropdown.
@@ -5512,7 +5512,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             return
 
         # Filters row
-        col1, swap_col, col2, col3, col4 = st.columns([4, 1, 4, 4, 4])
+        col1, swap_col, col2, col3, col4 = st.columns([4, 0.4, 4, 4, 4], gap="small")
 
         # Set default versions
         default_v1 = OVERVIEW_CURRENT
@@ -5540,15 +5540,21 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 args=("compare_versions_summary_expanded",),
             )
 
+        def _swap_versions():
+            v1 = st.session_state.get("compare_summary_v1")
+            v2 = st.session_state.get("compare_summary_v2")
+            if v1 and v2:
+                st.session_state["compare_summary_v1"] = v2
+                st.session_state["compare_summary_v2"] = v1
+
         with swap_col:
             st.markdown("<div style='height: 1.65rem'></div>", unsafe_allow_html=True)
-            if st.button("⇄", key="compare_swap_versions", help="Swap versions"):
-                v1 = st.session_state.get("compare_summary_v1")
-                v2 = st.session_state.get("compare_summary_v2")
-                if v1 and v2:
-                    st.session_state["compare_summary_v1"] = v2
-                    st.session_state["compare_summary_v2"] = v1
-                    st.rerun()
+            st.button(
+                "⇄",
+                key="compare_swap_versions",
+                help="Swap versions",
+                on_click=_swap_versions,
+            )
 
         with col2:
             version_2_options = [v for v in available_versions if v != version_1]
@@ -11539,6 +11545,7 @@ def main():
     if "prefix_caching" not in df.columns:
         df["prefix_caching"] = ""
     df["prefix_caching"] = df["prefix_caching"].fillna("").astype(str)
+    df["prefix_caching"] = df["prefix_caching"].replace("", "no")
 
     if "turns" not in df.columns:
         df["turns"] = 1
