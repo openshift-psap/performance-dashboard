@@ -27,7 +27,8 @@ python import_manual_runs_json_v2.py <json_file> \
   --csv-file <output_csv> \
   --dataset <dataset_name> \
   --spec-decoding <spec_decoding_method> \
-  --prefix-caching <yes|no>
+  --prefix-caching <yes|no> \
+  --label <run_label>
 ```
 
 ## Arguments
@@ -46,6 +47,7 @@ python import_manual_runs_json_v2.py <json_file> \
 | `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
 | `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
 | `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
+| `--label`            | No       | Optional free-form dashboard label              | `pcon-mnbt`                             |
 
 ## Examples
 
@@ -124,7 +126,7 @@ tail -n +2 my-benchmark.csv >> ../../../consolidated_dashboard.csv
 
 ## Output CSV Columns
 
-The script outputs 52 columns compatible with the performance dashboard:
+The script outputs 53 columns compatible with the performance dashboard:
 
 | #   | Column                    | Description                                          |
 | --- | ------------------------- | ---------------------------------------------------- |
@@ -132,6 +134,7 @@ The script outputs 52 columns compatible with the performance dashboard:
 | 2   | `accelerator`             | GPU type (H200, MI300X, etc.)                        |
 | 3   | `model`                   | Model name                                           |
 | 4   | `version`                 | Framework version                                    |
+| 4a  | `label`                   | Optional free-form dashboard label                  |
 | 5   | `prompt toks`             | Configured prompt token count                        |
 | 6   | `output toks`             | Configured output token count                        |
 | 7   | `TP`                      | Tensor parallelism size                              |
