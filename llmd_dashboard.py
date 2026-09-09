@@ -18,6 +18,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
+from profile_config import PROFILE_DETAILS, get_profile_tooltip
+
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
     _light_hover = go.layout.Template(
@@ -653,96 +655,6 @@ _CUSTOM_ISL_OSL_LABELS = {
     "8000/800": "8000/800 - Heterogeneous",
     "128/128": "128/128 - Multi-turn",
 }
-
-_PROFILE_DETAILS = {
-    "1000/1000": {
-        "name": "Profile 1 - Balanced",
-        "prompt_tokens": "1000",
-        "output_tokens": "1000",
-        "rates": "[1, 50, 100, 200, 300]",
-        "description": "Balanced workload with equal input and output token counts.",
-    },
-    "512/2048": {
-        "name": "Profile 2 - Variable Distribution",
-        "prompt_tokens": "512 (stdev=128, min=1, max=1024)",
-        "output_tokens": "2048 (stdev=512, min=1, max=4096)",
-        "rates": "[1, 50, 100, 200, 300]",
-        "description": "Variable token distributions simulating diverse real-world prompts and responses. Tests performance with unpredictable token patterns.",
-    },
-    "2048/128": {
-        "name": "Profile 3 - Prompt-Heavy",
-        "prompt_tokens": "2048",
-        "output_tokens": "128",
-        "rates": "[1, 50, 100, 200, 300]",
-        "description": "Prompt-heavy workload with long context queries and short responses (16:1 ratio). Tests context processing efficiency.",
-    },
-    "8000/1000": {
-        "name": "Profile 4 - Long Context",
-        "prompt_tokens": "8000",
-        "output_tokens": "1000",
-        "rates": "[1, 25, 50, 75, 100]",
-        "samples": "50",
-        "description": "Extended context with 8K prompt tokens and 1K output tokens. Samples 50 requests. Tests performance on document-based tasks.",
-    },
-    "100000/1000": {
-        "name": "Profile 5 - Extreme Context",
-        "prompt_tokens": "100000",
-        "output_tokens": "1000",
-        "rates": "[1, 2, 5]",
-        "samples": "10",
-        "description": "Extreme long-context workload with 100K+ prompt tokens (e.g., full documents). Samples 10 requests at low rates. Tests maximum context window.",
-    },
-    "8000/800": {
-        "name": "Profile 7 - Heterogeneous",
-        "prompt_tokens": "8000 (stdev=8500, min=50, max=30000)",
-        "output_tokens": "800 (stdev=1500, min=20, max=8000)",
-        "rates": "[1, 50, 100, 200, 300]",
-        "description": "Long context with variable token distributions. Simulates realistic chat patterns with large prompts and smaller outputs. Samples 450 seconds of traffic.",
-    },
-    "128/128": {
-        "name": "Profile 6 - Multi-turn",
-        "prompt_tokens": "1000",
-        "output_tokens": "1000",
-        "rates": "[1, 25, 50, 75, 100]",
-        "turns": "5",
-        "prefix_tokens": "512",
-        "description": "Multi-turn conversation benchmark with 5 turns and 512-token prefix (10 copies). Tests context management in iterative conversations.",
-    },
-}
-
-
-def clean_profile_name(profile_name):
-    """Extract only the token counts in parentheses from profile names."""
-    if profile_name and "(" in profile_name and ")" in profile_name:
-        start_idx = profile_name.find("(")
-        end_idx = profile_name.find(")", start_idx)
-        if start_idx != -1 and end_idx != -1:
-            return profile_name[start_idx : end_idx + 1]
-    return _CUSTOM_ISL_OSL_LABELS.get(profile_name, profile_name)
-
-
-def get_profile_tooltip(profile_key: str) -> str:
-    """Return detailed tooltip text for a guidellm profile."""
-    details = _PROFILE_DETAILS.get(profile_key)
-    if not details:
-        return ""
-
-    lines = [
-        f"**{details['name']}**",
-        f"• Input tokens: {details['prompt_tokens']}",
-        f"• Output tokens: {details['output_tokens']}",
-        f"• Request rates: {details['rates']}",
-    ]
-
-    if details.get("samples"):
-        lines.append(f"• Samples: {details['samples']}")
-    if details.get("turns"):
-        lines.append(f"• Turns: {details['turns']}")
-    if details.get("prefix_tokens"):
-        lines.append(f"• Prefix tokens: {details['prefix_tokens']}")
-
-    lines.append(f"• {details['description']}")
-    return "\n".join(lines)
 
 
 def format_custom_isl_osl(pair):
