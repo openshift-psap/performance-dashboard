@@ -655,13 +655,6 @@ _CUSTOM_ISL_OSL_LABELS = {
 }
 
 _PROFILE_DETAILS = {
-    "0/0": {
-        "name": "Real Dataset",
-        "prompt_tokens": "Variable",
-        "output_tokens": "Variable",
-        "rates": "Variable",
-        "description": "Uses real conversation dataset without synthetic token targets",
-    },
     "1000/1000": {
         "name": "Profile 1 - Balanced",
         "prompt_tokens": "1000",
@@ -714,13 +707,6 @@ _PROFILE_DETAILS = {
         "turns": "5",
         "prefix_tokens": "512",
         "description": "Multi-turn conversation benchmark with 5 turns and 512-token prefix (10 copies). Tests context management in iterative conversations.",
-    },
-    "custom": {
-        "name": "Custom Profile",
-        "prompt_tokens": "User-defined",
-        "output_tokens": "User-defined",
-        "rates": "[1]",
-        "description": "Dashboard override stub for custom workload testing. Parameters can be configured per run.",
     },
 }
 
