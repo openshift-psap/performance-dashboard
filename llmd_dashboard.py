@@ -671,8 +671,8 @@ _PROFILE_DETAILS = {
     },
     "512/2048": {
         "name": "Profile 2 - Variable Distribution",
-        "prompt_tokens": "512 (σ=128, min=1, max=1024)",
-        "output_tokens": "2048 (σ=512, min=1, max=4096)",
+        "prompt_tokens": "512 (stdev=128, min=1, max=1024)",
+        "output_tokens": "2048 (stdev=512, min=1, max=4096)",
         "rates": "[1, 50, 100, 200, 300]",
         "description": "Variable token distributions simulating diverse real-world prompts and responses. Tests performance with unpredictable token patterns.",
     },
@@ -701,8 +701,8 @@ _PROFILE_DETAILS = {
     },
     "8000/800": {
         "name": "Profile 7 - Heterogeneous",
-        "prompt_tokens": "8000 (σ=8500, min=50, max=30000)",
-        "output_tokens": "800 (σ=1500, min=20, max=8000)",
+        "prompt_tokens": "8000 (stdev=8500, min=50, max=30000)",
+        "output_tokens": "800 (stdev=1500, min=20, max=8000)",
         "rates": "[1, 50, 100, 200, 300]",
         "description": "Long context with variable token distributions. Simulates realistic chat patterns with large prompts and smaller outputs. Samples 450 seconds of traffic.",
     },
