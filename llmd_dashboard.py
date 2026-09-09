@@ -654,6 +654,33 @@ _CUSTOM_ISL_OSL_LABELS = {
     "128/128": "128/128 - Multi-turn",
 }
 
+_PROFILE_DETAILS = {
+    "0/0": {
+        "name": "Real Dataset",
+        "prompt_tokens": "Variable",
+        "output_tokens": "Variable",
+        "description": "Uses real conversation dataset without synthetic token targets",
+    },
+    "1000/1000": {
+        "name": "Balanced",
+        "prompt_tokens": "1000",
+        "output_tokens": "1000",
+        "description": "Balanced workload with equal input and output token counts",
+    },
+    "8000/800": {
+        "name": "Heterogeneous",
+        "prompt_tokens": "8000",
+        "output_tokens": "800",
+        "description": "Long context workload with large prompts and shorter outputs (10:1 ratio)",
+    },
+    "128/128": {
+        "name": "Multi-turn",
+        "prompt_tokens": "128",
+        "output_tokens": "128",
+        "description": "Short token exchanges simulating multi-turn conversations with context",
+    },
+}
+
 
 def clean_profile_name(profile_name):
     """Extract only the token counts in parentheses from profile names."""
@@ -663,6 +690,21 @@ def clean_profile_name(profile_name):
         if start_idx != -1 and end_idx != -1:
             return profile_name[start_idx : end_idx + 1]
     return _CUSTOM_ISL_OSL_LABELS.get(profile_name, profile_name)
+
+
+def get_profile_tooltip(profile_key: str) -> str:
+    """Return detailed tooltip text for a guidellm profile."""
+    details = _PROFILE_DETAILS.get(profile_key)
+    if not details:
+        return ""
+
+    lines = [
+        f"**{details['name']}**",
+        f"• Input tokens: {details['prompt_tokens']}",
+        f"• Output tokens: {details['output_tokens']}",
+        f"• {details['description']}",
+    ]
+    return "\n".join(lines)
 
 
 def format_custom_isl_osl(pair):
@@ -913,10 +955,16 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 profiles,
                 format_func=clean_profile_name,
                 key=profile_key,
+                help="Different profiles test different token patterns. Hover for details.",
             )
             if profiles
             else None
         )
+
+        if selected_profile and selected_profile in _PROFILE_DETAILS:
+            tooltip_text = get_profile_tooltip(selected_profile)
+            st.info(tooltip_text)
+
         st.caption(
             "Please refer to the notes column in the filtered data to understand more about the workload profile."
         )
