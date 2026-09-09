@@ -660,7 +660,7 @@ _PROFILE_DETAILS = {
         "prompt_tokens": "1000",
         "output_tokens": "1000",
         "rates": "[1, 50, 100, 200, 300]",
-        "description": "Balanced workload with equal input and output token counts. Tests baseline performance across varied concurrency levels.",
+        "description": "Balanced workload with equal input and output token counts.",
     },
     "512/2048": {
         "name": "Profile 2 - Variable Distribution",
