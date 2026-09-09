@@ -19,6 +19,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
+from profile_config import PROFILE_DETAILS, get_profile_tooltip
+
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
     _light_hover = go.layout.Template(
@@ -210,7 +212,28 @@ def render_cpu_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             options=all_profiles,
             index=0,
             key="cpu_filter_profile",
+            help="Select a profile to see detailed guidellm workload specifications (token counts, rates, etc.)",
         )
+
+        if selected_profile and selected_profile in PROFILE_DETAILS:
+            details = PROFILE_DETAILS[selected_profile]
+            with st.container(border=True):
+                st.markdown(f"**{details['name']}**")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"**Input tokens:** {details['prompt_tokens']}")
+                with col2:
+                    st.write(f"**Output tokens:** {details['output_tokens']}")
+                st.write(f"**Request rates:** {details['rates']}")
+
+                if details.get("samples"):
+                    st.write(f"**Samples:** {details['samples']}")
+                if details.get("turns"):
+                    st.write(f"**Conversation turns:** {details['turns']}")
+                if details.get("prefix_tokens"):
+                    st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
+
+                st.write(f"_{details['description']}_")
 
     # Cascade: filter available versions by platform + workload
     profile_filtered = acc_filtered[acc_filtered["profile"] == selected_profile]
