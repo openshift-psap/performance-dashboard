@@ -128,6 +128,41 @@ def filter_taxonomy(df, families=None, versions=None, labels=None, uuids=None):
     return result
 
 
+def encode_version_label_pairs(pairs):
+    """Encode exact version/label selections for a shareable URL."""
+    return json.dumps(
+        [list(pair) for pair in sorted(set(pairs))],
+        separators=(",", ":"),
+    )
+
+
+def decode_version_label_pairs(raw_value):
+    """Decode exact version/label selections from a URL value."""
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(str(raw_value))
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [
+        (str(pair[0]), str(pair[1]))
+        for pair in parsed
+        if isinstance(pair, list) and len(pair) == 2 and all(pair)
+    ]
+
+
+def version_label_pair_mask(df, pairs):
+    """Return a mask for rows matching exact version/label pairs."""
+    if not pairs:
+        return pd.Series(True, index=df.index)
+    if not {"version", "label"}.issubset(df.columns):
+        return pd.Series(False, index=df.index)
+    pair_index = pd.MultiIndex.from_frame(df[["version", "label"]].astype(str))
+    return pd.Series(pair_index.isin(set(pairs)), index=df.index)
+
+
 def parse_filter_values(raw_value, available_values):
     """Parse a comma-separated URL filter and discard stale values."""
     if not raw_value:
@@ -147,9 +182,14 @@ def sync_selected_options(previous, available, *, select_all=False):
     return [value for value in (previous or []) if value in available]
 
 
-def taxonomy_query_params(families=None, labels=None, uuids=None):
+def taxonomy_query_params(
+    families=None,
+    labels=None,
+    uuids=None,
+    version_label_pairs=None,
+):
     """Return URL parameters for the taxonomy filters."""
-    return {
+    params = {
         key: ",".join(values)
         for key, values in (
             ("families", families),
@@ -158,6 +198,9 @@ def taxonomy_query_params(families=None, labels=None, uuids=None):
         )
         if values
     }
+    if version_label_pairs:
+        params["version_labels"] = encode_version_label_pairs(version_label_pairs)
+    return params
 
 
 def encode_query_mapping(mapping):

@@ -10,9 +10,11 @@ from dashboard_taxonomy import (
     add_trace_metadata,
     compact_series_label,
     decode_query_mapping,
+    decode_version_label_pairs,
     derive_product_family,
     deterministic_color_map,
     encode_query_mapping,
+    encode_version_label_pairs,
     filter_taxonomy,
     normalize_label,
     normalize_taxonomy_columns,
@@ -20,6 +22,7 @@ from dashboard_taxonomy import (
     split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
+    version_label_pair_mask,
 )
 from manual_runs.scripts.vllm.import_manual_runs_json_v2 import parse_guidellm_json
 
@@ -140,6 +143,31 @@ def test_url_taxonomy_filters_round_trip():
     assert parse_filter_values("stale", ["run-1"]) == []
 
 
+def test_version_label_pairs_preserve_release_scope():
+    pairs = [("vLLM-0.23.0", "pcon"), ("vLLM-0.24.0", "pcon")]
+    encoded = encode_version_label_pairs(pairs)
+
+    assert decode_version_label_pairs(encoded) == pairs
+    assert (
+        decode_version_label_pairs(
+            taxonomy_query_params(version_label_pairs=pairs)["version_labels"]
+        )
+        == pairs
+    )
+
+    data = pd.DataFrame(
+        {
+            "version": ["vLLM-0.23.0", "vLLM-0.24.0", "vLLM-0.24.0"],
+            "label": ["pcon", "pcon", "pcoff"],
+        }
+    )
+    assert version_label_pair_mask(data, [("vLLM-0.23.0", "pcon")]).tolist() == [
+        True,
+        False,
+        False,
+    ]
+
+
 def test_appearance_query_mapping_round_trip():
     mapping = {"series | pcon": "#0072B2", "run-2": "triangle-up"}
 
@@ -154,9 +182,9 @@ def test_select_all_state_tracks_new_options_without_overriding_manual_selection
     assert sync_selected_options(
         ["model-a"], ["model-a", "model-b"], select_all=True
     ) == ["model-a", "model-b"]
-    assert sync_selected_options(
-        ["tp-1"], ["tp-1", "tp-2"], select_all=False
-    ) == ["tp-1"]
+    assert sync_selected_options(["tp-1"], ["tp-1", "tp-2"], select_all=False) == [
+        "tp-1"
+    ]
 
 
 def test_duplicate_runs_are_dotted_and_single_runs_are_solid():
@@ -178,7 +206,10 @@ def test_duplicate_runs_are_dotted_and_single_runs_are_solid():
         "circle",
         "triangle-up",
     }
-    assert result.loc[result["run_identifier"] == "single", "marker_symbol"].iloc[0] == "circle"
+    assert (
+        result.loc[result["run_identifier"] == "single", "marker_symbol"].iloc[0]
+        == "circle"
+    )
     assert (
         result.loc[result["run_identifier"] == "single", "trace_label"].iloc[0]
         == "single"

@@ -37,12 +37,14 @@ from dashboard_taxonomy import (
     MARKER_SYMBOLS,
     add_trace_metadata,
     decode_query_mapping,
+    decode_version_label_pairs,
     deterministic_color_map,
     encode_query_mapping,
     normalize_taxonomy_columns,
     parse_filter_values,
     sync_selected_options,
     taxonomy_query_params,
+    version_label_pair_mask,
 )
 from intelliconfig import render_intelliconfig_section
 
@@ -12206,6 +12208,9 @@ def main():
                 url_spec_decoding,
                 url_prefix_caching,
             ) = decode_filters_from_url()
+            url_version_label_pairs = decode_version_label_pairs(
+                st.query_params.get("version_labels")
+            )
             url_appearance_colors = {
                 key: value
                 for key, value in decode_query_mapping(
@@ -12236,10 +12241,16 @@ def main():
             url_dataset = None
             url_spec_decoding = None
             url_prefix_caching = None
+            url_version_label_pairs = []
             url_appearance_colors = {}
             url_appearance_shapes = {}
 
         url_show_advanced = st.query_params.get("advanced") == "1"
+        url_show_label_filter = (
+            st.query_params.get("label_filter") == "1"
+            or bool(url_labels)
+            or bool(url_version_label_pairs)
+        )
         url_select_all_models = st.query_params.get("all_models") == "1"
 
         if url_section:
@@ -12309,6 +12320,7 @@ def main():
                 url_versions,
                 url_labels,
                 url_uuids,
+                url_version_label_pairs,
                 url_profile,
                 url_tp_sizes,
             ]
@@ -12338,6 +12350,9 @@ def main():
             )
         )
         st.session_state.baseline_labels = url_labels if has_url_filters else []
+        st.session_state.baseline_version_label_pairs = (
+            url_version_label_pairs if has_url_filters else []
+        )
         st.session_state.baseline_uuids = url_uuids if has_url_filters else []
         st.session_state._persisted_uuids = list(url_uuids) if has_url_filters else []
         st.session_state.baseline_profile = (
@@ -12348,6 +12363,7 @@ def main():
         )
         if url_show_advanced or url_dp_sizes or url_uuids:
             st.session_state.show_advanced_filters = True
+        st.session_state.show_label_filter = url_show_label_filter
         if url_appearance_colors:
             st.session_state["performance_custom_colors"] = url_appearance_colors
         if url_appearance_shapes:
@@ -12390,6 +12406,7 @@ def main():
         st.session_state.filters_initialized = True
         st.session_state.filter_change_key = 0
         st.session_state.filters_were_cleared = False
+    st.session_state.setdefault("show_label_filter", False)
 
     if not _show_global_filters:
         selected_profile = st.session_state.get(
@@ -12402,6 +12419,9 @@ def main():
         selected_families = st.session_state.get("_persisted_families", [])
         selected_versions = st.session_state.get("_persisted_versions", [])
         selected_labels = st.session_state.get("_persisted_labels", [])
+        selected_version_label_pairs = st.session_state.get(
+            "_persisted_version_label_pairs", []
+        )
         selected_uuids = st.session_state.get("_persisted_uuids", [])
         selected_tp = st.session_state.get("_persisted_tp", [])
         filtered_df = df.copy()
@@ -12997,30 +13017,73 @@ def main():
             )
 
             label_temp = version_temp[version_temp["version"].isin(selected_versions)]
-            labels = (
-                sorted(label_temp["label"].unique().tolist())
-                if not label_temp.empty
-                else []
+            selected_version_label_pairs = []
+            selected_labels = []
+            if st.session_state.get("clear_all_filters", False):
+                st.session_state.show_label_filter = False
+
+            st.checkbox(
+                "Filter by label (optional)",
+                key="show_label_filter",
+                help="Leave this off to include labeled and unlabeled runs.",
             )
-            label_key = f"labels_filter_{st.session_state.filter_change_key}"
-            label_default = [
-                label
-                for label in st.session_state.get("baseline_labels", labels)
-                if label in labels
-            ]
-            previous_labels = st.session_state.get(label_key)
-            if previous_labels is not None:
-                label_default = [label for label in previous_labels if label in labels]
-            st.session_state[label_key] = label_default
-            selected_labels = st.multiselect(
-                "5️⃣ Select Label(s)",
-                labels,
-                key=label_key,
-            )
+            if st.session_state.show_label_filter:
+                label_pairs = (
+                    label_temp[["product_family", "version", "label"]]
+                    .drop_duplicates()
+                    .sort_values(["product_family", "version", "label"])
+                    if not label_temp.empty
+                    else pd.DataFrame(columns=["product_family", "version", "label"])
+                )
+                pair_options = {}
+                pair_values = {}
+                for row in label_pairs.itertuples(index=False):
+                    pair = (str(row.version), str(row.label))
+                    pair_key = json.dumps(pair, separators=(",", ":"))
+                    pair_options[pair_key] = (
+                        f"{row.product_family} › {row.version} › {row.label}"
+                    )
+                    pair_values[pair_key] = pair
+
+                label_key = f"version_labels_filter_{st.session_state.filter_change_key}"
+                baseline_pairs = st.session_state.get(
+                    "baseline_version_label_pairs", []
+                )
+                if baseline_pairs:
+                    label_default = [
+                        key
+                        for key, pair in pair_values.items()
+                        if pair in baseline_pairs
+                    ]
+                else:
+                    baseline_labels = st.session_state.get("baseline_labels", [])
+                    label_default = [
+                        key
+                        for key, pair in pair_values.items()
+                        if pair[1] in baseline_labels
+                    ]
+                previous_pairs = st.session_state.get(label_key)
+                if previous_pairs is not None:
+                    label_default = [
+                        key for key in previous_pairs if key in pair_options
+                    ]
+                st.session_state[label_key] = label_default
+                selected_pair_keys = st.multiselect(
+                    "Select Label(s) by Release",
+                    list(pair_options),
+                    format_func=lambda key: pair_options[key],
+                    key=label_key,
+                )
+                selected_version_label_pairs = [
+                    pair_values[key] for key in selected_pair_keys
+                ]
+                selected_labels = sorted(
+                    {label for _, label in selected_version_label_pairs}
+                )
 
             run_temp = (
-                label_temp[label_temp["label"].isin(selected_labels)]
-                if selected_labels
+                label_temp[version_label_pair_mask(label_temp, selected_version_label_pairs)]
+                if selected_version_label_pairs
                 else label_temp
             )
             uuids = (
@@ -13045,8 +13108,10 @@ def main():
                 temp_df = temp_df[temp_df["product_family"].isin(selected_families)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-            if selected_labels:
-                temp_df = temp_df[temp_df["label"].isin(selected_labels)]
+            if selected_version_label_pairs:
+                temp_df = temp_df[
+                    version_label_pair_mask(temp_df, selected_version_label_pairs)
+                ]
             if selected_uuids:
                 temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
 
@@ -13135,7 +13200,7 @@ def main():
                 )
 
             selected_models = st.multiselect(
-                "6️⃣ Select Model(s)",
+                "5️⃣ Select Model(s)",
                 models,
                 default=preserved_selections,
                 key=prev_models_key,
@@ -13157,8 +13222,10 @@ def main():
                 temp_df = temp_df[temp_df["product_family"].isin(selected_families)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-            if selected_labels:
-                temp_df = temp_df[temp_df["label"].isin(selected_labels)]
+            if selected_version_label_pairs:
+                temp_df = temp_df[
+                    version_label_pair_mask(temp_df, selected_version_label_pairs)
+                ]
             if selected_uuids:
                 temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
             if selected_profiles:
@@ -13239,7 +13306,7 @@ def main():
                 )
 
             selected_tp = st.multiselect(
-                "7️⃣ Select TP Size(s)",
+                "6️⃣ Select TP Size(s)",
                 tp_sizes,
                 default=tp_default,
                 key=prev_tp_key,
@@ -13288,7 +13355,7 @@ def main():
                     st.session_state.get(uuid_key, uuid_default), uuid_options
                 )
                 selected_uuids = st.multiselect(
-                    "8️⃣ Inspect Run ID / UUID(s)",
+                    "7️⃣ Inspect Run ID / UUID(s)",
                     uuid_options,
                     default=uuid_default,
                     key=uuid_key,
@@ -13306,7 +13373,7 @@ def main():
                         st.session_state.get(dp_key, dp_default), dp_values
                     )
                     selected_dp = st.multiselect(
-                        "9️⃣ Select DP Size(s)",
+                        "8️⃣ Select DP Size(s)",
                         dp_values,
                         key=dp_key,
                     )
@@ -13527,7 +13594,11 @@ def main():
                 else True
             )
             & df["version"].isin(selected_versions)
-            & (df["label"].isin(selected_labels) if selected_labels else True)
+            & (
+                version_label_pair_mask(df, selected_version_label_pairs)
+                if selected_version_label_pairs
+                else True
+            )
             & (df["uuid"].isin(selected_uuids) if selected_uuids else True)
             & (df["profile"].isin(selected_profiles) if selected_profiles else True)
             & tp_mask
@@ -13548,7 +13619,7 @@ def main():
             "models": tuple(sorted(selected_models)),
             "families": tuple(sorted(selected_families)),
             "versions": tuple(sorted(selected_versions)),
-            "labels": tuple(sorted(selected_labels)),
+            "version_label_pairs": tuple(sorted(selected_version_label_pairs)),
             "uuids": tuple(sorted(selected_uuids)),
             "profile": selected_profile,
             "tp": tuple(sorted(selected_tp)),
@@ -13577,6 +13648,9 @@ def main():
         st.session_state._persisted_families = list(selected_families)
         st.session_state._persisted_versions = list(selected_versions)
         st.session_state._persisted_labels = list(selected_labels)
+        st.session_state._persisted_version_label_pairs = list(
+            selected_version_label_pairs
+        )
         st.session_state._persisted_uuids = list(selected_uuids)
         st.session_state._persisted_tp = list(selected_tp)
 
@@ -13738,11 +13812,14 @@ def main():
                 desired_params["models"] = ",".join(selected_models)
             if selected_versions:
                 desired_params["versions"] = ",".join(selected_versions)
+            if st.session_state.get("show_label_filter", False):
+                desired_params["label_filter"] = "1"
             desired_params.update(
                 taxonomy_query_params(
                     selected_families,
                     selected_labels,
                     selected_uuids,
+                    selected_version_label_pairs,
                 )
             )
             if selected_profile:
