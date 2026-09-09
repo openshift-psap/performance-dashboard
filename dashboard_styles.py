@@ -203,13 +203,45 @@ def get_app_css():
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
     }
 
-    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        height: auto !important; /* Allow the item's background to grow */
+    /* Keep the original vertical, scrollable selected-value layout. */
+    [data-testid="stMultiSelect"] > div > div {
+        height: auto !important;
+        min-height: 40px !important;
+        max-height: 14rem !important;
     }
+    [data-testid="stMultiSelect"] [data-testid="stMultiSelectTagsContainer"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-content: flex-start !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        max-height: 14rem !important;
+        scrollbar-width: thin;
+    }
+    [data-testid="stMultiSelect"] [data-tag],
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+        flex: 0 1 auto !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        height: auto !important;
+        min-height: 1.75rem !important;
+        color: #ffffff !important;
+        background-color: #cc0000 !important;
+    }
+    [data-testid="stMultiSelect"] [data-tag] span[title],
     [data-testid="stMultiSelect"] [data-baseweb="tag"] span[title] {
-        white-space: normal; /* Allow the text to wrap */
-        max-width: 100%;
         display: inline-block;
+        max-width: 100% !important;
+        overflow-wrap: anywhere;
+        white-space: normal !important;
+        color: #ffffff !important;
+    }
+    [data-testid="stMultiSelect"] [data-tag] button,
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #ffffff !important;
     }
     .kpi-card {
         background: linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%);

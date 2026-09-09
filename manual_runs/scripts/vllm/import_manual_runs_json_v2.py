@@ -31,6 +31,7 @@ def process_benchmark_section(
     spec_decoding="",
     prefix_caching="",
     request_type="",
+    label="",
 ):
     """Process a single benchmark section and extract performance metrics.
 
@@ -52,6 +53,7 @@ def process_benchmark_section(
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
         request_type: GuideLLM API endpoint type (e.g., 'chat_completions', 'completions').
+        label: Optional free-form dashboard label for this run.
 
     Returns:
         dict: Processed benchmark metrics.
@@ -164,6 +166,7 @@ def process_benchmark_section(
         "accelerator": accelerator,
         "model": model_name,
         "version": version,
+        "label": label,
         "prompt toks": config_prompt_tokens,
         "output toks": config_output_tokens,
         "TP": tp_size,
@@ -235,6 +238,7 @@ def parse_guidellm_json(
     dataset="",
     spec_decoding="",
     prefix_caching="",
+    label="",
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -252,6 +256,7 @@ def parse_guidellm_json(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
+        label: Optional free-form dashboard label for this run.
 
     Auto-detected from JSON:
         turns: Number of conversation turns (from args.data config).
@@ -328,6 +333,7 @@ def parse_guidellm_json(
             spec_decoding=spec_decoding,
             prefix_caching=prefix_caching,
             request_type=request_type,
+            label=label,
         )
         if row_data:
             all_run_data.append(row_data)
@@ -423,6 +429,11 @@ def main():
         "Leave empty if not applicable.",
     )
     parser.add_argument(
+        "--label",
+        default="",
+        help="Optional free-form dashboard label for this run (for example, pcon-mnbt).",
+    )
+    parser.add_argument(
         "--csv-file",
         default="new_benchmarks.csv",
         help="Path to the output CSV file (default: new_benchmarks.csv)",
@@ -453,6 +464,7 @@ def main():
         dataset=args.dataset,
         spec_decoding=args.spec_decoding,
         prefix_caching=args.prefix_caching,
+        label=args.label,
     )
 
     if new_data_df is not None and not new_data_df.empty:
@@ -471,6 +483,7 @@ def main():
             "accelerator",
             "model",
             "version",
+            "label",
             "prompt toks",
             "output toks",
             "TP",
