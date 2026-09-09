@@ -993,6 +993,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 profiles,
                 format_func=clean_profile_name,
                 key=profile_key,
+                help="Select a profile to see detailed guidellm workload specifications (token counts, rates, etc.)",
             )
             if profiles
             else None
