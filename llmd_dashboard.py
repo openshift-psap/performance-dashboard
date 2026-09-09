@@ -659,25 +659,29 @@ _PROFILE_DETAILS = {
         "name": "Real Dataset",
         "prompt_tokens": "Variable",
         "output_tokens": "Variable",
+        "rates": "Variable",
         "description": "Uses real conversation dataset without synthetic token targets",
     },
     "1000/1000": {
-        "name": "Balanced",
+        "name": "Profile 1 - Balanced",
         "prompt_tokens": "1000",
         "output_tokens": "1000",
-        "description": "Balanced workload with equal input and output token counts",
+        "rates": "[1, 50, 100, 200, 300]",
+        "description": "Balanced workload with equal input and output token counts. Tests baseline performance across varied concurrency levels.",
     },
     "8000/800": {
-        "name": "Heterogeneous",
-        "prompt_tokens": "8000",
-        "output_tokens": "800",
-        "description": "Long context workload with large prompts and shorter outputs (10:1 ratio)",
+        "name": "Profile 7 - Heterogeneous",
+        "prompt_tokens": "8000 (σ=8500, min=50, max=30000)",
+        "output_tokens": "800 (σ=1500, min=20, max=8000)",
+        "rates": "[1, 50, 100, 200, 300]",
+        "description": "Long context with variable token distributions. Simulates realistic chat patterns with large prompts and smaller outputs. Samples 450 seconds of traffic.",
     },
     "128/128": {
-        "name": "Multi-turn",
-        "prompt_tokens": "128",
-        "output_tokens": "128",
-        "description": "Short token exchanges simulating multi-turn conversations with context",
+        "name": "Profile 6 - Multi-turn",
+        "prompt_tokens": "1000",
+        "output_tokens": "1000",
+        "rates": "[1, 25, 50, 75, 100]",
+        "description": "Multi-turn conversation benchmark with 5 turns, 512-token prefix (10 copies). Tests context management in iterative conversations.",
     },
 }
 
@@ -702,6 +706,7 @@ def get_profile_tooltip(profile_key: str) -> str:
         f"**{details['name']}**",
         f"• Input tokens: {details['prompt_tokens']}",
         f"• Output tokens: {details['output_tokens']}",
+        f"• Request rates: {details['rates']}",
         f"• {details['description']}",
     ]
     return "\n".join(lines)
@@ -963,12 +968,13 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if selected_profile and selected_profile in _PROFILE_DETAILS:
             details = _PROFILE_DETAILS[selected_profile]
             with st.container(border=True):
-                st.markdown(f"**{details['name']} Profile**")
+                st.markdown(f"**{details['name']}**")
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write(f"**Input tokens:** {details['prompt_tokens']}")
                 with col2:
                     st.write(f"**Output tokens:** {details['output_tokens']}")
+                st.write(f"**Request rates:** {details['rates']}")
                 st.write(f"_{details['description']}_")
 
         st.caption(
