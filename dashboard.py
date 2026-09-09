@@ -28,7 +28,7 @@ from dashboard_styles import (
     initialize_session_state,
     initialize_streamlit_config,
 )
-from profile_config import PROFILE_DETAILS, get_profile_tooltip
+from profile_config import get_profile_details, get_profile_tooltip
 from intelliconfig import render_intelliconfig_section
 
 # Set global Plotly template: white background with white hover labels
@@ -4968,25 +4968,26 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                 help="Select a profile to see detailed guidellm workload specifications (token counts, rates, etc.)",
             )
 
-            if selected_profile and selected_profile in PROFILE_DETAILS:
-                details = PROFILE_DETAILS[selected_profile]
-                with st.container(border=True):
-                    st.markdown(f"**{details['name']}**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Input tokens:** {details['prompt_tokens']}")
-                    with col2:
-                        st.write(f"**Output tokens:** {details['output_tokens']}")
-                    st.write(f"**Request rates:** {details['rates']}")
+            if selected_profile:
+                details = get_profile_details(selected_profile)
+                if details:
+                    with st.container(border=True):
+                        st.markdown(f"**{details['name']}**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Input tokens:** {details['prompt_tokens']}")
+                        with col2:
+                            st.write(f"**Output tokens:** {details['output_tokens']}")
+                        st.write(f"**Request rates:** {details['rates']}")
 
-                    if details.get("samples"):
-                        st.write(f"**Samples:** {details['samples']}")
-                    if details.get("turns"):
-                        st.write(f"**Conversation turns:** {details['turns']}")
-                    if details.get("prefix_tokens"):
-                        st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
+                        if details.get("samples"):
+                            st.write(f"**Samples:** {details['samples']}")
+                        if details.get("turns"):
+                            st.write(f"**Conversation turns:** {details['turns']}")
+                        if details.get("prefix_tokens"):
+                            st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
 
-                    st.write(f"_{details['description']}_")
+                        st.write(f"_{details['description']}_")
 
         profile_df = model_df[model_df["profile"] == selected_profile].copy()
 

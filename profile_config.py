@@ -57,9 +57,57 @@ PROFILE_DETAILS = {
 }
 
 
+def extract_token_pair_from_profile_name(profile_name: str) -> str:
+    """Extract token pair (e.g., '512/2048') from profile display name.
+
+    Examples:
+        "Profile B: Variable Workload (512/2k)" -> "512/2048"
+        "1k/1k" -> "1000/1000"
+        "8k/1k" -> "8000/1000"
+        "512/2k" -> "512/2048"
+    """
+    if not profile_name:
+        return ""
+
+    # Extract token counts from parentheses, e.g., (512/2k)
+    if "(" in profile_name and ")" in profile_name:
+        start = profile_name.rfind("(") + 1
+        end = profile_name.rfind(")")
+        token_pair = profile_name[start:end].strip()
+    else:
+        token_pair = profile_name
+
+    # Normalize 'k' notation: 1k -> 1000, 2k -> 2048, etc.
+    parts = token_pair.split("/")
+    normalized = []
+    for part in parts:
+        if "k" in part.lower():
+            # Convert 1k to 1000, 2k to 2048, etc.
+            num = float(part.lower().replace("k", "")) * 1000
+            normalized.append(str(int(num)))
+        else:
+            normalized.append(part)
+
+    return "/".join(normalized)
+
+
+def get_profile_details(profile_name: str) -> dict:
+    """Get profile details from profile name, extracting token pair if needed."""
+    # First try direct lookup
+    if profile_name in PROFILE_DETAILS:
+        return PROFILE_DETAILS[profile_name]
+
+    # Try to extract token pair and look up
+    token_pair = extract_token_pair_from_profile_name(profile_name)
+    if token_pair in PROFILE_DETAILS:
+        return PROFILE_DETAILS[token_pair]
+
+    return {}
+
+
 def get_profile_tooltip(profile_key: str) -> str:
     """Return detailed tooltip text for a guidellm profile."""
-    details = PROFILE_DETAILS.get(profile_key)
+    details = get_profile_details(profile_key)
     if not details:
         return ""
 
