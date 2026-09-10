@@ -4978,7 +4978,6 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                             st.write(f"**Input tokens:** {details['prompt_tokens']}")
                         with col2:
                             st.write(f"**Output tokens:** {details['output_tokens']}")
-                        st.write(f"**Request rates:** {details['rates']}")
 
                         if details.get("samples"):
                             st.write(f"**Samples:** {details['samples']}")

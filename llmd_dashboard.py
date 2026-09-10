@@ -920,7 +920,6 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                     st.write(f"**Input tokens:** {details['prompt_tokens']}")
                 with col2:
                     st.write(f"**Output tokens:** {details['output_tokens']}")
-                st.write(f"**Request rates:** {details['rates']}")
 
                 if details.get("samples"):
                     st.write(f"**Samples:** {details['samples']}")
