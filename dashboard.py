@@ -4972,7 +4972,6 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                 details = get_profile_details(selected_profile)
                 if details:
                     with st.container(border=True):
-                        st.markdown(f"**{details['name']}**")
                         col1, col2 = st.columns(2)
                         with col1:
                             st.write(f"**Input tokens:** {details['prompt_tokens']}")
