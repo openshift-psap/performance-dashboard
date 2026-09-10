@@ -914,6 +914,7 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if selected_profile and selected_profile in _PROFILE_DETAILS:
             details = _PROFILE_DETAILS[selected_profile]
             with st.container(border=True):
+                st.markdown(f"**{details['name']}**")
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write(f"**Input tokens:** {details['prompt_tokens']}")
