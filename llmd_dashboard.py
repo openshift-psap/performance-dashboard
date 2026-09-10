@@ -905,11 +905,12 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 profiles,
                 format_func=clean_profile_name,
                 key=profile_key,
-                help="Select a profile to see detailed guidellm workload specifications (token counts, rates, etc.)",
             )
             if profiles
             else None
         )
+
+        st.caption("Select a profile to see token count specifications below")
 
         if selected_profile and selected_profile in _PROFILE_DETAILS:
             details = _PROFILE_DETAILS[selected_profile]

@@ -4965,8 +4965,9 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                 key=profile_key,
                 on_change=keep_expander_open,
                 args=("performance_trends_expanded",),
-                help="Select a profile to see detailed guidellm workload specifications (token counts, rates, etc.)",
             )
+
+            st.caption("Select a profile to see token count specifications below")
 
             if selected_profile:
                 details = get_profile_details(selected_profile)
