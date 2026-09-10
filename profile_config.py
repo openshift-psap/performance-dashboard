@@ -34,7 +34,7 @@ PROFILE_DETAILS = {
         "description": "Extreme long-context workload with 100K+ prompt tokens (e.g., full documents). Samples 10 requests. Tests maximum context window.",
     },
     "8000/800": {
-        "name": "Heterogeneous",
+        "name": "Heavy Heterogeneous",
         "prompt_tokens": "8000 (stdev=8500, min=50, max=30000)",
         "output_tokens": "800 (stdev=1500, min=20, max=8000)",
         "description": "Long context with variable token distributions. Simulates realistic chat patterns with large prompts and smaller outputs. Samples 450 seconds of traffic.",
