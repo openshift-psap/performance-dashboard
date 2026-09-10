@@ -912,24 +912,25 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
         st.caption("Select a profile to see token count specifications below")
 
-        if selected_profile and selected_profile in _PROFILE_DETAILS:
-            details = _PROFILE_DETAILS[selected_profile]
-            with st.container(border=True):
-                st.markdown(f"**{details['name']}**")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Input tokens:** {details['prompt_tokens']}")
-                with col2:
-                    st.write(f"**Output tokens:** {details['output_tokens']}")
+        if selected_profile:
+            details = get_profile_details(selected_profile)
+            if details:
+                with st.container(border=True):
+                    st.markdown(f"**{details['name']}**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Input tokens:** {details['prompt_tokens']}")
+                    with col2:
+                        st.write(f"**Output tokens:** {details['output_tokens']}")
 
-                if details.get("samples"):
-                    st.write(f"**Samples:** {details['samples']}")
-                if details.get("turns"):
-                    st.write(f"**Conversation turns:** {details['turns']}")
-                if details.get("prefix_tokens"):
-                    st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
+                    if details.get("samples"):
+                        st.write(f"**Samples:** {details['samples']}")
+                    if details.get("turns"):
+                        st.write(f"**Conversation turns:** {details['turns']}")
+                    if details.get("prefix_tokens"):
+                        st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
 
-                st.write(f"_{details['description']}_")
+                    st.write(f"_{details['description']}_")
 
         st.caption(
             "Please refer to the notes column in the filtered data to understand more about the workload profile."
