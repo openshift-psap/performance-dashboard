@@ -19,6 +19,7 @@ import plotly.io as pio
 import streamlit as st
 
 from profile_config import PROFILE_DETAILS, get_profile_tooltip
+from custom_dropdown import render_profile_dropdown
 
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
@@ -899,18 +900,14 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 else profiles[0]
             )
 
-        selected_profile = (
-            st.selectbox(
+        if profiles:
+            selected_profile = render_profile_dropdown(
                 "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                 profiles,
-                format_func=clean_profile_name,
-                key=profile_key,
+                key=profile_key
             )
-            if profiles
-            else None
-        )
-
-        st.caption("Select a profile to see token count specifications below")
+        else:
+            selected_profile = None
 
         if selected_profile:
             details = get_profile_details(selected_profile)
