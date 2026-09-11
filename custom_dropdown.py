@@ -4,7 +4,79 @@ import json
 
 import streamlit.components.v1 as components
 
-from profile_config import PROFILE_DETAILS
+PROFILE_DETAILS = {
+    "1000/1000": {
+        "name": "Balanced Profile",
+        "prompt_tokens": "1000",
+        "output_tokens": "1000",
+    },
+    "512/2048": {
+        "name": "Heterogeneous",
+        "prompt_tokens": "512 (stdev=128, min=1, max=1024)",
+        "output_tokens": "2048 (stdev=512, min=1, max=4096)",
+    },
+    "2048/128": {
+        "name": "Short Prefill-Heavy",
+        "prompt_tokens": "2048",
+        "output_tokens": "128",
+    },
+    "8000/1000": {
+        "name": "Prefill-Heavy",
+        "prompt_tokens": "8000",
+        "output_tokens": "1000",
+        "samples": "50",
+    },
+    "100000/1000": {
+        "name": "Long Context Prefill-Heavy",
+        "prompt_tokens": "100000",
+        "output_tokens": "1000",
+        "samples": "10",
+    },
+    "8000/800": {
+        "name": "Heavy Heterogeneous",
+        "prompt_tokens": "8000 (stdev=8500, min=50, max=30000)",
+        "output_tokens": "800 (stdev=1500, min=20, max=8000)",
+        "description": "Simulates realistic chat patterns with large prompts and smaller outputs. Samples 450 seconds of traffic.",
+    },
+    "128/128": {
+        "name": "Multi-turn Profile",
+        "prompt_tokens": "128",
+        "output_tokens": "128",
+        "turns": "5",
+        "prefix_tokens": "512",
+        "prefix_count": "10,000",
+        "description": "Multi-turn conversation benchmark with 5 turns and 512-token prefix.",
+        "aliases": ["Multi-turn"],
+    },
+}
+
+
+def get_profile_details(profile_name: str) -> dict:
+    """Get profile details by name, normalizing k-notation (e.g. 1k/1k -> 1000/1000)."""
+    if profile_name in PROFILE_DETAILS:
+        return PROFILE_DETAILS[profile_name]
+
+    if not profile_name:
+        return {}
+
+    if "(" in profile_name and ")" in profile_name:
+        start = profile_name.rfind("(") + 1
+        end = profile_name.rfind(")")
+        token_pair = profile_name[start:end].strip()
+    else:
+        token_pair = profile_name
+
+    parts = token_pair.split("/")
+    normalized = []
+    for part in parts:
+        if "k" in part.lower():
+            num = float(part.lower().replace("k", "")) * 1000
+            normalized.append(str(int(num)))
+        else:
+            normalized.append(part)
+
+    key = "/".join(normalized)
+    return PROFILE_DETAILS.get(key, {})
 
 
 def inject_profile_tooltips() -> None:
@@ -119,7 +191,11 @@ def inject_profile_tooltips() -> None:
 
 
 def _generate_display_variants(token_pair: str) -> list[str]:
-    """Generate common display name variants for a token pair like '1000/1000'."""
+    """Generate display name variants for a token pair like '1000/1000'.
+
+    Auto-generates k-notation variants (e.g. 1000/1000 -> 1k/1k, (1k/1k)).
+    Additional aliases (e.g. 'Multi-turn') come from the 'aliases' field in PROFILE_DETAILS.
+    """
     variants = []
     parts = token_pair.split("/")
     if len(parts) != 2:
@@ -141,38 +217,23 @@ def _generate_display_variants(token_pair: str) -> list[str]:
         variants.append(k_pair)
     variants.append(f"({k_pair})")
 
-    profile_names = {
-        "1000/1000": [
-            "Profile A: Balanced (1k/1k)",
-        ],
-        "512/2048": [
-            "Profile B: Variable Workload (512/2k)",
-            "(512/2k)",
-        ],
-        "2048/128": [
-            "Profile C: Prompt-Heavy (2k/128)",
-            "(2k/128)",
-        ],
-        "8000/1000": [
-            "Profile D: Long Context (8k/1k)",
-            "(8k/1k)",
-        ],
-        "100000/1000": [
-            "Profile E: Extreme Context (100k/1k)",
-            "(100k/1k)",
-        ],
-        "8000/800": [
-            "Profile F: Heavy Heterogeneous (8k/800)",
-            "(8k/800)",
-        ],
-        "128/128": [
-            "Profile G: Multi-turn (128/128)",
-            "(128/128)",
-            "Multi-turn",
-        ],
-    }
-    for name in profile_names.get(token_pair, []):
-        if name not in variants:
-            variants.append(name)
+    # The dropdown may show rounded k-notation (e.g. 2048 as "2k") which the JS
+    # decodes as 2000. Add that decoded form so the lookup still hits.
+    def k_decoded(val: str) -> str:
+        try:
+            n = int(val)
+            if n >= 1000:
+                return str((n // 1000) * 1000)
+        except ValueError:
+            pass
+        return val
+
+    decoded = f"{k_decoded(parts[0])}/{k_decoded(parts[1])}"
+    if decoded != token_pair and decoded not in variants:
+        variants.append(decoded)
+
+    for alias in PROFILE_DETAILS.get(token_pair, {}).get("aliases", []):
+        if alias not in variants:
+            variants.append(alias)
 
     return variants

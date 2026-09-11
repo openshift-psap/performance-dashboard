@@ -22,14 +22,13 @@ import streamlit as st
 import streamlit.components.v1 as _stc
 from plotly.subplots import make_subplots
 
+from custom_dropdown import get_profile_details, inject_profile_tooltips
 from dashboard_styles import (
     apply_theme_css,
     get_app_css,
     initialize_session_state,
     initialize_streamlit_config,
 )
-from profile_config import get_profile_details, get_profile_tooltip
-from custom_dropdown import inject_profile_tooltips
 from intelliconfig import render_intelliconfig_section
 
 # Set global Plotly template: white background with white hover labels

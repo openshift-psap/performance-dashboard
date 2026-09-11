@@ -18,8 +18,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-from profile_config import PROFILE_DETAILS, get_profile_tooltip
-from custom_dropdown import inject_profile_tooltips
+from custom_dropdown import get_profile_details, inject_profile_tooltips
 
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
