@@ -22,6 +22,7 @@ import streamlit as st
 import streamlit.components.v1 as _stc
 from plotly.subplots import make_subplots
 
+from custom_dropdown import get_profile_details, inject_profile_tooltips
 from dashboard_styles import (
     apply_theme_css,
     get_app_css,
@@ -4989,7 +4990,28 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                 key=profile_key,
                 on_change=keep_expander_open,
                 args=("performance_trends_expanded",),
+                help="Hover over dropdown options to see guidellm profile details",
             )
+
+            if selected_profile:
+                details = get_profile_details(selected_profile)
+                if details:
+                    with st.container(border=True):
+                        st.markdown(f"**{details['name']}**")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Input tokens:** {details['prompt_tokens']}")
+                        with col2:
+                            st.write(f"**Output tokens:** {details['output_tokens']}")
+
+                        if details.get("samples"):
+                            st.write(f"**Samples:** {details['samples']}")
+                        if details.get("turns"):
+                            st.write(f"**Conversation turns:** {details['turns']}")
+                        if details.get("prefix_tokens"):
+                            st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
+
+                        st.write(f"_{details['description']}_")
 
         profile_df = model_df[model_df["profile"] == selected_profile].copy()
 
@@ -5650,6 +5672,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 key="compare_summary_profile",
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
+                help="Hover over dropdown options to see guidellm profile details",
             )
 
         # Secondary custom ISL/OSL pair filter
@@ -11099,6 +11122,7 @@ if "view" in st.query_params and "dashboard_view_selector" not in st.session_sta
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
+inject_profile_tooltips()
 
 render_sidebar_header()
 
@@ -12026,6 +12050,7 @@ def main():
                     index=_profile_idx,
                     format_func=clean_profile_name,
                     key=profile_key,
+                    help="Hover over dropdown options to see guidellm profile details",
                 )
                 if profiles
                 else None

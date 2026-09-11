@@ -1001,6 +1001,22 @@ def get_app_css():
         color: #ffffff !important;
     }
 
+    /* ℹ️ info icon — only on ISL/OSL selectboxes (class added via JS) */
+    .profile-info-icon [data-testid="stTooltipHoverTarget"] {
+        position: relative !important;
+    }
+    .profile-info-icon [data-testid="stTooltipHoverTarget"] svg {
+        opacity: 0 !important;
+    }
+    .profile-info-icon [data-testid="stTooltipHoverTarget"]::after {
+        content: "ℹ️" !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        font-size: 0.85rem !important;
+        pointer-events: none !important;
+    }
+
     </style>
     """
 
