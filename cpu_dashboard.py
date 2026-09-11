@@ -19,7 +19,6 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
     _light_hover = go.layout.Template(
