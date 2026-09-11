@@ -1001,6 +1001,33 @@ def get_app_css():
         color: #ffffff !important;
     }
 
+    /* Blue ℹ info icon — only on ISL/OSL selectboxes (class added via JS) */
+    .profile-info-icon [data-testid="stTooltipHoverTarget"] {
+        position: relative !important;
+    }
+    .profile-info-icon [data-testid="stTooltipHoverTarget"] svg {
+        opacity: 0 !important;
+    }
+    .profile-info-icon [data-testid="stTooltipHoverTarget"]::after {
+        content: "i" !important;
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 16px !important;
+        height: 16px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: #5B8DB8 !important;
+        color: #fff !important;
+        border-radius: 4px !important;
+        font-size: 11px !important;
+        font-weight: 700 !important;
+        font-style: italic !important;
+        font-family: Georgia, serif !important;
+        pointer-events: none !important;
+    }
+
     </style>
     """
 

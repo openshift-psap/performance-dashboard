@@ -29,6 +29,7 @@ from dashboard_styles import (
     initialize_streamlit_config,
 )
 from profile_config import get_profile_details, get_profile_tooltip
+from custom_dropdown import inject_profile_tooltips
 from intelliconfig import render_intelliconfig_section
 
 # Set global Plotly template: white background with white hover labels
@@ -4965,9 +4966,8 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
                 key=profile_key,
                 on_change=keep_expander_open,
                 args=("performance_trends_expanded",),
+                help="Hover over dropdown options to see guidellm profile details",
             )
-
-            st.caption("Select a profile to see token count specifications below")
 
             if selected_profile:
                 details = get_profile_details(selected_profile)
@@ -5648,6 +5648,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 key="compare_summary_profile",
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
+                help="Hover over dropdown options to see guidellm profile details",
             )
 
         # Secondary custom ISL/OSL pair filter
@@ -11097,6 +11098,7 @@ if "view" in st.query_params and "dashboard_view_selector" not in st.session_sta
 
 st.markdown(get_app_css(), unsafe_allow_html=True)
 apply_theme_css()
+inject_profile_tooltips()
 
 render_sidebar_header()
 
@@ -12023,6 +12025,7 @@ def main():
                     index=_profile_idx,
                     format_func=clean_profile_name,
                     key=profile_key,
+                    help="Hover over dropdown options to see guidellm profile details",
                 )
                 if profiles
                 else None

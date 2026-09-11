@@ -19,7 +19,7 @@ import plotly.io as pio
 import streamlit as st
 
 from profile_config import PROFILE_DETAILS, get_profile_tooltip
-from custom_dropdown import render_profile_dropdown
+from custom_dropdown import inject_profile_tooltips
 
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
@@ -901,10 +901,11 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             )
 
         if profiles:
-            selected_profile = render_profile_dropdown(
+            selected_profile = st.selectbox(
                 "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
-                profiles,
-                key=profile_key
+                options=profiles,
+                key=profile_key,
+                help="Hover over dropdown options to see guidellm profile details",
             )
         else:
             selected_profile = None
@@ -5431,6 +5432,8 @@ def render_llmd_dashboard(llmd_csv_path: str):
     Args:
         llmd_csv_path: Path to the LLM-D CSV data file
     """
+    inject_profile_tooltips()
+
     # Load data
     df = load_llmd_data(llmd_csv_path)
 

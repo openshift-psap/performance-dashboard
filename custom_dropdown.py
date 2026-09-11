@@ -1,225 +1,178 @@
-"""Custom dropdown component with hover tooltips for profile selection."""
+"""Inject hover tooltips onto Streamlit selectbox options for profile dropdowns."""
 
-import streamlit as st
+import json
+
 import streamlit.components.v1 as components
+
 from profile_config import PROFILE_DETAILS
 
 
-def render_profile_dropdown(label: str, options: list, key: str = None) -> str:
-    """Render a custom dropdown with hover tooltips for each profile.
+def inject_profile_tooltips() -> None:
+    """Inject JS that adds hover tooltips to all ISL/OSL profile selectbox options.
 
-    Args:
-        label: Dropdown label
-        options: List of profile keys (e.g., ["1000/1000", "512/2048"])
-        key: Streamlit key for state management
-
-    Returns:
-        Selected profile key, or None if nothing selected
+    Uses st.components.v1.html() to run JavaScript that accesses the parent
+    Streamlit document via window.parent.document. A MutationObserver watches
+    for [role="option"] elements and attaches tooltip behavior on hover.
     """
+    tooltip_map = {}
+    for key, details in PROFILE_DETAILS.items():
+        lines = [details["name"]]
+        lines.append(f"Input: {details['prompt_tokens']}")
+        lines.append(f"Output: {details['output_tokens']}")
+        if details.get("samples"):
+            lines.append(f"Samples: {details['samples']}")
+        if details.get("turns"):
+            lines.append(f"Turns: {details['turns']}")
+        if details.get("prefix_tokens"):
+            lines.append(f"Prefix Token: {details['prefix_tokens']}")
+        if details.get("prefix_count"):
+            lines.append(f"Prefix Count: {details['prefix_count']}")
+        if details.get("description"):
+            lines.append(details["description"])
+        tooltip_map[key] = "\n".join(lines)
 
-    # Build tooltip HTML for each option
-    options_html = ""
-    for opt in options:
-        details = PROFILE_DETAILS.get(opt, {})
-        if not details:
-            # For options not in profile config, just show the key
-            tooltip = opt
-        else:
-            # Build tooltip with profile details
-            tooltip_lines = [
-                f"<strong>{details['name']}</strong>",
-                f"Input: {details['prompt_tokens']}",
-                f"Output: {details['output_tokens']}",
-            ]
-            if details.get("samples"):
-                tooltip_lines.append(f"Samples: {details['samples']}")
-            if details.get("turns"):
-                tooltip_lines.append(f"Turns: {details['turns']}")
-            if details.get("prefix_tokens"):
-                tooltip_lines.append(f"Prefix: {details['prefix_tokens']}")
-            tooltip_lines.append(f"<em>{details['description']}</em>")
-            tooltip = "<br>".join(tooltip_lines)
+    for key in list(tooltip_map):
+        for variant in _generate_display_variants(key):
+            if variant not in tooltip_map:
+                tooltip_map[variant] = tooltip_map[key]
 
-        options_html += f'''
-            <div class="dropdown-item" data-value="{opt}" data-tooltip="{tooltip}">
-                {opt}
-            </div>
-        '''
-
-    # Generate unique ID for this dropdown
-    dropdown_id = f"profile_dropdown_{key}" if key else "profile_dropdown"
-
-    html = f'''
-    <div class="custom-profile-dropdown" id="{dropdown_id}">
-        <div class="dropdown-label">{label}</div>
-        <button class="dropdown-toggle" id="{dropdown_id}_toggle">
-            Select profile ▼
-        </button>
-        <div class="dropdown-menu" id="{dropdown_id}_menu">
-            {options_html}
-        </div>
-    </div>
-
-    <style>
-    .custom-profile-dropdown {{
-        position: relative;
-        display: inline-block;
-        width: 100%;
-        margin: 10px 0;
-    }}
-
-    .dropdown-label {{
-        font-size: 0.875rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-        color: #262730;
-    }}
-
-    .dropdown-toggle {{
-        width: 100%;
-        padding: 10px 12px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: white;
-        cursor: pointer;
-        font-size: 0.875rem;
-        text-align: left;
-        transition: border-color 0.2s;
-    }}
-
-    .dropdown-toggle:hover {{
-        border-color: #999;
-    }}
-
-    .dropdown-toggle.active {{
-        border-color: #0066cc;
-        background: #f0f7ff;
-    }}
-
-    .dropdown-menu {{
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        background: white;
-        border: 1px solid #ccc;
-        border-top: none;
-        border-radius: 0 0 4px 4px;
-        max-height: 300px;
-        overflow-y: auto;
-        z-index: 1000;
-        display: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }}
-
-    .dropdown-menu.open {{
-        display: block;
-    }}
-
-    .dropdown-item {{
-        padding: 12px;
-        cursor: pointer;
-        border-bottom: 1px solid #eee;
-        position: relative;
-        transition: background-color 0.15s;
-    }}
-
-    .dropdown-item:last-child {{
-        border-bottom: none;
-    }}
-
-    .dropdown-item:hover {{
-        background-color: #f5f5f5;
-    }}
-
-    /* Tooltip on hover */
-    .dropdown-item[data-tooltip]::after {{
-        content: attr(data-tooltip);
-        position: absolute;
-        left: 100%;
-        top: 50%;
-        transform: translateY(-50%);
-        margin-left: 10px;
-        background: #1f2937;
-        color: #fff;
-        font-size: 0.75rem;
-        padding: 8px 12px;
-        border-radius: 4px;
-        white-space: nowrap;
-        z-index: 1001;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s;
-        white-space: normal;
-        max-width: 250px;
-    }}
-
-    .dropdown-item:hover[data-tooltip]::after {{
-        opacity: 1;
-    }}
-
-    /* Arrow for tooltip */
-    .dropdown-item[data-tooltip]::before {{
-        content: '';
-        position: absolute;
-        left: calc(100% - 5px);
-        top: 50%;
-        transform: translateY(-50%);
-        width: 0;
-        height: 0;
-        border-left: 5px solid #1f2937;
-        border-top: 5px solid transparent;
-        border-bottom: 5px solid transparent;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s;
-    }}
-
-    .dropdown-item:hover[data-tooltip]::before {{
-        opacity: 1;
-    }}
-    </style>
-
+    js_code = f"""
     <script>
     (function() {{
-        const dropdownId = "{dropdown_id}";
-        const toggle = document.getElementById(dropdownId + "_toggle");
-        const menu = document.getElementById(dropdownId + "_menu");
-        const items = menu.querySelectorAll(".dropdown-item");
-        let selectedValue = null;
+        const doc = window.parent.document;
+        if (doc.__profileTooltipInjected) return;
+        doc.__profileTooltipInjected = true;
 
-        // Toggle menu
-        toggle.addEventListener("click", function() {{
-            menu.classList.toggle("open");
-            toggle.classList.toggle("active");
-        }});
+        const tooltips = {json.dumps(tooltip_map)};
 
-        // Close menu when clicking outside
-        document.addEventListener("click", function(e) {{
-            if (!e.target.closest("#" + dropdownId)) {{
-                menu.classList.remove("open");
-                toggle.classList.remove("active");
+        const extractKey = (text) => {{
+            text = text.trim();
+            if (tooltips[text]) return text;
+            const m = text.match(/\\(([^)]+)\\)\\s*$/);
+            if (m) {{
+                let pair = m[1];
+                pair = pair.replace(/(\\d+)k/gi, (_, n) => String(Number(n) * 1000));
+                if (tooltips[pair]) return pair;
             }}
-        }});
+            let norm = text.replace(/(\\d+)k/gi, (_, n) => String(Number(n) * 1000));
+            if (tooltips[norm]) return norm;
+            return null;
+        }};
 
-        // Handle item selection
-        items.forEach(function(item) {{
-            item.addEventListener("click", function() {{
-                selectedValue = item.dataset.value;
-                toggle.textContent = selectedValue + " ✓";
-                menu.classList.remove("open");
-                toggle.classList.remove("active");
+        const tip = doc.createElement('div');
+        tip.id = 'profile-tooltip';
+        tip.style.cssText = `
+            position: fixed; background: #ffffff; color: #1a1a1a;
+            padding: 10px 14px; border-radius: 6px; font-size: 0.8rem;
+            font-family: "Source Sans Pro", sans-serif;
+            max-width: 340px; z-index: 100001; pointer-events: none;
+            opacity: 0; transition: opacity 0.15s; white-space: pre-line;
+            line-height: 1.5; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            border: 1px solid #e0e0e0;
+        `;
+        doc.body.appendChild(tip);
 
-                // Send data to Streamlit
-                window.parent.postMessage({{
-                    type: "streamlit:setComponentValue",
-                    sessionID: "{{key}}",
-                    value: selectedValue
-                }}, "*");
+        const show = (el, key) => {{
+            tip.textContent = tooltips[key];
+            const rect = el.getBoundingClientRect();
+            let left = rect.right + 12;
+            if (left + 350 > doc.documentElement.clientWidth) {{
+                left = rect.left - 350 - 12;
+                if (left < 8) left = 8;
+            }}
+            tip.style.left = left + 'px';
+            tip.style.top = Math.max(8, rect.top) + 'px';
+            tip.style.opacity = '1';
+        }};
+
+        const hide = () => {{ tip.style.opacity = '0'; }};
+
+        const bind = (opt) => {{
+            if (opt.dataset.ttBound) return;
+            const key = extractKey(opt.textContent);
+            if (!key) return;
+            opt.dataset.ttBound = '1';
+            opt.addEventListener('mouseenter', () => show(opt, key));
+            opt.addEventListener('mouseleave', hide);
+        }};
+
+        new MutationObserver(() => {{
+            doc.querySelectorAll('[role="option"]').forEach(bind);
+
+            // Tag ISL/OSL tooltip icons with profile-info-icon class
+            doc.querySelectorAll('[data-testid="stWidgetLabel"]').forEach(label => {{
+                const text = label.textContent || '';
+                if (text.includes('ISL') || text.includes('OSL') || text.includes('Sequence Length')) {{
+                    const container = label.closest('[data-testid="stSelectbox"], [data-testid="stMultiSelect"]');
+                    if (!container) return;
+                    const icon = container.querySelector('.stTooltipIcon');
+                    if (icon && !icon.classList.contains('profile-info-icon')) {{
+                        icon.classList.add('profile-info-icon');
+                    }}
+                }}
             }});
-        }});
+        }}).observe(doc.body, {{ childList: true, subtree: true }});
     }})();
     </script>
-    '''
+    """
+    components.html(js_code, height=0)
 
-    return components.html(html, height=400)
+
+def _generate_display_variants(token_pair: str) -> list[str]:
+    """Generate common display name variants for a token pair like '1000/1000'."""
+    variants = []
+    parts = token_pair.split("/")
+    if len(parts) != 2:
+        return variants
+
+    def to_k(val: str) -> str:
+        try:
+            n = int(val)
+            if n >= 1000 and n % 1000 == 0:
+                return f"{n // 1000}k"
+        except ValueError:
+            pass
+        return val
+
+    k_input = to_k(parts[0])
+    k_output = to_k(parts[1])
+    k_pair = f"{k_input}/{k_output}"
+    if k_pair != token_pair:
+        variants.append(k_pair)
+    variants.append(f"({k_pair})")
+
+    profile_names = {
+        "1000/1000": [
+            "Profile A: Balanced (1k/1k)",
+        ],
+        "512/2048": [
+            "Profile B: Variable Workload (512/2k)",
+            "(512/2k)",
+        ],
+        "2048/128": [
+            "Profile C: Prompt-Heavy (2k/128)",
+            "(2k/128)",
+        ],
+        "8000/1000": [
+            "Profile D: Long Context (8k/1k)",
+            "(8k/1k)",
+        ],
+        "100000/1000": [
+            "Profile E: Extreme Context (100k/1k)",
+            "(100k/1k)",
+        ],
+        "8000/800": [
+            "Profile F: Heavy Heterogeneous (8k/800)",
+            "(8k/800)",
+        ],
+        "128/128": [
+            "Profile G: Multi-turn (128/128)",
+            "(128/128)",
+            "Multi-turn",
+        ],
+    }
+    for name in profile_names.get(token_pair, []):
+        if name not in variants:
+            variants.append(name)
+
+    return variants
