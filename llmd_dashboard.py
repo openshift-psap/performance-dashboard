@@ -18,6 +18,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
+from custom_dropdown import get_profile_details, inject_profile_tooltips
+
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
     _light_hover = go.layout.Template(
@@ -907,16 +909,36 @@ def render_llmd_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 else profiles[0]
             )
 
-        selected_profile = (
-            st.selectbox(
+        if profiles:
+            selected_profile = st.selectbox(
                 "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
-                profiles,
-                format_func=clean_profile_name,
+                options=profiles,
                 key=profile_key,
+                help="Hover over dropdown options to see guidellm profile details",
             )
-            if profiles
-            else None
-        )
+        else:
+            selected_profile = None
+
+        if selected_profile:
+            details = get_profile_details(selected_profile)
+            if details:
+                with st.container(border=True):
+                    st.markdown(f"**{details['name']}**")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Input tokens:** {details['prompt_tokens']}")
+                    with col2:
+                        st.write(f"**Output tokens:** {details['output_tokens']}")
+
+                    if details.get("samples"):
+                        st.write(f"**Samples:** {details['samples']}")
+                    if details.get("turns"):
+                        st.write(f"**Conversation turns:** {details['turns']}")
+                    if details.get("prefix_tokens"):
+                        st.write(f"**Prefix tokens:** {details['prefix_tokens']}")
+
+                    st.write(f"_{details['description']}_")
+
         st.caption(
             "Please refer to the notes column in the filtered data to understand more about the workload profile."
         )
@@ -5419,6 +5441,8 @@ def render_llmd_dashboard(llmd_csv_path: str):
     Args:
         llmd_csv_path: Path to the LLM-D CSV data file
     """
+    inject_profile_tooltips()
+
     # Load data
     df = load_llmd_data(llmd_csv_path)
 
