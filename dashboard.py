@@ -10401,16 +10401,12 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
             },
             "B200": {
-                "dashboard_id": "psap-b200-mlperf",
-                "dashboard_name": "vllm-2b-dcgm-metrics-psap-b200-mlperf",
+                "dashboard_id": "b200-pirate-vllm-dcgm",
+                "dashboard_name": "vllm-2b-dcgm-metrics-b200-pirate",
             },
             "H200_ZEUS2": {
                 "dashboard_id": "d35f19c8f56250",
                 "dashboard_name": "vllm-2b-dcgm-metrics-psap-zeus-syd",
-            },
-            "B200_PIRATE": {
-                "dashboard_id": "b200-pirate-vllm-dcgm",
-                "dashboard_name": "vllm-2b-dcgm-metrics-b200-pirate",
             },
         }
 
