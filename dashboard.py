@@ -3958,15 +3958,6 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             )
             y_axis = y_axis_options[y_axis_label]
 
-        if (
-            ("ttft" in x_axis.lower() or "ttft" in y_axis.lower())
-            and filtered_df["version"].map(uses_legacy_methodology).any()
-        ):
-            st.markdown(
-                "**📝 Methodology note:** This selection includes runs using the previous methodology. "
-                "vLLM v0.26.0+ onwards and RHAIIS 3.6+ use the updated benchmark methodology."
-            )
-
         max_conc = None
         if x_axis != "intended concurrency":
             st.session_state.pop("perf_plots_max_concurrency", None)
@@ -13651,6 +13642,12 @@ def main():
             '<hr style="margin-top: 0; margin-bottom: 0.5rem; border: none; border-top: 1px solid rgba(151,166,195,0.2);">',
             unsafe_allow_html=True,
         )
+
+        if filtered_df["version"].map(uses_legacy_methodology).any():
+            st.markdown(
+                "**📝 Methodology note:** This selection includes runs using the previous TTFT methodology. "
+                "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
+            )
 
         # Build dynamic section list based on selected profile
         section_list = [
