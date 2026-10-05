@@ -75,6 +75,14 @@ def _sync_performance_plot_query_params(
         del st.query_params["pp_shapes"]
 
 
+def _render_methodology_note(versions):
+    if any(uses_legacy_methodology(version) for version in versions):
+        st.markdown(
+            "**📝 Methodology note:** This selection includes runs using the previous TTFT methodology. "
+            "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
+        )
+
+
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
     layout=go.Layout(
@@ -1870,6 +1878,18 @@ def render_competitive_analysis_section(df):
         )
     selected_ca = CA_CONFIGURATIONS[ca_labels.index(selected_ca_label)]
     COMPARISON_GROUPS = selected_ca["groups"]
+    comparison_versions = set()
+    for group in COMPARISON_GROUPS:
+        comparison_versions.update(group.get("baselines", []))
+        comparison_versions.update(group.get("baseline_fallback", {}).values())
+        competitor_versions = group.get("competitor_versions", {})
+        for competitor in group.get("competitors", []):
+            comparison_versions.update(
+                competitor_versions.get(competitor, [competitor])
+            )
+    _render_methodology_note(
+        df.loc[df["version"].isin(comparison_versions), "version"].unique()
+    )
 
     st.markdown(selected_ca["description"])
     st.caption(
@@ -2604,6 +2624,10 @@ def render_overview_section(df):
     # True when both sides are upstream vLLM releases (not RHAIIS vs RHAIIS)
     is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith(
         "vLLM-"
+    )
+    overview_versions = [ov_current, ov_previous, ov_upstream, *ov_additional]
+    _render_methodology_note(
+        df.loc[df["version"].isin(overview_versions), "version"].unique()
     )
 
     st.markdown(
@@ -4644,6 +4668,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
         if not results:
             st.warning("No results found for selected versions")
             return
+        _render_methodology_note(r.get("version") for r in results)
 
         with filter_col3:
             # Get unique ISL/OSL combinations from filtered results
@@ -5445,6 +5470,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
 
         # Filter to selected versions
         version_df = profile_df[profile_df["version"].isin(selected_versions)].copy()
+        _render_methodology_note(version_df["version"].unique())
 
         # Filter controls - Row 3: TP sizes, Metric
         filter_col6, filter_col7 = st.columns(2)
@@ -6287,6 +6313,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
+        _render_methodology_note([version_1, version_2])
 
         def _compare_display_name(version, label):
             label_text = display_label(label)
@@ -10280,6 +10307,8 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     if energy_filtered_df.empty:
                         st.warning("⚠️ No data matches the selected filters.")
                         show_energy_calculations = False
+                    else:
+                        _render_methodology_note(energy_filtered_df["version"].unique())
 
                     st.markdown("---")
             else:
@@ -13643,12 +13672,6 @@ def main():
             unsafe_allow_html=True,
         )
 
-        if filtered_df["version"].map(uses_legacy_methodology).any():
-            st.markdown(
-                "**📝 Methodology note:** This selection includes runs using the previous TTFT methodology. "
-                "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
-            )
-
         # Build dynamic section list based on selected profile
         section_list = [
             "🏠 Overview",
@@ -13741,6 +13764,18 @@ def main():
 
         def _render_selected_section(sel):
             """Render the currently selected section content."""
+            if sel in {
+                "📊 Performance Plots",
+                "📈 Dataset Representation",
+                "🏆 Model Performance Comparison",
+                "⚖️ Compare Configurations",
+                "💰 Cost Analysis",
+                "⚙️ Runtime Server Configs",
+                "📋 View Logs",
+                "📄 Filtered Data",
+            }:
+                _render_methodology_note(filtered_df["version"].unique())
+
             if sel == "🏠 Overview":
                 render_overview_section(df)
             elif sel == "🔍 Competitive Analysis":
