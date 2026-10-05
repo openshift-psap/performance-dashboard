@@ -197,19 +197,127 @@ def get_app_css():
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
     }
 
+    /* Keep the closed customize trigger compact; widen it only when opened. */
+    [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) {
+        width: 135px !important;
+        max-width: 135px !important;
+    }
+    [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]):has(details[open]) {
+        width: 725px !important;
+        max-width: min(725px, calc(100vw - 2rem)) !important;
+    }
+    [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) > details > summary {
+        width: 135px !important;
+        min-height: 40px !important;
+        height: 40px !important;
+        padding: 8px 10px !important;
+        box-sizing: border-box !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) > details > summary p {
+        white-space: nowrap !important;
+    }
+
     [data-baseweb="select"] [data-baseweb="menu"] {
         border: 1px solid #dde1e8 !important;
         border-radius: 8px !important;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
     }
 
-    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
-        height: auto !important; /* Allow the item's background to grow */
+    /* Keep the original vertical, scrollable selected-value layout. */
+    [data-testid="stMultiSelect"] > div > div {
+        height: auto !important;
+        min-height: 40px !important;
+        max-height: 14rem !important;
     }
+    [data-testid="stMultiSelect"] [data-testid="stMultiSelectTagsContainer"] {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-content: flex-start !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        max-height: 14rem !important;
+        scrollbar-width: thin;
+    }
+    [data-testid="stMultiSelect"] [data-tag],
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] {
+        flex: 0 1 auto !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        height: auto !important;
+        min-height: 1.75rem !important;
+        color: #ffffff !important;
+        background-color: #cc0000 !important;
+    }
+    [data-testid="stMultiSelect"] [data-tag] span[title],
     [data-testid="stMultiSelect"] [data-baseweb="tag"] span[title] {
-        white-space: normal; /* Allow the text to wrap */
-        max-width: 100%;
         display: inline-block;
+        max-width: 100% !important;
+        overflow-wrap: anywhere;
+        white-space: normal !important;
+        color: #ffffff !important;
+    }
+    [data-testid="stMultiSelect"] [data-tag] button,
+    [data-testid="stMultiSelect"] [data-baseweb="tag"] button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: #ffffff !important;
+    }
+
+    /* Keep Streamlit's newer button wrappers visually identical to the
+       original icon-only clear/open controls. */
+    [data-testid="stSelectbox"] button[aria-label="Open"],
+    [data-testid="stMultiSelect"] button[aria-label="Open"],
+    [data-testid="stMultiSelect"] button[aria-label="Clear all"] {
+        width: 24px !important;
+        min-width: 24px !important;
+        height: 24px !important;
+        min-height: 24px !important;
+        padding: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        align-self: center !important;
+        vertical-align: middle !important;
+    }
+    [data-testid="stMultiSelect"] button[aria-label="Clear all"] svg {
+        width: 24px !important;
+        height: 24px !important;
+        color: #808495 !important;
+        fill: #808495 !important;
+    }
+    [data-testid="stSelectbox"] button[aria-label="Open"] svg,
+    [data-testid="stMultiSelect"] button[aria-label="Open"] svg {
+        width: 24px !important;
+        height: 24px !important;
+        color: #1a1f36 !important;
+        fill: #1a1f36 !important;
+    }
+    [data-testid="stMultiSelect"] button[aria-label^="Remove "] svg {
+        color: #ffffff !important;
+        stroke: #ffffff !important;
+    }
+
+    /* Keep the controls readable while retaining the live dashboard layout. */
+    [data-testid="stSelectbox"] [data-baseweb="select"],
+    [data-testid="stMultiSelect"] [data-baseweb="select"] {
+        font-size: 1.05rem !important;
+    }
+    [data-testid="stSelectbox"] button[aria-label="Open"] svg,
+    [data-testid="stMultiSelect"] button[aria-label="Open"] svg,
+    [data-testid="stMultiSelect"] button[aria-label="Clear all"] svg {
+        display: block !important;
+        margin: auto !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label,
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] label,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        font-size: 1.05rem !important;
     }
     .kpi-card {
         background: linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%);
@@ -955,6 +1063,20 @@ def get_app_css():
     [data-testid="stSidebar"] .stButton > button[kind="secondary"] p,
     [data-testid="stSidebar"] .stButton > button[kind="secondary"] span {
         color: #4b5563 !important;
+    }
+
+    /* Streamlit also exposes the button kind through data-testid. Keep the
+       navigation labels left-aligned across Streamlit releases. */
+    [data-testid="stSidebar"] .stButton > button[data-testid^="stBaseButton-"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
+    }
+    [data-testid="stSidebar"] .stButton > button[data-testid^="stBaseButton-"] > div {
+        width: 100% !important;
+        justify-content: flex-start !important;
+        text-align: left !important;
     }
 
     [data-testid="stSidebar"] hr {

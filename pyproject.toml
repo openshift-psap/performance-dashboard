@@ -19,7 +19,7 @@ dependencies = [
 
 # Package discovery configuration
 [tool.setuptools]
-py-modules = ["dashboard", "dashboard_styles"]
+py-modules = ["dashboard", "dashboard_styles", "dashboard_taxonomy"]
 
 [tool.setuptools.packages.find]
 where = ["."]

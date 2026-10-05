@@ -202,7 +202,10 @@ See [Code Quality Documentation](docs/CODE_QUALITY.md) for detailed information.
 
    ```bash
    # Build the container image with your data
-   podman build -f Dockerfile.openshift -t quay.io/your-username/rhaiis-dashboard:latest .
+   podman build -f Dockerfile.openshift \
+     --build-arg DASHBOARD_UPDATED_AT="$(git log -1 --format=%cI)" \
+     --build-arg DASHBOARD_UPDATED_COMMIT="$(git rev-parse --short HEAD)" \
+     -t quay.io/your-username/rhaiis-dashboard:latest .
 
    # Push to your container registry
    podman push quay.io/your-username/rhaiis-dashboard:latest
@@ -242,7 +245,10 @@ When you have code changes:
 1. **Rebuild the image** with updated code:
 
    ```bash
-   podman build -f Dockerfile.openshift -t quay.io/your-username/rhaiis-dashboard:latest .
+   podman build -f Dockerfile.openshift \
+     --build-arg DASHBOARD_UPDATED_AT="$(git log -1 --format=%cI)" \
+     --build-arg DASHBOARD_UPDATED_COMMIT="$(git rev-parse --short HEAD)" \
+     -t quay.io/your-username/rhaiis-dashboard:latest .
    podman push quay.io/your-username/rhaiis-dashboard:latest
    ```
 
@@ -371,14 +377,18 @@ The dashboard can load CSV data directly from an AWS S3 bucket instead of local 
 | ----------------------- | ----------------------------------------- | ---------------------------- |
 | `S3_BUCKET`             | S3 bucket name (enables S3 mode when set) | _(none)_                     |
 | `S3_KEY`                | Path to RHAIIS CSV in bucket              | `consolidated_dashboard.csv` |
+| `S3_KEY_METADATA`       | Path to latest dashboard update metadata  | `${S3_KEY}.metadata.json`    |
 | `S3_KEY_LLMD`           | Path to LLM-D CSV in bucket               | `llmd-dashboard.csv`         |
 | `S3_REGION`             | AWS region                                | `us-east-1`                  |
 | `AWS_ACCESS_KEY_ID`     | AWS access key (for private buckets)      | _(none)_                     |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key (for private buckets)      | _(none)_                     |
+| `DASHBOARD_UPDATED_AT`  | Build timestamp shown in the dashboard   | Git commit timestamp         |
+| `DASHBOARD_UPDATED_COMMIT` | Short commit shown beside update metadata | _(none)_                  |
 
 **Behavior:**
 
 - If `S3_BUCKET` is set, data is loaded from S3 with a 5-minute cache
+- When available, `S3_KEY_METADATA` supplies the data update timestamp shown in the dashboard
 - If S3 fails, falls back to local CSV files
 - If `S3_BUCKET` is not set, uses local files only
 
@@ -400,6 +410,8 @@ streamlit run dashboard.py
 ### Data Requirements
 
 - **CSV Format**: Must include columns for model, version, accelerator, TP, metrics
+- **Run Labels**: Labels are derived in memory from existing version values; no producer-side `label` column is required. Known values such as `vLLM-0.24.0-pcon` are displayed as release `vLLM-0.24.0` with label `pcon`, while plain releases use the `default` label and the original composite value remains available as `legacy_version`.
+- **Run IDs**: UUIDs are available under Advanced Filters for execution-level inspection; labels are the normal configuration-level distinction.
 - **Runtime Args**: Semicolon-separated key-value pairs
 - **Benchmark Profiles**: Support for different prompt/output token configurations
 

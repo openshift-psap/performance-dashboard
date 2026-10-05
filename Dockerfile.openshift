@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy only necessary application files
 COPY dashboard.py .
 COPY dashboard_styles.py .
+COPY dashboard_taxonomy.py .
 COPY mlperf_datacenter.py .
 COPY llmd_dashboard.py .
 COPY cpu_dashboard.py .
@@ -40,6 +41,10 @@ RUN chgrp -R 0 /app && \
 # Expose port 8501
 EXPOSE 8501
 
+# Optional build metadata. CI should provide these from the source revision.
+ARG DASHBOARD_UPDATED_AT="timestamp unavailable"
+ARG DASHBOARD_UPDATED_COMMIT=""
+
 # Health check for OpenShift probes
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
@@ -59,6 +64,8 @@ ENV STREAMLIT_THEME_BACKGROUND_COLOR=#fafbfd
 ENV STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR=#f0f2f6
 ENV STREAMLIT_THEME_TEXT_COLOR=#1a1f36
 ENV STREAMLIT_THEME_FONT=sans\ serif
+ENV DASHBOARD_UPDATED_AT=${DASHBOARD_UPDATED_AT}
+ENV DASHBOARD_UPDATED_COMMIT=${DASHBOARD_UPDATED_COMMIT}
 CMD ["streamlit", "run", "dashboard.py", \
      "--server.port=8501", \
      "--server.address=0.0.0.0", \

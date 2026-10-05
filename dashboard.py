@@ -6,7 +6,10 @@ across different models, versions, and hardware configurations.
 
 import base64
 import contextlib
+import hashlib
+import html
 import io
+import json
 import logging
 import os
 import sys
@@ -28,7 +31,57 @@ from dashboard_styles import (
     initialize_session_state,
     initialize_streamlit_config,
 )
+from dashboard_taxonomy import (
+    DEFAULT_LABEL,
+    MARKER_SYMBOLS,
+    add_trace_metadata,
+    decode_query_mapping,
+    decode_version_label_pairs,
+    deterministic_color_map,
+    display_label,
+    encode_query_mapping,
+    is_valid_hex_color,
+    normalize_taxonomy_columns,
+    parse_filter_values,
+    split_legacy_version,
+    sync_selected_options,
+    taxonomy_query_params,
+    uses_legacy_methodology,
+    version_label_pair_mask,
+)
 from intelliconfig import render_intelliconfig_section
+
+
+def _sync_performance_plot_query_params(
+    x_axis_label, y_axis_label, max_concurrency, colors, shapes
+):
+    """Persist performance-plot controls without replacing other URL filters."""
+    st.query_params["section"] = "performance_plots"
+    st.query_params["pp_x"] = x_axis_label
+    st.query_params["pp_y"] = y_axis_label
+    if max_concurrency is None:
+        if "pp_conc" in st.query_params:
+            del st.query_params["pp_conc"]
+    else:
+        st.query_params["pp_conc"] = str(max_concurrency)
+
+    if colors:
+        st.query_params["pp_colors"] = encode_query_mapping(colors)
+    elif "pp_colors" in st.query_params:
+        del st.query_params["pp_colors"]
+    if shapes:
+        st.query_params["pp_shapes"] = encode_query_mapping(shapes)
+    elif "pp_shapes" in st.query_params:
+        del st.query_params["pp_shapes"]
+
+
+def _render_methodology_note(versions):
+    if any(uses_legacy_methodology(version) for version in versions):
+        st.markdown(
+            "**📝 Methodology note:** This selection includes runs using the previous TTFT methodology. "
+            "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
+        )
+
 
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
@@ -91,6 +144,7 @@ S3_LOGS_BUCKET = os.environ.get("S3_LOGS_BUCKET", "psap-model-furnace")
 S3_LOGS_PREFIX = os.environ.get("S3_LOGS_PREFIX", "logs/")
 MLFLOW_BASE_URL = os.environ.get("MLFLOW_BASE_URL", "")
 MLFLOW_WORKSPACE = os.environ.get("MLFLOW_WORKSPACE", "forge-rhaiis")
+
 
 # ── Overview version configuration (single source of truth) ──────
 OVERVIEW_CURRENT = "RHAIIS-3.5-GA"
@@ -234,6 +288,37 @@ def _accel_display(name):
     return ACCELERATOR_DISPLAY_NAMES.get(name, name)
 
 
+def read_s3_object(bucket: str, key: str, region: str = "us-east-1") -> bytes:
+    """Read an S3 object using configured, IAM, or anonymous access."""
+    try:
+        import boto3
+        from botocore import UNSIGNED
+        from botocore.config import Config
+
+        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+            s3_client = boto3.client(
+                "s3",
+                region_name=region,
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+            )
+        else:
+            try:
+                s3_client = boto3.client("s3", region_name=region)
+                s3_client.head_object(Bucket=bucket, Key=key)
+            except Exception:
+                s3_client = boto3.client(
+                    "s3",
+                    region_name=region,
+                    config=Config(signature_version=UNSIGNED),
+                )
+
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        return response["Body"].read()
+    except ImportError:
+        raise ImportError("boto3 is required for S3 access. Install with: pip install boto3")
+
+
 def read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.DataFrame:
     """Read a CSV file from S3 bucket.
 
@@ -249,42 +334,7 @@ def read_csv_from_s3(bucket: str, key: str, region: str = "us-east-1") -> pd.Dat
         Exception: If unable to read from S3.
     """
     try:
-        import boto3
-        from botocore import UNSIGNED
-        from botocore.config import Config
-
-        # Check if credentials are provided
-        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-            # Use provided credentials
-            s3_client = boto3.client(
-                "s3",
-                region_name=region,
-                aws_access_key_id=AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            )
-        else:
-            # Try anonymous access for public buckets, or use IAM role if on AWS
-            try:
-                # First try with default credentials (IAM role)
-                s3_client = boto3.client("s3", region_name=region)
-                # Test if we can access the object
-                s3_client.head_object(Bucket=bucket, Key=key)
-            except Exception:
-                # Fall back to anonymous access for public buckets
-                s3_client = boto3.client(
-                    "s3",
-                    region_name=region,
-                    config=Config(signature_version=UNSIGNED),
-                )
-
-        response = s3_client.get_object(Bucket=bucket, Key=key)
-        csv_content = response["Body"].read().decode("utf-8")
-        return pd.read_csv(io.StringIO(csv_content))
-
-    except ImportError:
-        raise ImportError(
-            "boto3 is required for S3 access. Install with: pip install boto3"
-        )
+        return pd.read_csv(io.BytesIO(read_s3_object(bucket, key, region)))
     except Exception as e:
         raise Exception(
             f"Failed to read from S3 bucket '{bucket}', key '{key}': {str(e)}"
@@ -393,6 +443,7 @@ def load_data(file_path, cache_key=None):
         df["model"] = df["model"].str.strip()
         df["version"] = df["version"].str.strip()
         df["TP"] = pd.to_numeric(df["TP"], errors="coerce")
+        df = normalize_taxonomy_columns(df)
 
         # Filter out rows with missing critical fields - these indicate data quality issues
         initial_row_count = len(df)
@@ -1827,6 +1878,18 @@ def render_competitive_analysis_section(df):
         )
     selected_ca = CA_CONFIGURATIONS[ca_labels.index(selected_ca_label)]
     COMPARISON_GROUPS = selected_ca["groups"]
+    comparison_versions = set()
+    for group in COMPARISON_GROUPS:
+        comparison_versions.update(group.get("baselines", []))
+        comparison_versions.update(group.get("baseline_fallback", {}).values())
+        competitor_versions = group.get("competitor_versions", {})
+        for competitor in group.get("competitors", []):
+            comparison_versions.update(
+                competitor_versions.get(competitor, [competitor])
+            )
+    _render_methodology_note(
+        df.loc[df["version"].isin(comparison_versions), "version"].unique()
+    )
 
     st.markdown(selected_ca["description"])
     st.caption(
@@ -2561,6 +2624,10 @@ def render_overview_section(df):
     # True when both sides are upstream vLLM releases (not RHAIIS vs RHAIIS)
     is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith(
         "vLLM-"
+    )
+    overview_versions = [ov_current, ov_previous, ov_upstream, *ov_additional]
+    _render_methodology_note(
+        df.loc[df["version"].isin(overview_versions), "version"].unique()
     )
 
     st.markdown(
@@ -3825,6 +3892,18 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             "💡 **Tip:** Click on the full screen view (⛶) of any graph to get a detailed view."
         )
 
+        filtered_df = filtered_df.copy()
+        if "label" not in filtered_df.columns:
+            filtered_df["label"] = DEFAULT_LABEL
+        for _column in ("profile", "uuid", "runtime_args"):
+            if _column not in filtered_df.columns:
+                filtered_df[_column] = ""
+        for _column in ("spec_decoding", "prefix_caching", "prefix_tokens", "prefix_count"):
+            if _column not in filtered_df.columns:
+                filtered_df[_column] = ""
+        if "turns" not in filtered_df.columns:
+            filtered_df["turns"] = 1
+
         filtered_df["model_short"] = filtered_df["model"].apply(
             lambda x: x.split("/")[-1] if pd.notna(x) else "Unknown"
         )
@@ -3833,7 +3912,11 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             + " | "
             + filtered_df["model"]
             + " | "
+            + filtered_df["profile"]
+            + " | "
             + filtered_df["version"]
+            + " | "
+            + filtered_df["label"]
             + " | TP="
             + filtered_df["TP"].apply(lambda x: str(int(x)) if pd.notna(x) else "N/A")
         )
@@ -3844,31 +3927,19 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             )
             filtered_df["run_identifier"] += dp_suffix
 
-        # Append spec_decoding / prefix_caching to trace key so different
-        # configurations of the same model appear as separate lines
-        if filtered_df["spec_decoding"].any():
-            filtered_df["run_identifier"] += filtered_df["spec_decoding"].apply(
-                lambda x: f" | SD={x}" if x else ""
-            )
-        if filtered_df["prefix_caching"].any():
-            filtered_df["run_identifier"] += filtered_df["prefix_caching"].apply(
-                lambda x: f" | PC={x}" if x else ""
-            )
-        if (filtered_df["turns"] > 1).any():
-            filtered_df["run_identifier"] += filtered_df.apply(
-                lambda r: (
-                    f" | {r['turns']}T"
-                    + (f"/{r['prefix_tokens']}pt" if r.get("prefix_tokens") else "")
-                    + (f"/{r['prefix_count']}pc" if r.get("prefix_count") else "")
-                    if r["turns"] > 1
-                    else ""
-                ),
-                axis=1,
-            )
-
-        _sort_cols = ["model_short", "accelerator", "version", "TP"]
+        _legend_options = {
+            "include_accelerator": True,
+            "include_model": True,
+            "include_profile": False,
+            "include_label": True,
+            "include_tp": True,
+            "include_dp": _has_dp_data,
+        }
+        filtered_df = add_trace_metadata(filtered_df, legend_options=_legend_options)
+        _sort_cols = ["model_short", "accelerator", "version", "label", "TP"]
         if _has_dp_data:
             _sort_cols.append("DP")
+        _sort_cols.append("trace_label")
         filtered_df_sorted = filtered_df.sort_values(_sort_cols).copy()
 
         col1, col2, col3 = st.columns(3)
@@ -3911,6 +3982,9 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             )
             y_axis = y_axis_options[y_axis_label]
 
+        max_conc = None
+        if x_axis != "intended concurrency":
+            st.session_state.pop("perf_plots_max_concurrency", None)
         with col3:
             if x_axis == "intended concurrency":
                 concurrency_values = sorted(
@@ -3949,7 +4023,7 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             y_axis_display_label = f"{y_axis_label} (s)"
 
         # Build ISL/OSL subtitle from unique values in the filtered data
-        _isl_osl_subtitle = ""
+        _isl_osl_values = []
         if (
             "prompt toks" in filtered_df_sorted.columns
             and "output toks" in filtered_df_sorted.columns
@@ -3979,40 +4053,406 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                     else:
                         pair_labels.append(f"{isl}/{osl}")
                 if pair_labels:
-                    _isl_osl_subtitle = f"<br><span style='font-size:14px'>ISL/OSL: {', '.join(sorted(set(pair_labels)))}</span>"
+                    _isl_osl_values = sorted(set(pair_labels))
+
+        filtered_df_sorted["display_label"] = filtered_df_sorted["label"].map(
+            display_label
+        )
+        _plot_custom_data = [
+            "uuid",
+            "display_label",
+            "runtime_args_preview",
+        ]
+        if "runtime_args" not in filtered_df_sorted.columns:
+            filtered_df_sorted["runtime_args"] = ""
+
+        def _runtime_args_preview(value):
+            """Show engine arguments first and omit low-value logging flags."""
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return ""
+            raw_value = str(value).strip()
+            if ";" in raw_value:
+                arguments = [part.strip() for part in raw_value.split(";")]
+            else:
+                arguments = [part.strip() for part in raw_value.replace(" --", ";--").split(";")]
+            arguments = [argument for argument in arguments if argument]
+
+            def _arg_key(argument):
+                key = argument.strip().lstrip("-")
+                key = key.split(":", 1)[0].split("=", 1)[0]
+                return key.split()[0].lower().replace("_", "-")
+
+            ordered_keys = (
+                ("tensor-parallel-size", "tp-size", "tp"),
+                ("data-parallel-size", "dp-size", "dp"),
+                ("pipeline-parallel-size", "pp-size", "pp"),
+                ("max-num-batched-tokens", "max-num-tokens", "max-num-tokens"),
+                ("max-num-seqs", "max-num-seq", "max-batch-size"),
+                ("max-model-len", "max-seq-len", "context-length"),
+                ("gpu-memory-utilization", "memory-gb"),
+                ("quantization", "quantization-config", "quantization-config.moe.activation"),
+                ("moe-backend", "attention-backend"),
+                ("dtype", "kv-cache-dtype"),
+                ("enable-prefix-caching", "no-enable-prefix-caching"),
+                ("enable-chunked-prefill", "chunked-prefill-size"),
+                ("speculative-model", "speculative-algorithm", "speculative-num-steps"),
+            )
+            priority = {
+                alias: index
+                for index, aliases in enumerate(ordered_keys)
+                for alias in aliases
+            }
+            omitted = {
+                "trust-remote-code",
+                "uvicorn-log-level",
+                "no-enable-log-requests",
+                "disable-log-requests",
+                "enable-log-requests",
+            }
+            important = []
+            remaining = []
+            for argument in arguments:
+                key = _arg_key(argument)
+                if key in omitted:
+                    continue
+                if key in priority:
+                    important.append((priority[key], argument))
+                else:
+                    remaining.append(argument)
+            ordered_arguments = [
+                argument for _, argument in sorted(important)
+            ] + remaining
+            preview = "<br>".join(
+                html.escape(argument) for argument in ordered_arguments
+            )
+            return preview if len(preview) <= 800 else preview[:797] + "..."
+
+        filtered_df_sorted["runtime_args_preview"] = filtered_df_sorted[
+            "runtime_args"
+        ].map(_runtime_args_preview)
+
+        def _filter_values(column, *, skip_default=False):
+            values = []
+            for value in filtered_df_sorted[column].dropna().unique():
+                if skip_default and str(value) == DEFAULT_LABEL:
+                    continue
+                if isinstance(value, (float, np.floating)) and float(value).is_integer():
+                    values.append(str(int(value)))
+                else:
+                    values.append(str(value))
+            return ", ".join(sorted(values))
+
+        _title_filter_parts = []
+        _accelerator_value = _filter_values("accelerator")
+        if _accelerator_value:
+            _title_filter_parts.append(f"Accelerator: {_accelerator_value}")
+        if _isl_osl_values:
+            _title_filter_parts.append(f"ISL/OSL: {', '.join(_isl_osl_values)}")
+
+        _plot_title = f"<b>{y_axis_display_label} vs {x_axis_label}</b>"
+        if _title_filter_parts:
+            _title_filter_text = "  ·  ".join(_title_filter_parts)
+            if len(_title_filter_text) > 180:
+                _title_filter_lines = []
+                _title_filter_line = ""
+                for _part in _title_filter_parts:
+                    _candidate = (
+                        f"{_title_filter_line}  ·  {_part}"
+                        if _title_filter_line
+                        else _part
+                    )
+                    if _title_filter_line and len(_candidate) > 120:
+                        _title_filter_lines.append(_title_filter_line)
+                        _title_filter_line = _part
+                    else:
+                        _title_filter_line = _candidate
+                if _title_filter_line:
+                    _title_filter_lines.append(_title_filter_line)
+                _title_filter_text = "<br>".join(
+                    html.escape(line).replace(
+                        "  ·  ", "&nbsp;&nbsp;·&nbsp;&nbsp;"
+                    )
+                    for line in _title_filter_lines
+                )
+            else:
+                _title_filter_text = html.escape(_title_filter_text).replace(
+                    "  ·  ", "&nbsp;&nbsp;·&nbsp;&nbsp;"
+                )
+            _plot_title += (
+                "<br><span style='font-size:14px;line-height:1.5'>"
+                + _title_filter_text
+                + "</span>"
+            )
 
         fig = px.line(
             filtered_df_sorted.sort_values(by=x_axis),
             x=x_axis,
             y=y_axis,
-            color="run_identifier",
+            color="trace_label",
+            custom_data=_plot_custom_data,
             markers=True,
-            title=f"{x_axis_label} vs. {y_axis_label}{_isl_osl_subtitle}",
+            title=_plot_title,
             labels={
                 x_axis: x_axis_label,
                 y_axis: y_axis_display_label,
-                "run_identifier": "Run",
+                "trace_label": "Run",
             },
             template="plotly_white_light",
             category_orders={
-                "run_identifier": filtered_df_sorted["run_identifier"].unique().tolist()
+                "trace_label": filtered_df_sorted["trace_label"].unique().tolist()
             },
         )
+        default_color_map = deterministic_color_map(
+            filtered_df_sorted["run_identifier"]
+        )
+        default_shape_map = (
+            filtered_df_sorted.drop_duplicates("trace_label")
+            .set_index("trace_label")["marker_symbol"]
+            .to_dict()
+        )
+        customizable_series = sorted(
+            filtered_df_sorted.loc[
+                filtered_df_sorted["line_style"].eq("dot"), "run_identifier"
+            ].unique()
+        )
+        customizable_traces = sorted(
+            filtered_df_sorted.loc[
+                filtered_df_sorted["line_style"].eq("dot"), "trace_label"
+            ].unique()
+        )
+        saved_colors = {
+            key: value
+            for key, value in st.session_state.get(
+                "performance_custom_colors", {}
+            ).items()
+            if is_valid_hex_color(value)
+        }
+        custom_colors = saved_colors.copy()
+        for _trace_key in customizable_traces:
+            _series_key = filtered_df_sorted.loc[
+                filtered_df_sorted["trace_label"] == _trace_key,
+                "run_identifier",
+            ].iloc[0]
+            if _series_key not in custom_colors and _trace_key in saved_colors:
+                custom_colors[_series_key] = saved_colors[_trace_key]
+        custom_shapes = {
+            key: value
+            for key, value in st.session_state.get(
+                "performance_custom_shapes", {}
+            ).items()
+            if value in MARKER_SYMBOLS
+        }
+        st.session_state["performance_custom_colors"] = custom_colors
+        st.session_state["performance_custom_shapes"] = custom_shapes
+        shape_labels = {
+            "circle": "Circle",
+            "triangle-up": "Triangle",
+            "square": "Square",
+            "diamond": "Diamond",
+            "x": "X",
+            "triangle-down": "Triangle down",
+            "star": "Star",
+            "hexagon": "Hexagon",
+        }
+        shape_map = default_shape_map.copy()
+        for _series_key in customizable_series:
+            _color_key = (
+                "performance_color_"
+                + hashlib.sha1(_series_key.encode()).hexdigest()[:12]
+            )
+            _selected_color = st.session_state.get(_color_key)
+            if _selected_color:
+                default_color = default_color_map[_series_key]
+                if _selected_color == default_color:
+                    custom_colors.pop(_series_key, None)
+                else:
+                    custom_colors[_series_key] = _selected_color
+        for _trace_key in customizable_traces:
+            _default_shape = default_shape_map[_trace_key]
+            _shape_key = (
+                "performance_shape_"
+                + hashlib.sha1(_trace_key.encode()).hexdigest()[:12]
+            )
+            _selected_shape = st.session_state.get(_shape_key)
+            if _selected_shape in MARKER_SYMBOLS:
+                if _selected_shape == _default_shape:
+                    custom_shapes.pop(_trace_key, None)
+                else:
+                    custom_shapes[_trace_key] = _selected_shape
+        shape_map.update(
+            {
+                key: value
+                for key, value in custom_shapes.items()
+                if key in default_shape_map
+            }
+        )
+        _sync_performance_plot_query_params(
+            x_axis_label,
+            y_axis_label,
+            max_conc,
+            custom_colors,
+            custom_shapes,
+        )
+        for trace in fig.data:
+            trace_key = trace.name
+            trace_rows = filtered_df_sorted[
+                filtered_df_sorted["trace_label"] == trace_key
+            ]
+            if trace_rows.empty:
+                continue
+            first_row = trace_rows.iloc[0]
+            trace_color = (
+                custom_colors.get(first_row["run_identifier"])
+                if first_row["line_style"] == "dot"
+                else None
+            ) or default_color_map[first_row["run_identifier"]]
+            trace.line.color = trace_color
+            trace.line.dash = first_row["line_style"]
+            trace.line.width = 2
+            trace.marker.size = 10
+            trace.marker.symbol = shape_map.get(trace_key, first_row["marker_symbol"])
+            trace.marker.color = trace_color
+            trace.marker.line = {"width": 1, "color": "white"}
+            trace.opacity = float(first_row["line_opacity"])
+            trace.legendgroup = first_row["run_identifier"]
+            trace.name = first_row["legend_label"]
+            trace.hovertemplate = (
+                f"{x_axis_label}: %{{x}}<br>"
+                f"{y_axis_display_label}: %{{y}}<br>"
+                "Label: %{customdata[1]}<br>"
+                "UUID: %{customdata[0]}<br>"
+                "Runtime Args:<br>%{customdata[2]}<extra></extra>"
+            )
+
         _legend_parts = "Accelerator | Model | Version | TP"
         if _has_dp_data:
             _legend_parts += " | DP"
         if (filtered_df_sorted["turns"] > 1).any():
             _legend_parts += " | Turns/PrefixTokens/PrefixCount"
-        fig.update_layout(
-            legend_title_text=f"Run Details ({_legend_parts})",
-            legend={"font": {"size": 14}},
-        )
-        st.plotly_chart(fig, use_container_width=True, theme=None)
 
-        # Right-align the legend caption
-        caption_col1, caption_col2 = st.columns([3, 1])
-        with caption_col2:
-            st.caption("📜 **Tip**: Scroll within the legend box to see all runs")
+        fig.update_layout(
+            hovermode="closest",
+            legend_title_text=f"Run Details ({_legend_parts})",
+            legend={"font": {"size": 14}, "itemwidth": 42},
+            title={
+                "font": {"size": 18},
+                "x": 0.02,
+                "xanchor": "left",
+                "y": 0.94,
+                "yanchor": "top",
+            },
+            height=560,
+            margin={"l": 80, "r": 250, "t": 130, "b": 60},
+        )
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            theme=None,
+            key="performance_plots_chart",
+        )
+        st.caption(
+            "Click legend entries to show or hide a series. Dotted runs with the same color are duplicate runs with identical runtime args that differ only by UUID. Dotted runs with different shapes have different runtime args. Hover a point for its label, UUID, and important runtime args."
+        )
+
+        with st.expander("🎨 Customize", expanded=False, width=725):
+            if not customizable_traces:
+                st.caption(
+                    "Color and shape customization is available for repeated runs only."
+                )
+            else:
+                series_labels = {
+                    key: filtered_df_sorted.loc[
+                        filtered_df_sorted["run_identifier"] == key,
+                        "legend_label",
+                    ]
+                    .iloc[0]
+                    .split(" | run ", 1)[0]
+                    for key in customizable_series
+                }
+                selected_series = st.selectbox(
+                    "Repeated configuration",
+                    customizable_series,
+                    format_func=lambda key: series_labels[key],
+                    key="performance_appearance_series",
+                    help="Select the repeated version/label configuration whose dotted runs share a color.",
+                )
+                color_key = (
+                    "performance_color_"
+                    + hashlib.sha1(selected_series.encode()).hexdigest()[:12]
+                )
+                default_color = default_color_map[selected_series]
+                if color_key not in st.session_state:
+                    st.session_state[color_key] = custom_colors.get(
+                        selected_series, default_color
+                    )
+                selected_color = st.color_picker("Color", key=color_key)
+                if selected_color == default_color:
+                    custom_colors.pop(selected_series, None)
+                else:
+                    custom_colors[selected_series] = selected_color
+
+                trace_labels = {
+                    key: filtered_df_sorted.loc[
+                        filtered_df_sorted["trace_label"] == key, "legend_label"
+                    ].iloc[0]
+                    for key in customizable_traces
+                }
+                selected_trace = st.selectbox(
+                    "Repeated run",
+                    customizable_traces,
+                    format_func=lambda key: trace_labels[key],
+                    key="performance_appearance_run",
+                    help="Select the individual dotted run whose marker shape you want to change.",
+                )
+
+                shape_key = (
+                    "performance_shape_"
+                    + hashlib.sha1(selected_trace.encode()).hexdigest()[:12]
+                )
+                default_shape = default_shape_map.get(selected_trace, "circle")
+                if (
+                    shape_key not in st.session_state
+                    or st.session_state[shape_key] not in MARKER_SYMBOLS
+                ):
+                    st.session_state[shape_key] = custom_shapes.get(
+                        selected_trace, default_shape
+                    )
+                selected_shape = st.selectbox(
+                    "Point shape",
+                    MARKER_SYMBOLS,
+                    format_func=lambda symbol: shape_labels[symbol],
+                    key=shape_key,
+                )
+                if selected_shape == default_shape:
+                    custom_shapes.pop(selected_trace, None)
+                else:
+                    custom_shapes[selected_trace] = selected_shape
+                _selected_trace_row = filtered_df_sorted[
+                    filtered_df_sorted["trace_label"] == selected_trace
+                ].iloc[0]
+                _selected_trace_args = _selected_trace_row.get(
+                    "runtime_args_preview", ""
+                )
+                st.markdown(
+                    "**Selected repeated run**  "
+                    + html.escape(str(_selected_trace_row["legend_label"]))
+                    + "<br>**UUID:** "
+                    + html.escape(str(_selected_trace_row["uuid"]))
+                    + (
+                        "<br>**Runtime args:**<br>"
+                        + _selected_trace_args
+                        if _selected_trace_args
+                        else ""
+                    ),
+                    unsafe_allow_html=True,
+                )
+                _sync_performance_plot_query_params(
+                    x_axis_label,
+                    y_axis_label,
+                    max_conc,
+                    custom_colors,
+                    custom_shapes,
+                )
 
 
 def load_pareto_data(csv_file_path, preloaded_df=None):
@@ -4228,6 +4668,7 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
         if not results:
             st.warning("No results found for selected versions")
             return
+        _render_methodology_note(r.get("version") for r in results)
 
         with filter_col3:
             # Get unique ISL/OSL combinations from filtered results
@@ -5029,6 +5470,7 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
 
         # Filter to selected versions
         version_df = profile_df[profile_df["version"].isin(selected_versions)].copy()
+        _render_methodology_note(version_df["version"].unique())
 
         # Filter controls - Row 3: TP sizes, Metric
         filter_col6, filter_col7 = st.columns(2)
@@ -5563,6 +6005,28 @@ def render_compare_versions_summary_section(df, use_expander=True):
         default_v1 = OVERVIEW_CURRENT
         default_v2 = OVERVIEW_PREVIOUS
 
+        def _compare_label_options(version):
+            if "label" not in df.columns:
+                return [DEFAULT_LABEL]
+            labels = sorted(
+                df.loc[df["version"] == version, "label"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if DEFAULT_LABEL in labels:
+                labels.remove(DEFAULT_LABEL)
+                labels.insert(0, DEFAULT_LABEL)
+            return labels or [DEFAULT_LABEL]
+
+        def _sync_compare_label(key, version):
+            options = _compare_label_options(version)
+            current = st.session_state.get(key)
+            if current not in options:
+                st.session_state[key] = options[0]
+            return options
+
         # Find index for default version 1
         v1_default_index = 0
         if default_v1 in available_versions:
@@ -5577,6 +6041,17 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
             )
+            label_1_options = _sync_compare_label(
+                "compare_summary_v1_label", version_1
+            )
+            compare_label_1 = st.selectbox(
+                "Select Label 1 (Baseline)",
+                options=label_1_options,
+                format_func=display_label,
+                key="compare_summary_v1_label",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
             aic_mode = st.toggle(
                 "AIC Mode",
                 key="compare_aic_mode",
@@ -5588,9 +6063,13 @@ def render_compare_versions_summary_section(df, use_expander=True):
         def _swap_versions():
             v1 = st.session_state.get("compare_summary_v1")
             v2 = st.session_state.get("compare_summary_v2")
+            v1_label = st.session_state.get("compare_summary_v1_label")
+            v2_label = st.session_state.get("compare_summary_v2_label")
             if v1 and v2:
                 st.session_state["compare_summary_v1"] = v2
                 st.session_state["compare_summary_v2"] = v1
+                st.session_state["compare_summary_v1_label"] = v2_label
+                st.session_state["compare_summary_v2_label"] = v1_label
 
         with swap_col:
             st.markdown("<div style='height: 1.65rem'></div>", unsafe_allow_html=True)
@@ -5602,7 +6081,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
 
         with col2:
-            version_2_options = [v for v in available_versions if v != version_1]
+            # Allow the same release on both sides so users can compare labels.
+            version_2_options = available_versions
             # Find index for default version 2
             v2_default_index = 0
             if default_v2 in version_2_options:
@@ -5620,6 +6100,19 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 if version_2_options
                 else None
             )
+            compare_label_2 = DEFAULT_LABEL
+            if version_2:
+                label_2_options = _sync_compare_label(
+                    "compare_summary_v2_label", version_2
+                )
+                compare_label_2 = st.selectbox(
+                    "Select Label 2 (Comparison)",
+                    options=label_2_options,
+                    format_func=display_label,
+                    key="compare_summary_v2_label",
+                    on_change=keep_expander_open,
+                    args=("compare_versions_summary_expanded",),
+                )
 
         with col3:
             # Default to H200 if available
@@ -5820,15 +6313,25 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if not version_2:
             st.warning("⚠️ Please select a second version to compare.")
             return
+        _render_methodology_note([version_1, version_2])
+
+        def _compare_display_name(version, label):
+            label_text = display_label(label)
+            return version if label_text == "—" else f"{version} — {label_text}"
+
+        version_1_display = _compare_display_name(version_1, compare_label_1)
+        version_2_display = _compare_display_name(version_2, compare_label_2)
 
         # Filter data for each version based on selected accelerator and profile
         base_mask_v1 = (
             (df["version"] == version_1)
+            & (df["label"] == compare_label_1)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
         )
         base_mask_v2 = (
             (df["version"] == version_2)
+            & (df["label"] == compare_label_2)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
         )
@@ -5982,7 +6485,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         if not common_models:
             st.warning(
-                f"⚠️ No common models found between {version_1} and {version_2} "
+                f"⚠️ No common models found between {version_1_display} and {version_2_display} "
                 f"for {selected_accelerator} with profile {selected_profile}."
             )
             return
@@ -6002,7 +6505,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if not comparison_pairs:
             st.warning(
                 f"⚠️ No comparable model configurations found between "
-                f"{version_1} and {version_2} for {selected_accelerator} "
+                f"{version_1_display} and {version_2_display} for {selected_accelerator} "
                 f"with profile {selected_profile}."
             )
             return
@@ -6018,8 +6521,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             for m, v1_cfg, v2_cfg in cross_pairs:
                 m_short = m.split("/")[-1] if "/" in m else m
                 lines.append(
-                    f"- **{m_short}**: {version_1} uses {_config_label(v1_cfg)}, "
-                    f"{version_2} uses {_config_label(v2_cfg)}"
+                    f"- **{m_short}**: {version_1_display} uses {_config_label(v1_cfg)}, "
+                    f"{version_2_display} uses {_config_label(v2_cfg)}"
                 )
             st.warning(
                 "⚠️ **Cross-parallelism comparison** — the following models use "
@@ -6048,7 +6551,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         if all_common_concurrencies_sorted:
             # Key includes filter selections so the widget resets when filters change
-            conc_key = f"compare_summary_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            conc_key = (
+                f"compare_summary_conc_{version_1}_{compare_label_1}_{version_2}_"
+                f"{compare_label_2}_{selected_accelerator}_{selected_profile}"
+            )
             default_concurrencies = [
                 c for c in all_common_concurrencies_sorted if c > 1
             ]
@@ -6186,7 +6692,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
                 **Note**: Each accelerator-TP combination is compared independently across all common concurrency levels.
                     """)
-        st.markdown(f"**Comparing:** {version_1} vs {version_2}")
+        st.markdown(f"**Comparing:** {version_1_display} vs {version_2_display}")
 
         # Define metrics to compare (AIC mode hides metrics unavailable in AIC data)
         metrics_config = {
@@ -6250,8 +6756,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
         _seen_dup_checks = set()
         for model, v1_cfg, v2_cfg in comparison_pairs:
             for df_check, ver_name, cfg in [
-                (df_v1, version_1, v1_cfg),
-                (df_v2, version_2, v2_cfg),
+                (df_v1, version_1_display, v1_cfg),
+                (df_v2, version_2_display, v2_cfg),
             ]:
                 dup_key = (ver_name, model, cfg)
                 if dup_key in _seen_dup_checks:
@@ -6305,11 +6811,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     sign = "+" if pct_diff > 0 else ""
                     if metric_config["show_concurrency"] and v1_peak is not None:
                         cell_text = (
-                            f"{version_1} ({sign}{pct_diff:.1f}%) "
+                            f"{version_1_display} ({sign}{pct_diff:.1f}%) "
                             f"peak@{v1_peak} vs {v2_peak}"
                         )
                     else:
-                        cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
+                        cell_text = f"{version_1_display} ({sign}{pct_diff:.1f}%)"
 
                     if is_similar:
                         color = "🟡"
@@ -6340,7 +6846,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 )
                 st.markdown(f"#### {display_title} vs Concurrency")
                 st.markdown(
-                    f"**{version_1}** vs **{version_2}** &nbsp;|&nbsp; "
+                    f"**{version_1_display}** vs **{version_2_display}** &nbsp;|&nbsp; "
                     f"**{selected_accelerator}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
                     f"{real_dataset_subtitle}"
                 )
@@ -6454,12 +6960,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             x=x_vals,
                             y=md["v1"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({version_1})",
+                            name=f"{md['label']} ({version_1_display})",
                             line={"color": c_v1, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {version_1}<br>"
+                                f"<b>{md['label']}</b> — {version_1_display}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6471,12 +6977,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             x=x_vals,
                             y=md["v2"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({version_2})",
+                            name=f"{md['label']} ({version_2_display})",
                             line={"color": c_v2, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {version_2}<br>"
+                                f"<b>{md['label']}</b> — {version_2_display}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6525,8 +7031,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 st.caption(
                     "💡 **Tip:** Click a legend entry to toggle it. "
                     "Double-click to isolate a single trace. "
-                    f"Warm colors (reds/oranges) = **{version_1}**, "
-                    f"cool colors (blues/greens) = **{version_2}**."
+                    f"Warm colors (reds/oranges) = **{version_1_display}**, "
+                    f"cool colors (blues/greens) = **{version_2_display}**."
                 )
 
                 if agg == "geom_mean":
@@ -6623,7 +7129,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
 
             csv_data = summary_df.to_csv(index=False).encode("utf-8")
-            _raw = f"compare_{version_1}_vs_{version_2}_{selected_accelerator}_{profile_short}"
+            _raw = f"compare_{version_1_display}_vs_{version_2_display}_{selected_accelerator}_{profile_short}"
             safe_name = (
                 _raw.replace("/", "-")
                 .replace(" ", "_")
@@ -6642,8 +7148,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.markdown("---")
             st.markdown(
                 f"**Legend:** "
-                f"🟢 {version_1} performs better than {version_2} | "
-                f"🔴 {version_1} performs worse than {version_2} | "
+                f"🟢 {version_1_display} performs better than {version_2_display} | "
+                f"🔴 {version_1_display} performs worse than {version_2_display} | "
                 f"🟡 Similar Performance (< 5% difference)"
             )
 
@@ -6763,16 +7269,16 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
                     if higher_is_better:
                         if pct_diff > 5:
-                            return f"{version_1} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{version_1_display} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         elif pct_diff < -5:
-                            return f"{version_2} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{version_2_display} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
                     else:
                         if pct_diff < -5:
-                            return f"{version_1} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{version_1_display} has {abs(pct_diff):.1f}% lower {metric_name}"
                         elif pct_diff > 5:
-                            return f"{version_2} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{version_2_display} has {abs(pct_diff):.1f}% lower {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
 
@@ -6780,8 +7286,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows = [
                         {
                             "Metric": "Peak Output Throughput (output tok/s)",
-                            version_1: f"{format_value(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                            version_2: f"{format_value(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            version_1_display: f"{format_value(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2_display: f"{format_value(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 v1_peak_throughput,
                                 v2_peak_throughput,
@@ -6793,8 +7299,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows.append(
                         {
                             "Metric": "Total Throughput (input + output tok/s)",
-                            version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                            version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            version_1_display: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2_display: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 v1_total_throughput,
                                 v2_total_throughput,
@@ -6806,8 +7312,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows.append(
                         {
                             "Metric": f"Median E2E Latency{latency_conc_label}",
-                            version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
-                            version_2: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
+                            version_1_display: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
+                            version_2_display: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
                                 v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
                             ),
@@ -6833,10 +7339,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT Median{latency_conc_label}",
-                                version_1: f"{format_value(v1_ttft_median_s, 's', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v1_ttft_median)
                                 else "N/A",
-                                version_2: f"{format_value(v2_ttft_median_s, 's', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v2_ttft_median)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -6847,10 +7353,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TPOT Median{latency_conc_label}",
-                                version_1: f"{format_value(v1_tpot_median, 'ms', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_tpot_median, 'ms', 2, round_up=True)}"
                                 if pd.notna(v1_tpot_median)
                                 else "N/A",
-                                version_2: f"{format_value(v2_tpot_median, 'ms', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_tpot_median, 'ms', 2, round_up=True)}"
                                 if pd.notna(v2_tpot_median)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -6862,10 +7368,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT P95{latency_conc_label}",
-                                version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
                                 if pd.notna(v1_ttft)
                                 else "N/A",
-                                version_2: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
                                 if pd.notna(v2_ttft)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -6876,8 +7382,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"ITL P95{latency_conc_label}",
-                                version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
-                                version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
+                                version_1_display: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
+                                version_2_display: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
                                 "Difference/Winner": get_winner_text(
                                     v1_itl, v2_itl, False, "P95 ITL"
                                 ),
@@ -6897,7 +7403,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
         _cv_url_params = {}
         _cv_keys = {
             "cv_v1": "compare_summary_v1",
+            "cv_v1_label": "compare_summary_v1_label",
             "cv_v2": "compare_summary_v2",
+            "cv_v2_label": "compare_summary_v2_label",
             "cv_gpu": "compare_summary_accelerator",
             "cv_profile": "compare_summary_profile",
         }
@@ -6906,11 +7414,16 @@ def render_compare_versions_summary_section(df, use_expander=True):
             if val is not None:
                 _cv_url_params[url_key] = str(val)
         cv_v1 = st.session_state.get("compare_summary_v1")
+        cv_v1_label = st.session_state.get("compare_summary_v1_label")
         cv_v2 = st.session_state.get("compare_summary_v2")
+        cv_v2_label = st.session_state.get("compare_summary_v2_label")
         cv_gpu = st.session_state.get("compare_summary_accelerator")
         cv_prof = st.session_state.get("compare_summary_profile")
-        if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
-            conc_key = f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+        if all([cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]):
+            conc_key = (
+                f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
+            )
             conc_val = st.session_state.get(conc_key)
             if conc_val is not None and isinstance(conc_val, list):
                 _cv_url_params["cv_conc"] = ",".join(map(str, conc_val))
@@ -9794,6 +10307,8 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                     if energy_filtered_df.empty:
                         st.warning("⚠️ No data matches the selected filters.")
                         show_energy_calculations = False
+                    else:
+                        _render_methodology_note(energy_filtered_df["version"].unique())
 
                     st.markdown("---")
             else:
@@ -10211,22 +10726,29 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 "**Runtime configurations for your current filter selections:**"
             )
             st.info(
-                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version + TP combination that matches your current filters."
+                "📊 **Column Legend**: Shows the server runtime arguments used for each Model + Accelerator + Version + Label + TP combination that matches your current filters."
             )
 
+            if "label" not in filtered_df.columns:
+                filtered_df = filtered_df.copy()
+                filtered_df["label"] = DEFAULT_LABEL
             unique_configs = filtered_df.drop_duplicates(
-                subset=["model", "accelerator", "version", "TP"]
+                subset=["model", "accelerator", "version", "label", "TP"]
             )
 
             if not unique_configs.empty:
                 display_runtime_df = unique_configs[
-                    ["model", "accelerator", "version", "TP", "runtime_args"]
+                    ["model", "accelerator", "version", "label", "TP", "runtime_args"]
                 ].copy()
+                display_runtime_df["label"] = display_runtime_df["label"].map(
+                    display_label
+                )
                 display_runtime_df = display_runtime_df.rename(
                     columns={
                         "model": "Model",
                         "accelerator": "Accelerator",
                         "version": "Version",
+                        "label": "Label",
                         "TP": "TP",
                         "runtime_args": "Runtime Arguments",
                     }
@@ -10267,6 +10789,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                             "Model",
                             "Accelerator",
                             "Version",
+                            "Label",
                             "TP",
                             "Runtime Arguments",
                         ]
@@ -10287,6 +10810,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                         "Version": st.column_config.TextColumn(
                             "Version", width=120, pinned=True
                         ),
+                        "Label": st.column_config.TextColumn("Label", width=180),
                         "TP": st.column_config.NumberColumn("TP", width=60),
                         "Runtime Arguments": st.column_config.TextColumn(
                             "Runtime Args", width=1800
@@ -10297,7 +10821,7 @@ def render_runtime_configs_section(filtered_df, use_expander=True):
                 options = [
                     (
                         i,
-                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']} / TP{r['TP']}",
+                        f"Config {r['Config #']} – {r['Model']} / {r['Accelerator']} / {r['Version']} / {r['Label']} / TP{r['TP']}",
                     )
                     for i, r in df.iterrows()
                 ]
@@ -10343,10 +10867,16 @@ def render_view_logs_section(filtered_df, use_expander=True):
             st.info("No UUID column available in the data.")
             return
 
-        logs_df = filtered_df.dropna(subset=["uuid"]).drop_duplicates(subset=["uuid"])
+        logs_df = (
+            filtered_df.dropna(subset=["uuid"])
+            .drop_duplicates(subset=["uuid"])
+            .copy()
+        )
         if logs_df.empty:
             st.info("No UUIDs available for the current filter selection.")
             return
+        if "label" not in logs_df.columns:
+            logs_df["label"] = DEFAULT_LABEL
 
         labels = (
             logs_df["model"].fillna("?")
@@ -10354,6 +10884,8 @@ def render_view_logs_section(filtered_df, use_expander=True):
             + logs_df["accelerator"].fillna("?")
             + " | "
             + logs_df["version"].fillna("?")
+            + " | label="
+            + logs_df["label"].map(display_label)
             + " | "
             + logs_df["uuid"].astype(str)
         )
@@ -10498,6 +11030,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             "Select a row to view its server log."
         )
         display_filtered_df = filtered_df.copy()
+        if "label" in display_filtered_df.columns:
+            display_filtered_df["label"] = display_filtered_df["label"].map(
+                display_label
+            )
         display_filtered_df.reset_index(drop=True, inplace=True)
         display_filtered_df.insert(0, "Row #", range(1, len(display_filtered_df) + 1))
 
@@ -10720,6 +11256,15 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             cols.remove("view_logs_link")
             ml_idx = cols.index("mlflow_link")
             cols.insert(ml_idx + 1, "view_logs_link")
+        taxonomy_columns = ["version", "label"]
+        for _column in taxonomy_columns:
+            if _column in cols:
+                cols.remove(_column)
+        taxonomy_index = cols.index("accelerator") + 1 if "accelerator" in cols else 0
+        for _column in taxonomy_columns:
+            if _column in display_filtered_df.columns:
+                cols.insert(taxonomy_index, _column)
+                taxonomy_index += 1
         if "request_type" in cols:
             cols.remove("request_type")
             cols.append("request_type")
@@ -10751,6 +11296,14 @@ def render_filtered_data_section(filtered_df, use_expander=True):
                 "version",
                 help="Inference server version (e.g., RHAIIS-3.2.1, vLLM-0.10.0)",
                 pinned=True,
+            ),
+            "label": st.column_config.TextColumn(
+                "label",
+                help="User-provided benchmark label for this configuration",
+            ),
+            "legacy_version": st.column_config.TextColumn(
+                "legacy version",
+                help="Original composite version value preserved for compatibility",
             ),
             "request_type": st.column_config.TextColumn(
                 "request type",
@@ -11002,7 +11555,10 @@ def render_filtered_data_section(filtered_df, use_expander=True):
             uuid_val = row.get("uuid")
             if pd.notna(uuid_val) and uuid_val != "":
                 st.session_state._dialog_show_full = False
-                run_label = f"{row.get('model', '?')} | {row.get('accelerator', '?')} | {row.get('version', '?')}"
+                run_label = (
+                    f"{row.get('model', '?')} | {row.get('accelerator', '?')} | "
+                    f"{row.get('version', '?')} | label={display_label(row.get('label'))}"
+                )
                 _show_log_dialog(str(uuid_val), run_label)
             else:
                 st.info("No log available for the selected row (missing UUID).")
@@ -11062,8 +11618,8 @@ def render_confidentiality_notice():
     if selected_view != "vLLM CPU Dashboard":
         gpu_infer_text = (
             "<b>For GPU sizing guidance and cost analysis, see "
-            '<a href="https://nb-qbits.github.io/gpuinfer/" target="_blank" '
-            'style="color:#92400e;text-decoration:underline;">GPU Infer</a>.</b>'
+            '<a href="https://configiq.dev/" target="_blank" '
+            'style="color:#92400e;text-decoration:underline;">ConfigIQ</a>.</b>'
         )
     st.markdown(
         '<div style="background-color: rgba(245,158,11,0.08); border-left: 3px solid #f59e0b; '
@@ -11116,7 +11672,6 @@ st.markdown(
     f"</div>",
     unsafe_allow_html=True,
 )
-
 render_confidentiality_notice()
 
 # Get selected view from session state (set in render_header_with_theme_toggle)
@@ -11250,6 +11805,12 @@ def main():
     if df is None:
         st.warning("⚠️ Data was None, attempting to reload...")
         df = load_data(DATA_FILE, cache_key=cache_key)
+        if df is None:
+            st.info(
+                "Add consolidated_dashboard.csv to the repository root or configure "
+                "S3_BUCKET/S3_KEY, then reload the dashboard."
+            )
+            return
 
     if df is not None:
         SECTION_TO_SLUG = {
@@ -11292,7 +11853,9 @@ def main():
             },
             "compare_versions": {
                 "cv_v1": "compare_summary_v1",
+                "cv_v1_label": "compare_summary_v1_label",
                 "cv_v2": "compare_summary_v2",
+                "cv_v2_label": "compare_summary_v2_label",
                 "cv_gpu": "compare_summary_accelerator",
                 "cv_profile": "compare_summary_profile",
             },
@@ -11317,7 +11880,15 @@ def main():
             },
         }
 
-        def encode_filters_to_url(accelerators, models, versions, profile, tp_sizes):
+        def encode_filters_to_url(
+            accelerators,
+            models,
+            versions,
+            profile,
+            tp_sizes,
+            labels=None,
+            uuids=None,
+        ):
             """Encode main filter state to URL parameters."""
             url_params = {}
 
@@ -11327,6 +11898,7 @@ def main():
                 url_params["models"] = ",".join(models)
             if versions:
                 url_params["versions"] = ",".join(versions)
+            url_params.update(taxonomy_query_params(labels, uuids))
             if profile:
                 url_params["profile"] = profile
             if tp_sizes:
@@ -11366,12 +11938,17 @@ def main():
                 # Compare Versions: also encode the dynamic concurrency key
                 if slug == "compare_versions":
                     cv_v1 = st.session_state.get("compare_summary_v1")
+                    cv_v1_label = st.session_state.get("compare_summary_v1_label")
                     cv_v2 = st.session_state.get("compare_summary_v2")
+                    cv_v2_label = st.session_state.get("compare_summary_v2_label")
                     cv_gpu = st.session_state.get("compare_summary_accelerator")
                     cv_prof = st.session_state.get("compare_summary_profile")
-                    if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
+                    if all(
+                        [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]
+                    ):
                         conc_key = (
-                            f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                            f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                            f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                         )
                         conc_val = st.session_state.get(conc_key)
                         if conc_val is not None and isinstance(conc_val, list):
@@ -11388,12 +11965,16 @@ def main():
             all_accelerators = sorted(df["accelerator"].unique().tolist())
             all_models = sorted(df["model"].unique().tolist())
             all_versions = sorted(df["version"].unique().tolist())
+            all_labels = sorted(df["label"].unique().tolist())
+            all_uuids = sorted(u for u in df["uuid"].unique().tolist() if u)
             all_profiles = sorted(df["profile"].dropna().astype(str).unique().tolist())
             all_tp_sizes = sorted(df["TP"].dropna().unique().tolist())
 
             url_accelerators = []
             url_models = []
             url_versions = []
+            url_labels = []
+            url_uuids = []
             url_profile = None
             url_tp_sizes = []
 
@@ -11417,6 +11998,12 @@ def main():
                     for ver in query_params["versions"].split(",")
                     if ver.strip() in all_versions
                 ]
+
+            if "labels" in query_params:
+                url_labels = parse_filter_values(query_params["labels"], all_labels)
+
+            if "uuids" in query_params:
+                url_uuids = parse_filter_values(query_params["uuids"], all_uuids)
 
             if "profile" in query_params:
                 profile_from_url = query_params["profile"].strip()
@@ -11545,10 +12132,27 @@ def main():
                                 else:
                                     url_section_filters[ss_key] = raw
 
+                    if slug == "compare_versions":
+                        for version_key, label_key in (
+                            ("compare_summary_v1", "compare_summary_v1_label"),
+                            ("compare_summary_v2", "compare_summary_v2_label"),
+                        ):
+                            raw_version = url_section_filters.get(version_key)
+                            if not raw_version:
+                                continue
+                            canonical_version, inferred_label = split_legacy_version(
+                                raw_version
+                            )
+                            if canonical_version in all_versions:
+                                url_section_filters[version_key] = canonical_version
+                                url_section_filters.setdefault(label_key, inferred_label)
+
             return (
                 url_accelerators,
                 url_models,
                 url_versions,
+                url_labels,
+                url_uuids,
                 url_profile,
                 url_tp_sizes,
                 url_section,
@@ -11659,6 +12263,8 @@ def main():
                 url_accelerators,
                 url_models,
                 url_versions,
+                url_labels,
+                url_uuids,
                 url_profile,
                 url_tp_sizes,
                 url_section,
@@ -11673,10 +12279,25 @@ def main():
                 url_spec_decoding,
                 url_prefix_caching,
             ) = decode_filters_from_url()
+            url_version_label_pairs = decode_version_label_pairs(
+                st.query_params.get("version_labels")
+            )
+            url_appearance_colors = {
+                key: value
+                for key, value in decode_query_mapping(
+                    st.query_params.get("pp_colors")
+                ).items()
+                if is_valid_hex_color(value)
+            }
+            url_appearance_shapes = decode_query_mapping(
+                st.query_params.get("pp_shapes"), MARKER_SYMBOLS
+            )
         else:
             url_accelerators = []
             url_models = []
             url_versions = []
+            url_labels = []
+            url_uuids = []
             url_profile = None
             url_tp_sizes = []
             url_section = None
@@ -11690,6 +12311,17 @@ def main():
             url_dataset = None
             url_spec_decoding = None
             url_prefix_caching = None
+            url_version_label_pairs = []
+            url_appearance_colors = {}
+            url_appearance_shapes = {}
+
+        url_show_advanced = st.query_params.get("advanced") == "1"
+        url_show_label_filter = (
+            st.query_params.get("label_filter") == "1"
+            or bool(url_labels)
+            or bool(url_version_label_pairs)
+        )
+        url_select_all_models = st.query_params.get("all_models") == "1"
 
         if url_section:
             st.session_state.active_section = url_section
@@ -11701,13 +12333,18 @@ def main():
             # Compare Versions: reconstruct the dynamic concurrency key
             if url_section and SECTION_TO_SLUG.get(url_section) == "compare_versions":
                 cv_v1 = url_section_filters.get("compare_summary_v1")
+                cv_v1_label = url_section_filters.get("compare_summary_v1_label")
                 cv_v2 = url_section_filters.get("compare_summary_v2")
+                cv_v2_label = url_section_filters.get("compare_summary_v2_label")
                 cv_gpu = url_section_filters.get("compare_summary_accelerator")
                 cv_prof = url_section_filters.get("compare_summary_profile")
                 raw_conc = st.query_params.get("cv_conc")
-                if all([cv_v1, cv_v2, cv_gpu, cv_prof, raw_conc]):
+                if all(
+                    [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof, raw_conc]
+                ):
                     conc_key = (
-                        f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                        f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                        f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                     )
                     conc_vals = [
                         int(v.strip())
@@ -11742,7 +12379,16 @@ def main():
         )
 
         has_url_filters = any(
-            [url_accelerators, url_models, url_versions, url_profile, url_tp_sizes]
+            [
+                url_accelerators,
+                url_models,
+                url_versions,
+                url_labels,
+                url_uuids,
+                url_version_label_pairs,
+                url_profile,
+                url_tp_sizes,
+            ]
         )
         st.session_state.baseline_accelerators = (
             url_accelerators
@@ -11755,15 +12401,29 @@ def main():
         st.session_state.baseline_versions = (
             url_versions if (has_url_filters and url_versions) else default_versions
         )
+        st.session_state.baseline_labels = url_labels if has_url_filters else []
+        st.session_state.baseline_version_label_pairs = (
+            url_version_label_pairs if has_url_filters else []
+        )
+        st.session_state.baseline_uuids = url_uuids if has_url_filters else []
+        st.session_state._persisted_uuids = list(url_uuids) if has_url_filters else []
         st.session_state.baseline_profile = (
             url_profile if (has_url_filters and url_profile) else default_profile
         )
         st.session_state.baseline_tp_sizes = (
             url_tp_sizes if (has_url_filters and url_tp_sizes) else available_tp_sizes
         )
+        if url_show_advanced or url_dp_sizes or url_uuids:
+            st.session_state.show_advanced_filters = True
+        st.session_state.show_label_filter = url_show_label_filter
+        if url_appearance_colors:
+            st.session_state["performance_custom_colors"] = url_appearance_colors
+        if url_appearance_shapes:
+            st.session_state["performance_custom_shapes"] = url_appearance_shapes
+        if url_select_all_models:
+            st.session_state["_url_select_all_models"] = True
         if url_dp_sizes:
             st.session_state.baseline_dp_sizes = url_dp_sizes
-            st.session_state.show_advanced_filters = True
         st.session_state.use_url_filters = has_url_filters
         if url_custom_isl_osl:
             st.session_state.selected_custom_isl_osl = url_custom_isl_osl
@@ -11798,6 +12458,32 @@ def main():
         st.session_state.filters_initialized = True
         st.session_state.filter_change_key = 0
         st.session_state.filters_were_cleared = False
+    st.session_state.setdefault("show_label_filter", False)
+
+    # Keep URL synchronization defined when the active section hides the
+    # global filter controls.
+    selected_custom_isl_osl = None
+    selected_dataset_filter = None
+    selected_spec_decoding_filter = None
+    selected_prefix_caching_filter = None
+    selected_multiturn_isl_osl = None
+    selected_mt_turns = None
+    selected_mt_prefix_tokens = None
+    selected_mt_prefix_count = None
+    _filter_change_key = st.session_state.get("filter_change_key", 0)
+    _select_all_key = f"select_all_models_{_filter_change_key}"
+    select_all_checked = st.session_state.get(
+        _select_all_key,
+        st.session_state.get("_url_select_all_models", False),
+    )
+    _dp_key = f"dp_filter_{_filter_change_key}"
+    selected_dp = list(
+        st.session_state.get(
+            _dp_key,
+            st.session_state.get("baseline_dp_sizes", []),
+        )
+        or []
+    )
 
     if not _show_global_filters:
         selected_profile = st.session_state.get(
@@ -11808,6 +12494,11 @@ def main():
         selected_accelerators = st.session_state.get("_persisted_accelerators", [])
         selected_models = st.session_state.get("_persisted_models", [])
         selected_versions = st.session_state.get("_persisted_versions", [])
+        selected_labels = st.session_state.get("_persisted_labels", [])
+        selected_version_label_pairs = st.session_state.get(
+            "_persisted_version_label_pairs", []
+        )
+        selected_uuids = st.session_state.get("_persisted_uuids", [])
         selected_tp = st.session_state.get("_persisted_tp", [])
         filtered_df = df.copy()
 
@@ -12307,18 +12998,14 @@ def main():
                     st.session_state.filters_were_cleared = False
 
         with filter_col3:
-            # Versions filter - filtered by selected accelerators, profile,
-            # and real-dataset cascading filters when active
+            # Version -> optional label cascading filters.
             temp_df = df.copy()
             if selected_accelerators:
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
-
-            # Filter versions by the currently selected profile
             if selected_profiles:
                 temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
 
-            # Narrow to the selected real-dataset filters so only
-            # versions that actually have data for this combination appear
+            # Narrow the taxonomy options to the active workload filters.
             if selected_custom_isl_osl:
                 temp_df = temp_df[temp_df["custom_isl_osl"] == selected_custom_isl_osl]
             if selected_dataset_filter is not None:
@@ -12331,7 +13018,6 @@ def main():
                 temp_df = temp_df[
                     temp_df["prefix_caching"].isin(selected_prefix_caching_filter)
                 ]
-            # Narrow to multi-turn filters
             if selected_multiturn_isl_osl:
                 temp_df = temp_df[
                     temp_df["multiturn_isl_osl"] == selected_multiturn_isl_osl
@@ -12347,149 +13033,140 @@ def main():
                     temp_df["prefix_count"].isin(selected_mt_prefix_count)
                 ]
 
+            version_temp = temp_df
             versions = (
-                sorted(temp_df["version"].unique().tolist())
-                if not temp_df.empty
+                sorted(version_temp["version"].unique().tolist())
+                if not version_temp.empty
                 else []
             )
-
+            versions_default = [
+                version
+                for version in st.session_state.get("baseline_versions", versions)
+                if version in versions
+            ]
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
             ):
                 versions_default = []
-            elif st.session_state.get("reset_to_defaults", False):
-                baseline_versions = st.session_state.get("baseline_versions", versions)
-                versions_default = [v for v in baseline_versions if v in versions]
-            else:
-                baseline_versions = st.session_state.get("baseline_versions", versions)
-                versions_default = [v for v in baseline_versions if v in versions]
-
-            # Get previously selected versions from session state
             prev_versions_key = f"versions_filter_{st.session_state.filter_change_key}"
-            prev_selected = st.session_state.get(prev_versions_key, None)
-
-            # Keep previously selected versions that are still available in current profile
-            # Use 'is not None' to allow empty list selection
-            if prev_selected is not None:
-                preserved_selections = [v for v in prev_selected if v in versions]
-            else:
-                persisted = st.session_state.get("_persisted_versions", None)
-                if persisted is not None:
-                    preserved_selections = [v for v in persisted if v in versions]
-                else:
-                    preserved_selections = versions_default
-
+            previous_versions = st.session_state.get(prev_versions_key)
+            if previous_versions is not None:
+                versions_default = [
+                    version for version in previous_versions if version in versions
+                ]
+            st.session_state[prev_versions_key] = versions_default
             selected_versions = st.multiselect(
                 "3️⃣ Select Version(s)",
                 versions,
-                default=preserved_selections,
                 key=prev_versions_key,
             )
 
-            with st.popover("❓ Filters Help", use_container_width=True):
-                st.markdown("### ✅ Valid Filter Combinations")
-                st.markdown("View all valid combinations of filters:")
+            label_temp = version_temp[version_temp["version"].isin(selected_versions)]
+            selected_version_label_pairs = []
+            selected_labels = []
+            if st.session_state.get("clear_all_filters", False):
+                st.session_state.show_label_filter = False
 
-                # Exclude models that only appear under the Custom ISL/OSL profile
-                _fh_non_custom_models = set(
-                    df[df["profile"] != "Custom ISL/OSL"]["model"].unique()
+            st.checkbox(
+                "Filter by label (optional)",
+                key="show_label_filter",
+            )
+            if st.session_state.show_label_filter:
+                label_pairs = (
+                    label_temp[["version", "label"]]
+                    .drop_duplicates()
+                    .sort_values(["version", "label"])
+                    if not label_temp.empty
+                    else pd.DataFrame(columns=["version", "label"])
                 )
-                _fh_df = df[df["model"].isin(_fh_non_custom_models)]
+                pair_options = {}
+                pair_values = {}
+                for row in label_pairs.itertuples(index=False):
+                    pair = (str(row.version), str(row.label))
+                    pair_key = json.dumps(pair, separators=(",", ":"))
+                    pair_options[pair_key] = (
+                        f"{row.version} › {display_label(row.label)}"
+                    )
+                    pair_values[pair_key] = pair
 
-                tree_view = st.radio(
-                    "Group by:",
-                    options=["Model", "Version"],
-                    horizontal=True,
-                    key="filter_help_tree_view",
+                label_key = (
+                    f"version_labels_filter_{st.session_state.filter_change_key}"
                 )
-
-                if tree_view == "Model":
-                    _fh_models = sorted(_fh_df["model"].unique())
-                    for _fh_model in _fh_models:
-                        _fh_data = _fh_df[_fh_df["model"] == _fh_model]
-                        with st.expander(f"🤖 {_fh_model}", expanded=False):
-                            combo_dict = {}
-                            for _, row in _fh_data.iterrows():
-                                acc = row["accelerator"]
-                                version = row["version"]
-                                profile = row["profile"]
-                                tp = row["TP"]
-                                if acc not in combo_dict:
-                                    combo_dict[acc] = {}
-                                if version not in combo_dict[acc]:
-                                    combo_dict[acc][version] = {}
-                                if profile not in combo_dict[acc][version]:
-                                    combo_dict[acc][version][profile] = []
-                                if tp not in combo_dict[acc][version][profile]:
-                                    combo_dict[acc][version][profile].append(tp)
-                            tree_text = ""
-                            for acc in sorted(combo_dict.keys()):
-                                tree_text += f"🔧 {acc}\n"
-                                for version in sorted(combo_dict[acc].keys()):
-                                    tree_text += f"    📦 {version}\n"
-                                    for profile in sorted(
-                                        combo_dict[acc][version].keys()
-                                    ):
-                                        tp_list = ", ".join(
-                                            map(
-                                                str,
-                                                sorted(
-                                                    combo_dict[acc][version][profile]
-                                                ),
-                                            )
-                                        )
-                                        profile_display = clean_profile_name(profile)
-                                        tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
-                                tree_text += "\n"
-                            st.code(tree_text, language=None)
+                baseline_pairs = st.session_state.get(
+                    "baseline_version_label_pairs", []
+                )
+                if baseline_pairs:
+                    label_default = [
+                        key
+                        for key, pair in pair_values.items()
+                        if pair in baseline_pairs
+                    ]
                 else:
-                    _fh_versions = sorted(_fh_df["version"].unique())
-                    for _fh_ver in _fh_versions:
-                        _fh_vdata = _fh_df[_fh_df["version"] == _fh_ver]
-                        with st.expander(f"📦 {_fh_ver}", expanded=False):
-                            combo_dict = {}
-                            for _, row in _fh_vdata.iterrows():
-                                acc = row["accelerator"]
-                                model = row["model"]
-                                profile = row["profile"]
-                                tp = row["TP"]
-                                if acc not in combo_dict:
-                                    combo_dict[acc] = {}
-                                if model not in combo_dict[acc]:
-                                    combo_dict[acc][model] = {}
-                                if profile not in combo_dict[acc][model]:
-                                    combo_dict[acc][model][profile] = []
-                                if tp not in combo_dict[acc][model][profile]:
-                                    combo_dict[acc][model][profile].append(tp)
-                            tree_text = ""
-                            for acc in sorted(combo_dict.keys()):
-                                tree_text += f"🔧 {acc}\n"
-                                for model_full in sorted(combo_dict[acc].keys()):
-                                    tree_text += f"    🤖 {model_full}\n"
-                                    for profile in sorted(
-                                        combo_dict[acc][model_full].keys()
-                                    ):
-                                        tp_list = ", ".join(
-                                            map(
-                                                str,
-                                                sorted(
-                                                    combo_dict[acc][model_full][profile]
-                                                ),
-                                            )
-                                        )
-                                        profile_display = clean_profile_name(profile)
-                                        tree_text += f"        📋 {profile_display} → TP: {tp_list}\n"
-                                tree_text += "\n"
-                            st.code(tree_text, language=None)
+                    baseline_labels = st.session_state.get("baseline_labels", [])
+                    label_default = [
+                        key
+                        for key, pair in pair_values.items()
+                        if pair[1] in baseline_labels
+                    ]
+                previous_pairs = st.session_state.get(label_key)
+                if previous_pairs is not None:
+                    label_default = [
+                        key for key in previous_pairs if key in pair_options
+                    ]
+                st.session_state[label_key] = label_default
+                selected_pair_keys = st.multiselect(
+                    "Select Label(s) by Release",
+                    list(pair_options),
+                    format_func=lambda key: pair_options[key],
+                    key=label_key,
+                )
+                selected_version_label_pairs = [
+                    pair_values[key] for key in selected_pair_keys
+                ]
+                selected_labels = sorted(
+                    {label for _, label in selected_version_label_pairs}
+                )
+
+            run_temp = (
+                label_temp[
+                    version_label_pair_mask(
+                        label_temp, selected_version_label_pairs, include_default=True
+                    )
+                ]
+                if selected_version_label_pairs
+                else label_temp[label_temp["label"].eq(DEFAULT_LABEL)]
+            )
+            uuids = (
+                sorted(run_temp.loc[run_temp["uuid"] != "", "uuid"].unique().tolist())
+                if not run_temp.empty
+                else []
+            )
+            st.session_state["_taxonomy_uuid_options"] = uuids
+            selected_uuids = [
+                uuid
+                for uuid in st.session_state.get("_persisted_uuids", [])
+                if uuid in uuids
+            ]
+            filter_help_location = st.empty()
 
         with filter_col4:
-            # Models filter - filtered by selected accelerators, versions, profile,
+            # Models filter - filtered by selected taxonomy, accelerators, profile,
             # and real-dataset cascading filters when active
             temp_df = df.copy()
             if selected_accelerators:
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            if selected_version_label_pairs:
+                temp_df = temp_df[
+                    version_label_pair_mask(
+                        temp_df, selected_version_label_pairs, include_default=True
+                    )
+                ]
+            else:
+                temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
+            if selected_uuids:
+                temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
 
             # Filter models by the currently selected profile
             if selected_profiles:
@@ -12541,6 +13218,10 @@ def main():
 
             # Check if "Select All Models" is checked (from previous render)
             select_all_key = f"select_all_models_{st.session_state.filter_change_key}"
+            if select_all_key not in st.session_state and st.session_state.pop(
+                "_url_select_all_models", False
+            ):
+                st.session_state[select_all_key] = True
             select_all_checked = st.session_state.get(select_all_key, False)
 
             # If "Select All" is checked, set default to all models
@@ -12563,8 +13244,16 @@ def main():
                 else:
                     preserved_selections = models_to_select
 
+            if select_all_checked:
+                # Streamlit ignores ``default`` when this widget key already
+                # exists. Keep the checked select-all state aligned with new
+                # models that appear after a data refresh.
+                st.session_state[prev_models_key] = sync_selected_options(
+                    st.session_state.get(prev_models_key), models, select_all=True
+                )
+
             selected_models = st.multiselect(
-                "4️⃣ Select Model(s)",
+                "5️⃣ Select Model(s)",
                 models,
                 default=preserved_selections,
                 key=prev_models_key,
@@ -12578,12 +13267,22 @@ def main():
             )
 
         with filter_col5:
-            # TP sizes filter - filtered by accelerators, versions, models, and profiles
+            # TP sizes filter - filtered by taxonomy, accelerators, versions, models, and profiles
             temp_df = df.copy()
             if selected_accelerators:
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
+            if selected_version_label_pairs:
+                temp_df = temp_df[
+                    version_label_pair_mask(
+                        temp_df, selected_version_label_pairs, include_default=True
+                    )
+                ]
+            else:
+                temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
+            if selected_uuids:
+                temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
             if selected_profiles:
                 temp_df = temp_df[temp_df["profile"].isin(selected_profiles)]
             if selected_models:
@@ -12654,8 +13353,15 @@ def main():
                 baseline_tp_sizes = st.session_state.get("baseline_tp_sizes", tp_sizes)
                 tp_default = [tp for tp in baseline_tp_sizes if tp in tp_sizes]
 
+            if select_all_checked or (models_changed and selected_models):
+                # Keep the existing upstream auto-select behavior effective
+                # when Streamlit has already stored this widget's value.
+                st.session_state[prev_tp_key] = sync_selected_options(
+                    st.session_state.get(prev_tp_key), tp_default, select_all=True
+                )
+
             selected_tp = st.multiselect(
-                "5️⃣ Select TP Size(s)",
+                "6️⃣ Select TP Size(s)",
                 tp_sizes,
                 default=tp_default,
                 key=prev_tp_key,
@@ -12663,14 +13369,13 @@ def main():
 
             if st.button(
                 "⚙️ Advanced Filters",
-                help="Show/hide DP size filter",
+                help="Show/hide optional UUID and DP filters",
                 use_container_width=True,
             ):
                 st.session_state.show_advanced_filters = not st.session_state.get(
                     "show_advanced_filters", False
                 )
                 st.rerun()
-
             # Update tracking variables with current selection
             st.session_state[tracking_key] = selected_models
             st.session_state[avail_tp_key] = tp_sizes
@@ -12682,26 +13387,163 @@ def main():
 
         # URL sync is now handled after section rendering (single atomic from_dict call)
 
-        # --- Advanced Filters (DP) ---
+        # --- Advanced Filters (UUID and DP) ---
+        selected_uuids = list(selected_uuids)
         selected_dp = []
         _has_dp = "DP" in df.columns
 
-        if st.session_state.get("show_advanced_filters", False) and _has_dp:
-            adv_col1, _ = st.columns([1.5, 6.5])
+        if st.session_state.get("show_advanced_filters", False):
+            adv_col1, adv_col2 = st.columns([1, 1])
             fck = st.session_state.get("filter_change_key", 0)
 
             with adv_col1:
+                uuid_options = st.session_state.get("_taxonomy_uuid_options", [])
+                uuid_key = f"uuids_filter_{fck}"
+                uuid_default = [
+                    uuid
+                    for uuid in st.session_state.get("_persisted_uuids", [])
+                    if uuid in uuid_options
+                ]
+                st.session_state[uuid_key] = sync_selected_options(
+                    st.session_state.get(uuid_key, uuid_default), uuid_options
+                )
+                selected_uuids = st.multiselect(
+                    "7️⃣ Inspect Run ID / UUID(s)",
+                    uuid_options,
+                    default=uuid_default,
+                    key=uuid_key,
+                    help="Optional. Use this only to inspect specific executions; labels identify configurations.",
+                )
+
+            with adv_col2:
                 dp_values = sorted(df["DP"].dropna().unique().tolist())
                 dp_key = f"dp_filter_{fck}"
-                if dp_values:
+                if _has_dp and dp_values:
+                    dp_default = st.session_state.get(
+                        "baseline_dp_sizes", dp_values
+                    )
+                    st.session_state[dp_key] = sync_selected_options(
+                        st.session_state.get(dp_key, dp_default), dp_values
+                    )
                     selected_dp = st.multiselect(
-                        "6️⃣ Select DP Size(s)",
+                        "8️⃣ Select DP Size(s)",
                         dp_values,
-                        default=st.session_state.get("baseline_dp_sizes", dp_values),
                         key=dp_key,
                     )
                 else:
                     st.caption("No DP data available")
+
+        with filter_help_location.popover("❓ Filters Help", use_container_width=True):
+            st.markdown("### ✅ Run taxonomy")
+            st.code(
+                "Release version\n  └─ Optional label\n      └─ Run ID / UUID",
+                language=None,
+            )
+            st.caption(
+                "Selecting a release shows its unlabeled runs. Turn on the optional label filter to add labeled runs."
+            )
+            st.markdown("### Valid filter combinations")
+            st.markdown("View the available combinations of filters:")
+
+            # Exclude models that only appear under the Custom ISL/OSL profile.
+            _fh_non_custom_models = set(
+                df[df["profile"] != "Custom ISL/OSL"]["model"].unique()
+            )
+            _fh_df = df[df["model"].isin(_fh_non_custom_models)]
+
+            tree_view = st.radio(
+                "Group by:",
+                options=["Model", "Version"],
+                horizontal=True,
+                key="filter_help_tree_view",
+            )
+
+            if tree_view == "Model":
+                _fh_models = sorted(_fh_df["model"].unique())
+                for _fh_model in _fh_models:
+                    _fh_data = _fh_df[_fh_df["model"] == _fh_model]
+                    with st.expander(f"🤖 {_fh_model}", expanded=False):
+                        combo_dict = {}
+                        for _, row in _fh_data.iterrows():
+                            acc = row["accelerator"]
+                            version = row["version"]
+                            label = row["label"]
+                            profile = row["profile"]
+                            tp = row["TP"]
+                            acc_dict = combo_dict.setdefault(acc, {})
+                            version_dict = acc_dict.setdefault(version, {})
+                            label_dict = version_dict.setdefault(label, {})
+                            label_dict.setdefault(profile, [])
+                            if tp not in label_dict[profile]:
+                                label_dict[profile].append(tp)
+                        tree_text = ""
+                        for acc in sorted(combo_dict):
+                            tree_text += f"🔧 {acc}\n"
+                            for version in sorted(combo_dict[acc]):
+                                tree_text += f"    📦 {version}\n"
+                                for label in sorted(combo_dict[acc][version]):
+                                    tree_text += f"        🏷️ {display_label(label)}\n"
+                                    for profile in sorted(
+                                        combo_dict[acc][version][label]
+                                    ):
+                                        tp_list = ", ".join(
+                                            map(
+                                                str,
+                                                sorted(
+                                                    combo_dict[acc][version][label][
+                                                        profile
+                                                    ]
+                                                ),
+                                            )
+                                        )
+                                        profile_display = clean_profile_name(profile)
+                                        tree_text += f"            📋 {profile_display} → TP: {tp_list}\n"
+                            tree_text += "\n"
+                        st.code(tree_text, language=None)
+            else:
+                _fh_versions = sorted(_fh_df["version"].unique())
+                for _fh_ver in _fh_versions:
+                    _fh_vdata = _fh_df[_fh_df["version"] == _fh_ver]
+                    with st.expander(f"📦 {_fh_ver}", expanded=False):
+                        combo_dict = {}
+                        for _, row in _fh_vdata.iterrows():
+                            acc = row["accelerator"]
+                            model = row["model"]
+                            label = row["label"]
+                            profile = row["profile"]
+                            tp = row["TP"]
+                            acc_dict = combo_dict.setdefault(acc, {})
+                            model_dict = acc_dict.setdefault(model, {})
+                            label_dict = model_dict.setdefault(label, {})
+                            label_dict.setdefault(profile, [])
+                            if tp not in label_dict[profile]:
+                                label_dict[profile].append(tp)
+                        tree_text = f"📦 {_fh_ver}\n"
+                        for acc in sorted(combo_dict):
+                            tree_text += f"    🔧 {acc}\n"
+                            for model_full in sorted(combo_dict[acc]):
+                                tree_text += f"        🤖 {model_full}\n"
+                                for label in sorted(combo_dict[acc][model_full]):
+                                    tree_text += (
+                                        f"            🏷️ {display_label(label)}\n"
+                                    )
+                                    for profile in sorted(
+                                        combo_dict[acc][model_full][label]
+                                    ):
+                                        tp_list = ", ".join(
+                                            map(
+                                                str,
+                                                sorted(
+                                                    combo_dict[acc][model_full][label][
+                                                        profile
+                                                    ]
+                                                ),
+                                            )
+                                        )
+                                        profile_display = clean_profile_name(profile)
+                                        tree_text += f"                📋 {profile_display} → TP: {tp_list}\n"
+                            tree_text += "\n"
+                        st.code(tree_text, language=None)
 
         dp_mask = (
             (df["DP"].isin(selected_dp) | df["DP"].isna())
@@ -12753,10 +13595,19 @@ def main():
             else True
         )
         tp_mask = df["TP"].isin(selected_tp) | df["TP"].isna()
+        label_mask = (
+            version_label_pair_mask(
+                df, selected_version_label_pairs, include_default=True
+            )
+            if selected_version_label_pairs
+            else df["label"].eq(DEFAULT_LABEL)
+        )
         filtered_df = df[
             df["accelerator"].isin(selected_accelerators)
             & df["model"].isin(selected_models)
             & df["version"].isin(selected_versions)
+            & label_mask
+            & (df["uuid"].isin(selected_uuids) if selected_uuids else True)
             & (df["profile"].isin(selected_profiles) if selected_profiles else True)
             & tp_mask
             & custom_mask
@@ -12775,6 +13626,8 @@ def main():
             "accelerators": tuple(sorted(selected_accelerators)),
             "models": tuple(sorted(selected_models)),
             "versions": tuple(sorted(selected_versions)),
+            "version_label_pairs": tuple(sorted(selected_version_label_pairs)),
+            "uuids": tuple(sorted(selected_uuids)),
             "profile": selected_profile,
             "tp": tuple(sorted(selected_tp)),
         }
@@ -12800,6 +13653,11 @@ def main():
         st.session_state._persisted_accelerators = list(selected_accelerators)
         st.session_state._persisted_models = list(selected_models)
         st.session_state._persisted_versions = list(selected_versions)
+        st.session_state._persisted_labels = list(selected_labels)
+        st.session_state._persisted_version_label_pairs = list(
+            selected_version_label_pairs
+        )
+        st.session_state._persisted_uuids = list(selected_uuids)
         st.session_state._persisted_tp = list(selected_tp)
 
     if not filtered_df.empty:
@@ -12906,6 +13764,18 @@ def main():
 
         def _render_selected_section(sel):
             """Render the currently selected section content."""
+            if sel in {
+                "📊 Performance Plots",
+                "📈 Dataset Representation",
+                "🏆 Model Performance Comparison",
+                "⚖️ Compare Configurations",
+                "💰 Cost Analysis",
+                "⚙️ Runtime Server Configs",
+                "📋 View Logs",
+                "📄 Filtered Data",
+            }:
+                _render_methodology_note(filtered_df["version"].unique())
+
             if sel == "🏠 Overview":
                 render_overview_section(df)
             elif sel == "🔍 Competitive Analysis":
@@ -12960,6 +13830,15 @@ def main():
                 desired_params["models"] = ",".join(selected_models)
             if selected_versions:
                 desired_params["versions"] = ",".join(selected_versions)
+            if st.session_state.get("show_label_filter", False):
+                desired_params["label_filter"] = "1"
+            desired_params.update(
+                taxonomy_query_params(
+                    selected_labels,
+                    selected_uuids,
+                    selected_version_label_pairs,
+                )
+            )
             if selected_profile:
                 desired_params["profile"] = selected_profile
             if selected_profile == "Custom ISL/OSL":
@@ -12998,8 +13877,18 @@ def main():
                     )
             if selected_tp:
                 desired_params["tp_sizes"] = ",".join(map(str, selected_tp))
-            if st.session_state.get("show_advanced_filters", False) and selected_dp:
-                desired_params["dp_sizes"] = ",".join(map(str, selected_dp))
+            if st.session_state.get("show_advanced_filters", False):
+                desired_params["advanced"] = "1"
+                if selected_dp:
+                    desired_params["dp_sizes"] = ",".join(map(str, selected_dp))
+            if select_all_checked:
+                desired_params["all_models"] = "1"
+            custom_colors = st.session_state.get("performance_custom_colors", {})
+            if custom_colors:
+                desired_params["pp_colors"] = encode_query_mapping(custom_colors)
+            custom_shapes = st.session_state.get("performance_custom_shapes", {})
+            if custom_shapes:
+                desired_params["pp_shapes"] = encode_query_mapping(custom_shapes)
             # Section + section-specific filters
             active = st.session_state.get("active_section")
             if active and active in SECTION_TO_SLUG:
@@ -13016,12 +13905,17 @@ def main():
                 # Compare Versions: also encode the dynamic concurrency key
                 if slug == "compare_versions":
                     cv_v1 = st.session_state.get("compare_summary_v1")
+                    cv_v1_label = st.session_state.get("compare_summary_v1_label")
                     cv_v2 = st.session_state.get("compare_summary_v2")
+                    cv_v2_label = st.session_state.get("compare_summary_v2_label")
                     cv_gpu = st.session_state.get("compare_summary_accelerator")
                     cv_prof = st.session_state.get("compare_summary_profile")
-                    if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
+                    if all(
+                        [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]
+                    ):
                         conc_key = (
-                            f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                            f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                            f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                         )
                         conc_val = st.session_state.get(conc_key)
                         if conc_val is not None and isinstance(conc_val, list):
@@ -13082,40 +13976,42 @@ def main():
                             for _, row in model_data.iterrows():
                                 acc = row["accelerator"]
                                 version = row["version"]
+                                label = row["label"]
                                 profile = row["profile"]
                                 tp = row["TP"]
 
-                                if acc not in combo_dict:
-                                    combo_dict[acc] = {}
-                                if version not in combo_dict[acc]:
-                                    combo_dict[acc][version] = {}
-                                if profile not in combo_dict[acc][version]:
-                                    combo_dict[acc][version][profile] = []
+                                version_dict = combo_dict.setdefault(version, {})
+                                label_dict = version_dict.setdefault(label, {})
+                                acc_dict = label_dict.setdefault(acc, {})
+                                acc_dict.setdefault(profile, [])
 
-                                if tp not in combo_dict[acc][version][profile]:
-                                    combo_dict[acc][version][profile].append(tp)
+                                if tp not in acc_dict[profile]:
+                                    acc_dict[profile].append(tp)
 
                             tree_text = ""
-                            for acc in sorted(combo_dict.keys()):
-                                tree_text += f"🔧 {acc}\n"
-
-                                versions = sorted(combo_dict[acc].keys())
-                                for version in versions:
-                                    tree_text += f"    📦 {version}\n"
-
-                                    profiles = sorted(combo_dict[acc][version].keys())
-                                    for profile in profiles:
-                                        tp_list = ", ".join(
-                                            map(
-                                                str,
-                                                sorted(
-                                                    combo_dict[acc][version][profile]
-                                                ),
+                            for version in sorted(combo_dict):
+                                tree_text += f"📦 {version}\n"
+                                for label in sorted(combo_dict[version]):
+                                    tree_text += f"    🏷️ {display_label(label)}\n"
+                                    for acc in sorted(combo_dict[version][label]):
+                                        tree_text += f"        🔧 {acc}\n"
+                                        for profile in sorted(
+                                            combo_dict[version][label][acc]
+                                        ):
+                                            tp_list = ", ".join(
+                                                map(
+                                                    str,
+                                                    sorted(
+                                                        combo_dict[version][label][acc][
+                                                            profile
+                                                        ]
+                                                    ),
+                                                )
                                             )
-                                        )
-                                        # Extract just the ISL/OSL part (e.g., "(32k/256)")
-                                        profile_display = clean_profile_name(profile)
-                                        tree_text += f"        📋 {profile_display} → TP Sizes: {tp_list}\n"
+                                            profile_display = clean_profile_name(
+                                                profile
+                                            )
+                                            tree_text += f"            📋 {profile_display} → TP Sizes: {tp_list}\n"
                                 tree_text += "\n"
 
                             st.code(tree_text, language=None)
