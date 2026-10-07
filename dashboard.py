@@ -10597,6 +10597,16 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
                 "dashboard_id": "d35f19c8f56250",
                 "dashboard_name": "vllm-2b-dcgm-metrics-psap-zeus-syd",
             },
+            "H200_ATHENA": {
+                "dashboard_id": "df28i54z7okcgf",
+                "dashboard_name": "vllm-2b-dcgm-complete-metrics-combined",
+                "extra_params": "&var-cluster_name=psap-fire-athena",
+            },
+            "H200_JANUS": {
+                "dashboard_id": "df28i54z7okcgf",
+                "dashboard_name": "vllm-2b-dcgm-complete-metrics-combined",
+                "extra_params": "&var-cluster_name=psap-de-h200-cluster",
+            },
             "B200_PIRATE": {
                 "dashboard_id": "b200-pirate-vllm-dcgm",
                 "dashboard_name": "vllm-2b-dcgm-metrics-b200-pirate",
@@ -10612,6 +10622,8 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
             "H200": _SGLANG_H200_DASHBOARD,
             "H200_HERA2": _SGLANG_H200_DASHBOARD,
             "H200_ZEUS2": _SGLANG_H200_DASHBOARD,
+            "H200_ATHENA": _SGLANG_H200_DASHBOARD,
+            "H200_JANUS": _SGLANG_H200_DASHBOARD,
         }
 
         # Jan 1, 2026 00:00:00 UTC in milliseconds
@@ -10638,6 +10650,20 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
             upper = run_name.upper()
             return upper.startswith("H200-ZEUS2-") or upper.startswith("H200_ZEUS2-")
 
+        def _is_athena_run(run_name):
+            """Check if a run belongs to the Athena cluster."""
+            if not isinstance(run_name, str):
+                return False
+            upper = run_name.upper()
+            return upper.startswith("ATHENA-") or upper.startswith("ATHENA_")
+
+        def _is_janus_run(run_name):
+            """Check if a run belongs to the Janus cluster."""
+            if not isinstance(run_name, str):
+                return False
+            upper = run_name.upper()
+            return upper.startswith("JANUS-") or upper.startswith("JANUS_")
+
         def create_grafana_link(row):
             """Create Grafana dashboard link if timestamps are available."""
             start_time = row.get("guidellm_start_time_ms")
@@ -10661,7 +10687,11 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
                 end_ms = int(end_time)
 
                 # Determine which dashboard to use based on accelerator, cluster, and date
-                if _is_hera2_run(run_name):
+                if _is_athena_run(run_name):
+                    dashboard_key = "H200_ATHENA"
+                elif _is_janus_run(run_name):
+                    dashboard_key = "H200_JANUS"
+                elif _is_hera2_run(run_name):
                     dashboard_key = "H200_HERA2"
                 elif _is_hera_run(run_name):
                     dashboard_key = "H200_HERA"
