@@ -13,6 +13,142 @@ import os
 import pandas as pd
 
 
+def _percentile(values, p):
+    """Return the p-th percentile of a pre-sorted list using linear interpolation.
+
+    Matches the implementation in Forge PR #215 _percentile().
+    """
+    if not values:
+        return None
+    k = (len(values) - 1) * p / 100.0
+    f = int(k)
+    c = min(f + 1, len(values) - 1)
+    return values[f] + (k - f) * (values[c] - values[f])
+
+
+def _median(values):
+    """Return the median of a pre-sorted list. Matches Forge PR #215 _median()."""
+    n = len(values)
+    if not n:
+        return None
+    return values[n // 2] if n % 2 else (values[n // 2 - 1] + values[n // 2]) / 2
+
+
+def _mean(values):
+    return sum(values) / len(values) if values else None
+
+
+def _sorted_field(reqs, field):
+    return sorted(r[field] for r in reqs if r.get(field) is not None)
+
+
+def extract_per_turn_rows(benchmark, base_row):
+    """Extract per-turn breakdown rows from request-level data in a benchmark section.
+
+    For each turn_index found in requests.successful, computes per-turn stats
+    (TTFT, ITL, TPOT, latency, throughput) and returns one row dict per turn.
+    Returns an empty list if no turn_index data is present.
+
+    Args:
+        benchmark: A single benchmark dict from the guidellm JSON.
+        base_row: The aggregate row dict produced by process_benchmark_section —
+                  used as the metadata template for per-turn rows.
+
+    Returns:
+        list[dict]: Per-turn row dicts ready to append to all_run_data.
+    """
+    requests = benchmark.get("requests", {})
+    successful = requests.get("successful", [])
+    errored = requests.get("errored", [])
+
+    if not successful and not errored:
+        return []
+
+    # Discover all turn indices from both buckets
+    all_turns = set()
+    for req in successful + errored:
+        info = req.get("info", {})
+        ti = info.get("turn_index")
+        if ti is not None:
+            try:
+                all_turns.add(str(int(float(ti))))
+            except (ValueError, TypeError):
+                pass
+
+    # Match Forge PR #215: skip extraction for single-turn runs
+    if len(all_turns) <= 1:
+        return []
+
+    # Group requests by turn_index
+    by_turn = {}
+    for req in successful:
+        ti = req.get("info", {}).get("turn_index")
+        if ti is None:
+            continue
+        try:
+            key = str(int(float(ti)))
+        except (ValueError, TypeError):
+            continue
+        by_turn.setdefault(key, []).append(req)
+
+    err_by_turn = {}
+    for req in errored:
+        ti = req.get("info", {}).get("turn_index")
+        if ti is None:
+            continue
+        try:
+            key = str(int(float(ti)))
+        except (ValueError, TypeError):
+            continue
+        err_by_turn.setdefault(key, []).append(req)
+
+    per_turn_rows = []
+    for turn_key in sorted(all_turns, key=lambda x: int(x)):
+        reqs = by_turn.get(turn_key, [])
+        n_err = len(err_by_turn.get(turn_key, []))
+
+        ttft = _sorted_field(reqs, "time_to_first_token_ms")
+        itl = _sorted_field(reqs, "inter_token_latency_ms")
+        tpot = _sorted_field(reqs, "time_per_output_token_ms")
+        lat = _sorted_field(reqs, "request_latency")
+        out_tps = _sorted_field(reqs, "output_tokens_per_second")
+        total_tps = _sorted_field(reqs, "tokens_per_second")
+        out_toks = _sorted_field(reqs, "output_tokens")
+        prompt_toks = _sorted_field(reqs, "prompt_tokens")
+
+        row = dict(base_row)
+        row["turn_index"] = int(turn_key)
+        row["successful_requests"] = len(reqs)
+        row["errored_requests"] = n_err
+        row["ttft_median"] = _median(ttft)
+        row["ttft_p95"] = _percentile(ttft, 95)
+        row["ttft_p99"] = _percentile(ttft, 99)
+        row["ttft_p1"] = _percentile(ttft, 1)
+        row["ttft_p999"] = _percentile(ttft, 99.9)
+        row["ttft_mean"] = _mean(ttft)
+        row["itl_median"] = _median(itl)
+        row["itl_p95"] = _percentile(itl, 95)
+        row["itl_p99"] = _percentile(itl, 99)
+        row["itl_p1"] = _percentile(itl, 1)
+        row["itl_p999"] = _percentile(itl, 99.9)
+        row["itl_mean"] = _mean(itl)
+        row["tpot_median"] = _median(tpot)
+        row["tpot_p95"] = _percentile(tpot, 95)
+        row["tpot_p99"] = _percentile(tpot, 99)
+        row["tpot_p1"] = _percentile(tpot, 1)
+        row["tpot_p999"] = _percentile(tpot, 99.9)
+        row["request_latency_median"] = _median(lat)
+        row["request_latency_min"] = min(lat) if lat else None
+        row["request_latency_max"] = max(lat) if lat else None
+        row["output_tok/sec"] = _mean(out_tps)
+        row["total_tok/sec"] = _mean(total_tps)
+        row["output_token_count_mean"] = _mean(out_toks)
+        row["prompt_token_count_mean"] = _mean(prompt_toks)
+        per_turn_rows.append(row)
+
+    return per_turn_rows
+
+
 def process_benchmark_section(
     benchmark,
     accelerator,
@@ -205,6 +341,7 @@ def process_benchmark_section(
         "dataset": dataset,
         "spec_decoding": spec_decoding,
         "prefix_caching": prefix_caching,
+        "turn_index": "",
         "turns": turns,
         "prefix_tokens": detected_prefix_tokens
         if detected_prefix_tokens is not None
@@ -328,11 +465,14 @@ def parse_guidellm_json(
         )
         if row_data:
             all_run_data.append(row_data)
+            per_turn = extract_per_turn_rows(benchmark, row_data)
+            all_run_data.extend(per_turn)
             streams = (
                 benchmark.get("config", {}).get("strategy", {}).get("streams", "?")
             )
+            turn_msg = f", {len(per_turn)} per-turn rows" if per_turn else ""
             print(
-                f"  Processed benchmark {i + 1}/{len(benchmarks)} (streams={streams})"
+                f"  Processed benchmark {i + 1}/{len(benchmarks)} (streams={streams}{turn_msg})"
             )
 
     if all_run_data:
@@ -420,6 +560,19 @@ def main():
         "Leave empty if not applicable.",
     )
     parser.add_argument(
+        "--mlflow-run-id",
+        default="",
+        help="MLflow run UUID (optional). When provided, the Filtered Data table "
+        "in the dashboard shows a clickable MLflow artifact link. "
+        "Example: c6aa48a0d312448380621e1bf00a8a5d",
+    )
+    parser.add_argument(
+        "--mlflow-experiment-id",
+        default="",
+        help="MLflow experiment ID (optional, used together with --mlflow-run-id). "
+        "Example: 264",
+    )
+    parser.add_argument(
         "--csv-file",
         default="new_benchmarks.csv",
         help="Path to the output CSV file (default: new_benchmarks.csv)",
@@ -453,6 +606,10 @@ def main():
     )
 
     if new_data_df is not None and not new_data_df.empty:
+        # Stamp MLflow identifiers on every row (empty string when not provided)
+        new_data_df["mlflow_run_id"] = args.mlflow_run_id
+        new_data_df["mlflow_experiment_id"] = args.mlflow_experiment_id
+
         if os.path.exists(args.csv_file):
             print(f"Appending {len(new_data_df)} new rows to {args.csv_file}...")
             existing_df = pd.read_csv(args.csv_file)
@@ -512,10 +669,13 @@ def main():
             "dataset",
             "spec_decoding",
             "prefix_caching",
+            "turn_index",
             "turns",
             "prefix_tokens",
             "prefix_count",
             "request_type",
+            "mlflow_run_id",
+            "mlflow_experiment_id",
         ]
 
         for col in fieldnames:

@@ -46,6 +46,8 @@ python import_manual_runs_json_v2.py <json_file> \
 | `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
 | `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
 | `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
+| `--mlflow-run-id`    | No       | MLflow run UUID — enables clickable MLflow links in dashboard | `c6aa48a0d312448380621e1bf00a8a5d` |
+| `--mlflow-experiment-id` | No  | MLflow experiment ID (used with `--mlflow-run-id`) | `264`                              |
 
 ## Examples
 
@@ -112,7 +114,7 @@ python import_manual_runs_json_v2.py \
   --csv-file "gemma-multiturn.csv"
 ```
 
-> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON.
+> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON. For multi-turn benchmarks, the script emits one aggregate row per concurrency level (`turn_index` = empty) **plus** one per-turn row per turn per concurrency level (`turn_index` = 0, 1, 2, …) when `requests.successful` contains `turn_index` data. Non-multi-turn benchmarks emit aggregate rows only.
 
 ## Appending to Consolidated Dashboard
 
@@ -124,7 +126,7 @@ tail -n +2 my-benchmark.csv >> ../../../consolidated_dashboard.csv
 
 ## Output CSV Columns
 
-The script outputs 52 columns compatible with the performance dashboard:
+The script outputs 55 columns compatible with the performance dashboard:
 
 | #   | Column                    | Description                                          |
 | --- | ------------------------- | ---------------------------------------------------- |
@@ -176,10 +178,13 @@ The script outputs 52 columns compatible with the performance dashboard:
 | 46  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
 | 47  | `spec_decoding`           | Speculative decoding method (empty if none)          |
 | 48  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
-| 49  | `turns`                   | Conversation turns for multiturn benchmarks          |
-| 50  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
-| 51  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
-| 52  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
+| 49  | `turn_index`              | Per-turn breakdown index (empty for aggregate rows)  |
+| 50  | `turns`                   | Conversation turns for multiturn benchmarks          |
+| 51  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
+| 52  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
+| 53  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
+| 54  | `mlflow_run_id`           | MLflow run UUID (from `--mlflow-run-id`, empty if not provided) |
+| 55  | `mlflow_experiment_id`    | MLflow experiment ID (from `--mlflow-experiment-id`, empty if not provided) |
 
 ## Notes
 
