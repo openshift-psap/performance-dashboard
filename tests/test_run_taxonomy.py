@@ -344,5 +344,9 @@ def test_manual_importer_emits_optional_label(tmp_path):
         label="pcon-mnbt",
     )
 
-    assert result["label"].tolist() == ["pcon-mnbt"]
+    assert result["version"].tolist() == ["vLLM-0.28.0-pcon-mnbt"]
+    assert "label" not in result.columns
+    normalized = normalize_taxonomy_columns(result)
+    assert normalized["version"].tolist() == ["vLLM-0.28.0"]
+    assert normalized["label"].tolist() == ["pcon-mnbt"]
     assert "user" not in result.columns

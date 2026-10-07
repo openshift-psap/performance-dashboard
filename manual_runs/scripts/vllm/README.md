@@ -47,7 +47,11 @@ python import_manual_runs_json_v2.py <json_file> \
 | `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
 | `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
 | `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
-| `--label`            | No       | Optional free-form dashboard label              | `pcon-mnbt`                             |
+| `--label`            | No       | Optional label appended to the existing `version` value | `pcon-mnbt`                     |
+
+The importer stores a label as part of `version` (for example,
+`vLLM-0.28.0-pcon-mnbt`), not as a separate CSV column. The dashboard derives
+the release `vLLM-0.28.0` and label `pcon-mnbt` from that value.
 
 ## Examples
 
@@ -119,8 +123,8 @@ python import_manual_runs_json_v2.py \
 ## Appending to Consolidated Dashboard
 
 To add the results to an existing dashboard CSV, pass the dashboard CSV as the
-importer's `--csv-file` value. The importer aligns missing optional columns,
-including `label`, before rewriting the combined file:
+importer's `--csv-file` value. The importer aligns its output to the dashboard
+column order before rewriting the combined file:
 
 ```bash
 python import_manual_runs_json_v2.py \
@@ -132,20 +136,19 @@ python import_manual_runs_json_v2.py \
   --csv-file ../../../consolidated_dashboard.csv
 ```
 
-Do not append generated CSV rows with `tail`: legacy dashboard CSVs may not
-have the optional `label` column, which would shift the appended fields.
+Use the importer to append rows rather than appending CSV lines manually, so
+values remain aligned with the dashboard column order.
 
 ## Output CSV Columns
 
-The script outputs 53 columns compatible with the performance dashboard:
+The script outputs 52 columns compatible with the performance dashboard:
 
 | #   | Column                    | Description                                          |
 | --- | ------------------------- | ---------------------------------------------------- |
 | 1   | `run`                     | Unique run identifier (`{accelerator}-{model}-{tp}`) |
 | 2   | `accelerator`             | GPU type (H200, MI300X, etc.)                        |
 | 3   | `model`                   | Model name                                           |
-| 4   | `version`                 | Framework version                                    |
-| 4a  | `label`                   | Optional free-form dashboard label                  |
+| 4   | `version`                 | Framework version, optionally suffixed with a run label |
 | 5   | `prompt toks`             | Configured prompt token count                        |
 | 6   | `output toks`             | Configured output token count                        |
 | 7   | `TP`                      | Tensor parallelism size                              |
