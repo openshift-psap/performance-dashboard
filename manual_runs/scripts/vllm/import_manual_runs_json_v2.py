@@ -38,7 +38,7 @@ def process_benchmark_section(
         benchmark: Benchmark data from JSON (guidellm 0.5.x format).
         accelerator: Accelerator type (e.g., H200, MI300X).
         model_name: Name of the AI model.
-        version: Version of the inference server.
+        version: Server version, optionally with a dashboard label suffix.
         tp_size: Tensor parallelism size (None for DP runs).
         runtime_args: Runtime configuration arguments.
         global_data_config: Global data configuration from top-level args.
@@ -208,6 +208,7 @@ def process_benchmark_section(
         "dataset": dataset,
         "spec_decoding": spec_decoding,
         "prefix_caching": prefix_caching,
+        "turn_index": "",
         "turns": turns,
         "prefix_tokens": detected_prefix_tokens
         if detected_prefix_tokens is not None
@@ -235,7 +236,6 @@ def parse_guidellm_json(
     dataset="",
     spec_decoding="",
     prefix_caching="",
-    label="",
 ):
     """Parse guidellm 0.5.x JSON benchmark results.
 
@@ -243,7 +243,7 @@ def parse_guidellm_json(
         json_path: Path to the JSON file.
         accelerator: Accelerator type.
         model_name: Name of the AI model.
-        version: Version of the inference server.
+        version: Server version, optionally with a dashboard label suffix.
         tp_size: Tensor parallelism size (None for DP runs).
         runtime_args: Runtime configuration arguments.
         image_tag: Container image tag used for the run.
@@ -253,7 +253,6 @@ def parse_guidellm_json(
         dataset: Dataset name for real-dataset runs (e.g., 'gpt-oss', 'sharegpt').
         spec_decoding: Speculative decoding method (e.g., 'eagle3').
         prefix_caching: Whether prefix caching is enabled ('yes', 'no', or '').
-        label: Optional label to append to the version value for dashboard filtering.
 
     Auto-detected from JSON:
         turns: Number of conversation turns (from args.data config).
@@ -286,10 +285,6 @@ def parse_guidellm_json(
     if not data.get("benchmarks"):
         print("Error: JSON file does not contain a 'benchmarks' key.")
         return None
-
-    label = (label or "").strip().strip("-")
-    if label:
-        version = f"{version.rstrip('-')}-{label}"
 
     benchmarks = data["benchmarks"]
 
@@ -372,7 +367,10 @@ def main():
     parser.add_argument(
         "--version",
         required=True,
-        help="Version/framework identifier (e.g., 'vLLM-0.13.0')",
+        help=(
+            "Version/framework identifier. Include an optional label suffix here "
+            "(e.g., 'vLLM-0.28.0-pcon-mnbt')."
+        ),
     )
     parser.add_argument(
         "--tp",
@@ -429,11 +427,6 @@ def main():
         "Leave empty if not applicable.",
     )
     parser.add_argument(
-        "--label",
-        default="",
-        help="Optional free-form dashboard label for this run (for example, pcon-mnbt).",
-    )
-    parser.add_argument(
         "--csv-file",
         default="new_benchmarks.csv",
         help="Path to the output CSV file (default: new_benchmarks.csv)",
@@ -464,7 +457,6 @@ def main():
         dataset=args.dataset,
         spec_decoding=args.spec_decoding,
         prefix_caching=args.prefix_caching,
-        label=args.label,
     )
 
     if new_data_df is not None and not new_data_df.empty:

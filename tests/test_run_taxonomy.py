@@ -317,7 +317,7 @@ def test_color_assignment_is_deterministic():
     assert colors["a"] != colors["b"]
 
 
-def test_manual_importer_emits_optional_label(tmp_path):
+def test_manual_importer_preserves_label_in_version(tmp_path):
     benchmark_json = {
         "metadata": {"guidellm_version": "0.6.0"},
         "args": {"data": [json.dumps({"prompt_tokens": 1000, "output_tokens": 1000})]},
@@ -336,12 +336,11 @@ def test_manual_importer_emits_optional_label(tmp_path):
         json_path,
         "B200",
         "test-model",
-        "vLLM-0.28.0",
+        "vLLM-0.28.0-pcon-mnbt",
         2,
         "tensor-parallel-size: 2",
         "image:tag",
         "0.6.0",
-        label="pcon-mnbt",
     )
 
     assert result["version"].tolist() == ["vLLM-0.28.0-pcon-mnbt"]
