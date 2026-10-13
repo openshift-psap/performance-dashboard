@@ -78,7 +78,7 @@ def _sync_performance_plot_query_params(
 def _render_methodology_note(versions):
     if any(uses_legacy_methodology(version) for version in versions):
         st.markdown(
-            "**📝 Methodology note:** This selection includes runs using the previous TTFT methodology. "
+            "**Methodology note:** This selection includes runs using the previous warmup and rampup methodology. "
             "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
         )
 
@@ -12624,7 +12624,9 @@ def main():
         default_models = [m for m in preferred_models if m in available_models]
 
         _default_accel = [
-            a for a in ["B200", "B300", "H200", "MI300X"] if a in available_accels
+            a
+            for a in ["B200", "B300", "H200", "MI300X", "MI355X"]
+            if a in available_accels
         ]
         default_profile = (
             "Profile A: Balanced (1k/1k)"
@@ -12834,7 +12836,7 @@ def main():
                 else []
             )
 
-            default_accelerators = ["B200", "B300", "H200", "MI300X"]
+            default_accelerators = ["B200", "B300", "H200", "MI300X", "MI355X"]
 
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
