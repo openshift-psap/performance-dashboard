@@ -143,6 +143,49 @@ def normalize_taxonomy_columns(df):
     return result
 
 
+def latest_run_rows(df):
+    """Keep the latest run's rows from an already-filtered comparison slice."""
+    if df.empty:
+        return df
+
+    run_ids = (
+        df["uuid"].fillna("").astype(str).str.strip()
+        if "uuid" in df.columns
+        else pd.Series("", index=df.index, dtype="string")
+    )
+    if "guidellm_start_time_ms" in df.columns:
+        start_times = pd.to_numeric(df["guidellm_start_time_ms"], errors="coerce")
+    else:
+        start_times = pd.Series(float("nan"), index=df.index)
+
+    if run_ids.eq("").all() and start_times.isna().all():
+        # shortcut: no ID/time means no run boundary; add a run ID at ingestion.
+        return df
+
+    run_ids = run_ids.mask(
+        run_ids.eq(""), "legacy:" + start_times.astype("string").fillna("unknown")
+    )
+    run_stats = (
+        pd.DataFrame(
+            {
+                "run_id": run_ids.to_numpy(),
+                "start_time": start_times.to_numpy(),
+                "position": range(len(df)),
+            }
+        )
+        .groupby("run_id", sort=False)
+        .agg(start_time=("start_time", "max"), position=("position", "max"))
+    )
+    if run_stats["start_time"].isna().any():
+        latest_run_id = run_stats.sort_values("position", kind="stable").index[-1]
+    else:
+        latest_run_id = (
+            run_stats.sort_values(["start_time", "position"], kind="stable")
+            .index[-1]
+        )
+    return df.iloc[(run_ids.eq(latest_run_id)).to_numpy().nonzero()[0]]
+
+
 def filter_taxonomy(df, versions=None, labels=None, uuids=None):
     """Apply the optional version/label/run filters to a DataFrame."""
     result = df

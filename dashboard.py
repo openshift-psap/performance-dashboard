@@ -42,6 +42,7 @@ from dashboard_taxonomy import (
     display_version_label,
     encode_query_mapping,
     is_valid_hex_color,
+    latest_run_rows,
     normalize_taxonomy_columns,
     parse_filter_values,
     split_legacy_version,
@@ -6581,7 +6582,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             return sorted(configs)
 
         def _slice_by_config(df, model, config):
-            """Return rows matching model and config tuple."""
+            """Return the latest run's rows for one model/config comparison slice."""
             model_data = df[df["model"] == model]
             ptype, pval = config[0], config[1]
             if ptype == "DP" and _has_dp:
@@ -6597,7 +6598,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 mask = mask & (model_data["turns"] == turns)
                 mask = mask & (model_data["prefix_tokens"] == pt)
                 mask = mask & (model_data["prefix_count"] == pc)
-            return model_data[mask]
+            # Keep this local: compare_two_datasets is shared by other dashboard sections.
+            return latest_run_rows(model_data[mask])
 
         def _config_label(config):
             ptype, pval = config[0], config[1]
@@ -6828,6 +6830,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 **Note**: Each accelerator-TP combination is compared independently across all common concurrency levels.
                     """)
         st.markdown(f"**Comparing:** {version_1_display} vs {version_2_display}")
+        st.caption(
+            "Each version/model/configuration uses rows from its latest run "
+            "(newest GuideLLM start time; CSV order is the fallback when timestamps are "
+            "missing). Rows without a run ID or timestamp cannot be separated."
+        )
 
         # Define metrics to compare (AIC mode hides metrics unavailable in AIC data)
         metrics_config = {
