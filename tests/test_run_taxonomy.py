@@ -13,6 +13,7 @@ from dashboard_taxonomy import (
     decode_version_label_pairs,
     deterministic_color_map,
     display_label,
+    display_version_label,
     encode_query_mapping,
     encode_version_label_pairs,
     filter_taxonomy,
@@ -115,7 +116,7 @@ def test_methodology_release_thresholds():
     assert not uses_legacy_methodology("sglang-0.5.5")
 
 
-def test_release_selection_defaults_to_plain_runs_until_label_is_selected():
+def test_selected_label_pair_includes_only_that_release_and_label():
     data = normalize_taxonomy_columns(
         pd.DataFrame(
             {
@@ -137,8 +138,17 @@ def test_release_selection_defaults_to_plain_runs_until_label_is_selected():
         release_rows, [("vLLM-0.24.0", "pcon")]
     ).tolist() == [False, True, False]
     assert version_label_pair_mask(
-        release_rows, [("vLLM-0.24.0", "pcon")], include_default=True
+        release_rows, [("vLLM-0.24.0", DEFAULT_LABEL)]
+    ).tolist() == [True, False, False]
+    assert version_label_pair_mask(
+        release_rows,
+        [("vLLM-0.24.0", DEFAULT_LABEL), ("vLLM-0.24.0", "pcon")],
     ).tolist() == [True, True, False]
+
+
+def test_label_filter_shows_base_release_for_unlabeled_run():
+    assert display_version_label("vLLM-0.24.0", DEFAULT_LABEL) == "vLLM-0.24.0"
+    assert display_version_label("vLLM-0.24.0", "pcon") == "vLLM-0.24.0-pcon"
 
 
 def test_unlabeled_display_uses_dash():

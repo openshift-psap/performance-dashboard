@@ -61,6 +61,12 @@ def display_label(value):
     return "—" if normalized in {DEFAULT_LABEL, UNLABELED} else normalized
 
 
+def display_version_label(version, label):
+    """Show the base release for unlabeled runs and append non-empty labels."""
+    display = display_label(label)
+    return str(version) if display == "—" else f"{version}-{display}"
+
+
 def split_legacy_version(version):
     """Split a release and label already encoded in a version value."""
     if not isinstance(version, str):
@@ -169,20 +175,14 @@ def decode_version_label_pairs(raw_value):
     ]
 
 
-def version_label_pair_mask(df, pairs, *, include_default=False):
+def version_label_pair_mask(df, pairs):
     """Return a mask for rows matching selected version/label pairs."""
     if not pairs:
         return pd.Series(True, index=df.index)
     if not {"version", "label"}.issubset(df.columns):
         return pd.Series(False, index=df.index)
     pair_index = pd.MultiIndex.from_frame(df[["version", "label"]].astype(str))
-    mask = pd.Series(pair_index.isin(set(pairs)), index=df.index)
-    if include_default:
-        selected_versions = {version for version, _ in pairs}
-        mask |= df["version"].isin(selected_versions) & df["label"].isin(
-            {DEFAULT_LABEL, UNLABELED}
-        )
-    return mask
+    return pd.Series(pair_index.isin(set(pairs)), index=df.index)
 
 
 def parse_filter_values(raw_value, available_values):

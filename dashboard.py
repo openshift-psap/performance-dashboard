@@ -39,6 +39,7 @@ from dashboard_taxonomy import (
     decode_version_label_pairs,
     deterministic_color_map,
     display_label,
+    display_version_label,
     encode_query_mapping,
     is_valid_hex_color,
     normalize_taxonomy_columns,
@@ -13328,20 +13329,25 @@ def main():
                 key="show_label_filter",
             )
             if st.session_state.show_label_filter:
-                label_pairs = (
-                    label_temp[["version", "label"]]
-                    .drop_duplicates()
-                    .sort_values(["version", "label"])
-                    if not label_temp.empty
-                    else pd.DataFrame(columns=["version", "label"])
-                )
+                label_pairs = label_temp[["version", "label"]].drop_duplicates()
+                if not label_pairs.empty:
+                    version_order = {
+                        version: index
+                        for index, version in enumerate(reversed(selected_versions))
+                    }
+                    label_pairs["_version_order"] = label_pairs["version"].map(
+                        version_order
+                    )
+                    label_pairs = label_pairs.sort_values(
+                        ["_version_order", "label"]
+                    ).drop(columns="_version_order")
                 pair_options = {}
                 pair_values = {}
                 for row in label_pairs.itertuples(index=False):
                     pair = (str(row.version), str(row.label))
                     pair_key = json.dumps(pair, separators=(",", ":"))
-                    pair_options[pair_key] = (
-                        f"{row.version} › {display_label(row.label)}"
+                    pair_options[pair_key] = display_version_label(
+                        row.version, row.label
                     )
                     pair_values[pair_key] = pair
 
@@ -13385,9 +13391,7 @@ def main():
 
             run_temp = (
                 label_temp[
-                    version_label_pair_mask(
-                        label_temp, selected_version_label_pairs, include_default=True
-                    )
+                    version_label_pair_mask(label_temp, selected_version_label_pairs)
                 ]
                 if selected_version_label_pairs
                 else label_temp[label_temp["label"].eq(DEFAULT_LABEL)]
@@ -13415,9 +13419,7 @@ def main():
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
             if selected_version_label_pairs:
                 temp_df = temp_df[
-                    version_label_pair_mask(
-                        temp_df, selected_version_label_pairs, include_default=True
-                    )
+                    version_label_pair_mask(temp_df, selected_version_label_pairs)
                 ]
             else:
                 temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
@@ -13531,9 +13533,7 @@ def main():
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
             if selected_version_label_pairs:
                 temp_df = temp_df[
-                    version_label_pair_mask(
-                        temp_df, selected_version_label_pairs, include_default=True
-                    )
+                    version_label_pair_mask(temp_df, selected_version_label_pairs)
                 ]
             else:
                 temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
@@ -13852,9 +13852,7 @@ def main():
                 else True
             )
             _label = (
-                version_label_pair_mask(
-                    d, selected_version_label_pairs, include_default=True
-                )
+                version_label_pair_mask(d, selected_version_label_pairs)
                 if selected_version_label_pairs
                 else d["label"].eq(DEFAULT_LABEL)
             )
