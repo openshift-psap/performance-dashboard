@@ -80,7 +80,7 @@ def _render_methodology_note(versions):
     if any(uses_legacy_methodology(version) for version in versions):
         st.markdown(
             "**Methodology note:** This selection includes runs using the previous warmup and rampup methodology. "
-            "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmark methodology."
+            "vLLM v0.26.0+ and RHAIIS 3.6+ use the updated benchmarking methodology."
         )
 
 
@@ -13333,14 +13333,17 @@ def main():
                 if not label_pairs.empty:
                     version_order = {
                         version: index
-                        for index, version in enumerate(reversed(selected_versions))
+                        for index, version in enumerate(selected_versions)
                     }
                     label_pairs["_version_order"] = label_pairs["version"].map(
                         version_order
                     )
+                    label_pairs["_label_order"] = label_pairs["label"].map(
+                        lambda label: display_label(label) != "—"
+                    )
                     label_pairs = label_pairs.sort_values(
-                        ["_version_order", "label"]
-                    ).drop(columns="_version_order")
+                        ["_label_order", "_version_order", "label"]
+                    ).drop(columns=["_version_order", "_label_order"])
                 pair_options = {}
                 pair_values = {}
                 for row in label_pairs.itertuples(index=False):
