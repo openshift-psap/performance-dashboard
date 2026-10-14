@@ -44,7 +44,9 @@ from dashboard_taxonomy import (
     is_valid_hex_color,
     latest_run_rows,
     normalize_taxonomy_columns,
+    parse_accelerator_values,
     parse_filter_values,
+    parse_version_filter_values,
     split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
@@ -12156,6 +12158,12 @@ def main():
             all_models = sorted(df["model"].unique().tolist())
             all_versions = sorted(df["version"].unique().tolist())
             all_labels = sorted(df["label"].unique().tolist())
+            all_version_label_pairs = set(
+                df[["version", "label"]]
+                .drop_duplicates()
+                .astype(str)
+                .itertuples(index=False, name=None)
+            )
             all_uuids = sorted(u for u in df["uuid"].unique().tolist() if u)
             all_profiles = sorted(df["profile"].dropna().astype(str).unique().tolist())
             all_tp_sizes = sorted(df["TP"].dropna().unique().tolist())
@@ -12163,17 +12171,20 @@ def main():
             url_accelerators = []
             url_models = []
             url_versions = []
+            url_version_label_pairs = decode_version_label_pairs(
+                query_params.get("version_labels")
+            )
             url_labels = []
             url_uuids = []
             url_profile = None
             url_tp_sizes = []
 
             if "accelerators" in query_params:
-                url_accelerators = [
-                    acc.strip()
-                    for acc in query_params["accelerators"].split(",")
-                    if acc.strip() in all_accelerators
-                ]
+                url_accelerators = parse_accelerator_values(
+                    query_params["accelerators"],
+                    all_accelerators,
+                    ACCELERATOR_DISPLAY_NAMES,
+                )
 
             if "models" in query_params:
                 url_models = [
@@ -12182,15 +12193,22 @@ def main():
                     if model.strip() in all_models
                 ]
 
-            if "versions" in query_params:
-                url_versions = [
-                    ver.strip()
-                    for ver in query_params["versions"].split(",")
-                    if ver.strip() in all_versions
-                ]
-
             if "labels" in query_params:
                 url_labels = parse_filter_values(query_params["labels"], all_labels)
+
+            if "versions" in query_params:
+                url_versions, inferred_version_label_pairs = (
+                    parse_version_filter_values(
+                        query_params["versions"],
+                        all_versions,
+                        all_version_label_pairs,
+                        include_default_for_exact=not bool(
+                            url_labels or url_version_label_pairs
+                        ),
+                    )
+                )
+                if not url_version_label_pairs:
+                    url_version_label_pairs = inferred_version_label_pairs
 
             if "uuids" in query_params:
                 url_uuids = parse_filter_values(query_params["uuids"], all_uuids)
@@ -12351,6 +12369,7 @@ def main():
                 url_accelerators,
                 url_models,
                 url_versions,
+                url_version_label_pairs,
                 url_labels,
                 url_uuids,
                 url_profile,
@@ -12525,6 +12544,7 @@ def main():
                 url_accelerators,
                 url_models,
                 url_versions,
+                url_version_label_pairs,
                 url_labels,
                 url_uuids,
                 url_profile,
@@ -12541,9 +12561,6 @@ def main():
                 url_spec_decoding,
                 url_prefix_caching,
             ) = decode_filters_from_url()
-            url_version_label_pairs = decode_version_label_pairs(
-                st.query_params.get("version_labels")
-            )
             url_appearance_colors = {
                 key: value
                 for key, value in decode_query_mapping(

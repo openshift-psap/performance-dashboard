@@ -245,6 +245,80 @@ def parse_filter_values(raw_value, available_values):
     ]
 
 
+def parse_accelerator_values(raw_value, available_values, display_names):
+    """Resolve exact accelerator values and the legacy NVIDIA vendor alias."""
+    # shortcut: new short-form NVIDIA keys need a display-name entry to match this alias.
+    if not raw_value:
+        return []
+    available_values = list(available_values)
+    available_set = set(available_values)
+    resolved = []
+    for value in str(raw_value).split(","):
+        value = value.strip()
+        if value in available_set:
+            resolved.append(value)
+        elif value.casefold() == "nvidia":
+            resolved.extend(
+                accelerator
+                for accelerator in available_values
+                if (
+                    str(display_names.get(accelerator, accelerator)).casefold()
+                    == "nvidia"
+                    or str(display_names.get(accelerator, accelerator))
+                    .casefold()
+                    .startswith("nvidia ")
+                )
+            )
+    return list(dict.fromkeys(resolved))
+
+
+def parse_version_filter_values(
+    raw_value,
+    available_versions,
+    available_version_label_pairs,
+    *,
+    include_default_for_exact=False,
+):
+    """Resolve exact versions and older URLs with labels embedded in versions."""
+    if not raw_value:
+        return [], []
+
+    available_versions = set(available_versions)
+    available_pairs = {tuple(pair) for pair in available_version_label_pairs}
+    versions = []
+    inferred_pairs = []
+    exact_versions = []
+    for value in str(raw_value).split(","):
+        value = value.strip()
+        if not value:
+            continue
+        if value in available_versions:
+            if value not in versions:
+                versions.append(value)
+            exact_versions.append(value)
+            continue
+
+        version, label = split_legacy_version(value)
+        pair = (str(version), str(label))
+        if (
+            version != value
+            and version in available_versions
+            and pair in available_pairs
+        ):
+            if version not in versions:
+                versions.append(version)
+            if pair not in inferred_pairs:
+                inferred_pairs.append(pair)
+
+    if include_default_for_exact and inferred_pairs:
+        for version in exact_versions:
+            pair = (version, DEFAULT_LABEL)
+            if pair in available_pairs and pair not in inferred_pairs:
+                inferred_pairs.append(pair)
+
+    return versions, inferred_pairs
+
+
 def sync_selected_options(previous, available, *, select_all=False):
     """Return widget state that stays aligned with its current options."""
     available = list(available)

@@ -20,7 +20,9 @@ from dashboard_taxonomy import (
     is_valid_hex_color,
     normalize_label,
     normalize_taxonomy_columns,
+    parse_accelerator_values,
     parse_filter_values,
+    parse_version_filter_values,
     split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
@@ -104,6 +106,44 @@ def test_normalization_preserves_composite_source_version():
     assert result["version"].tolist() == ["vLLM-0.24.0", "RHAIIS-3.5-GA"]
     assert result["label"].tolist() == ["nn-d1", DEFAULT_LABEL]
     assert result["legacy_version"].tolist() == ["vLLM-0.24.0-nn-d1", ""]
+
+
+def test_old_version_urls_resolve_labels_without_splitting_rhaiis_36_versions():
+    data = normalize_taxonomy_columns(
+        pd.DataFrame(
+            {
+                "version": [
+                    "vLLM-0.24.0",
+                    "vLLM-0.24.0-pcon",
+                    "RHAIIS-3.6-fast2",
+                ]
+            }
+        )
+    )
+
+    versions, pairs = parse_version_filter_values(
+        "vLLM-0.24.0,vLLM-0.24.0-pcon,RHAIIS-3.6-fast2",
+        data["version"].unique(),
+        data[["version", "label"]].drop_duplicates().itertuples(index=False, name=None),
+        include_default_for_exact=True,
+    )
+
+    assert versions == ["vLLM-0.24.0", "RHAIIS-3.6-fast2"]
+    assert set(pairs) == {
+        ("vLLM-0.24.0", DEFAULT_LABEL),
+        ("vLLM-0.24.0", "pcon"),
+        ("RHAIIS-3.6-fast2", DEFAULT_LABEL),
+    }
+
+
+def test_nvidia_url_alias_resolves_to_available_nvidia_accelerators():
+    accelerators = parse_accelerator_values(
+        "nvidia",
+        ["B200", "H200", "MI355X", "TPU"],
+        {"B200": "NVIDIA B200", "H200": "NVIDIA H200", "MI355X": "AMD MI355X"},
+    )
+
+    assert accelerators == ["B200", "H200"]
 
 
 def test_methodology_release_thresholds():
