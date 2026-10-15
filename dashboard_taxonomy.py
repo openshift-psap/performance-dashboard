@@ -143,11 +143,8 @@ def normalize_taxonomy_columns(df):
     return result
 
 
-def latest_run_rows(df):
-    """Keep the latest run's rows from an already-filtered comparison slice."""
-    if df.empty:
-        return df
-
+def run_identity(df):
+    """Return the run key used to group rows in a comparison slice."""
     run_ids = (
         df["uuid"].fillna("").astype(str).str.strip()
         if "uuid" in df.columns
@@ -158,13 +155,26 @@ def latest_run_rows(df):
     else:
         start_times = pd.Series(float("nan"), index=df.index)
 
-    if run_ids.eq("").all() and start_times.isna().all():
+    return run_ids.mask(
+        run_ids.eq(""), "legacy:" + start_times.astype("string").fillna("unknown")
+    )
+
+
+def latest_run_rows(df):
+    """Keep the latest run's rows from an already-filtered comparison slice."""
+    if df.empty:
+        return df
+
+    run_ids = run_identity(df)
+    if "guidellm_start_time_ms" in df.columns:
+        start_times = pd.to_numeric(df["guidellm_start_time_ms"], errors="coerce")
+    else:
+        start_times = pd.Series(float("nan"), index=df.index)
+
+    if run_ids.eq("legacy:unknown").all() and start_times.isna().all():
         # shortcut: no ID/time means no run boundary; add a run ID at ingestion.
         return df
 
-    run_ids = run_ids.mask(
-        run_ids.eq(""), "legacy:" + start_times.astype("string").fillna("unknown")
-    )
     run_stats = (
         pd.DataFrame(
             {
