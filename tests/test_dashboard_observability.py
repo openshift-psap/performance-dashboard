@@ -46,6 +46,25 @@ def test_grafana_link_uses_accelerator_dashboard():
     assert "/d/psap-b200-mlperf/vllm-2b-dcgm-metrics-psap-b200-mlperf" in link
 
 
+def test_grafana_link_uses_mi355x_dashboard():
+    row = pd.Series(
+        {
+            "accelerator": "MI355X",
+            "run": "MI355X-model-tp1",
+            "version": "RHAIIS-3.6",
+            "guidellm_start_time_ms": 1767000000000,
+            "guidellm_end_time_ms": 1767000005000,
+            "uuid": "mi355x-run-uuid",
+        }
+    )
+
+    link = create_grafana_link(row)
+
+    assert "/d/mi355x-rocm-gpu/vllm-2b-rocm-gpu-metrics-mi355x" in link
+    assert "var-deployment_uuid=mi355x-run-uuid" in link
+    assert "var-cluster_name=sno-mi355x" in link
+
+
 def test_mlflow_link_uses_experiment_and_run_ids():
     row = pd.Series({"mlflow_run_id": "abc123", "mlflow_experiment_id": "42"})
 
