@@ -25,6 +25,11 @@ GRAFANA_DASHBOARDS = {
         "dashboard_id": "amd-ods-az-amd-01",
         "dashboard_name": "vllm-2b-rocm-gpu-metrics-ods-az-amd-01",
     },
+    "MI355X": {
+        "dashboard_id": "mi355x-rocm-gpu",
+        "dashboard_name": "vllm-2b-rocm-gpu-metrics-mi355x",
+        "extra_params": "&var-cluster_name=sno-mi355x",
+    },
     "B200": {
         "dashboard_id": "psap-b200-mlperf",
         "dashboard_name": "vllm-2b-dcgm-metrics-psap-b200-mlperf",
