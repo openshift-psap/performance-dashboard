@@ -38,9 +38,20 @@ GRAFANA_DASHBOARDS = {
         "dashboard_id": "d35f19c8f56250",
         "dashboard_name": "vllm-2b-dcgm-metrics-psap-zeus-syd",
     },
+    "H200_ATHENA": {
+        "dashboard_id": "df28i54z7okcgf",
+        "dashboard_name": "vllm-2b-dcgm-complete-metrics-combined",
+        "extra_params": "&var-cluster_name=psap-fire-athena",
+    },
+    "H200_JANUS": {
+        "dashboard_id": "df28i54z7okcgf",
+        "dashboard_name": "vllm-2b-dcgm-complete-metrics-combined",
+        "extra_params": "&var-cluster_name=psap-de-h200-cluster",
+    },
     "B200_PIRATE": {
-        "dashboard_id": "b200-pirate-vllm-dcgm",
-        "dashboard_name": "vllm-2b-dcgm-metrics-b200-pirate",
+        "dashboard_id": "df28i54z7okcgf",
+        "dashboard_name": "vllm-2b-dcgm-complete-metrics-combined",
+        "extra_params": "&var-cluster_name=psap-b200-nm",
     },
 }
 
@@ -49,10 +60,22 @@ _SGLANG_H200_DASHBOARD = {
     "dashboard_name": "sglang-2b-dcgm-metrics-psap-rhaiis-h200",
     "extra_params": "&var-cluster_name=$__all&var-model_name=$__all",
 }
+_SGLANG_ATHENA_DASHBOARD = {
+    "dashboard_id": "sglang-dcgm-metrics-psap-rhaiis-h200",
+    "dashboard_name": "sglang-2b-dcgm-metrics-psap-rhaiis-h200",
+    "extra_params": "&var-cluster_name=psap-fire-athena&var-model_name=$__all",
+}
+_SGLANG_JANUS_DASHBOARD = {
+    "dashboard_id": "sglang-dcgm-metrics-psap-rhaiis-h200",
+    "dashboard_name": "sglang-2b-dcgm-metrics-psap-rhaiis-h200",
+    "extra_params": "&var-cluster_name=psap-de-h200-cluster&var-model_name=$__all",
+}
 SGLANG_GRAFANA_DASHBOARDS = {
     "H200": _SGLANG_H200_DASHBOARD,
     "H200_HERA2": _SGLANG_H200_DASHBOARD,
     "H200_ZEUS2": _SGLANG_H200_DASHBOARD,
+    "H200_ATHENA": _SGLANG_ATHENA_DASHBOARD,
+    "H200_JANUS": _SGLANG_JANUS_DASHBOARD,
 }
 
 # Jan 1, 2026 00:00:00 UTC in milliseconds.
@@ -105,6 +128,22 @@ def _is_zeus2_run(run_name):
     return upper.startswith("H200-ZEUS2-") or upper.startswith("H200_ZEUS2-")
 
 
+def _is_athena_run(run_name):
+    """Check if a run belongs to the Athena cluster."""
+    if not isinstance(run_name, str):
+        return False
+    upper = run_name.upper()
+    return upper.startswith("ATHENA-") or upper.startswith("ATHENA_")
+
+
+def _is_janus_run(run_name):
+    """Check if a run belongs to the Janus cluster."""
+    if not isinstance(run_name, str):
+        return False
+    upper = run_name.upper()
+    return upper.startswith("JANUS-") or upper.startswith("JANUS_")
+
+
 def create_grafana_link(row):
     """Create the same cluster- and date-aware Grafana link used by Filtered Data."""
     start_time = row.get("guidellm_start_time_ms")
@@ -122,7 +161,11 @@ def create_grafana_link(row):
     if start_ms is None or end_ms is None:
         return None
 
-    if _is_hera2_run(run_name):
+    if _is_athena_run(run_name):
+        dashboard_key = "H200_ATHENA"
+    elif _is_janus_run(run_name):
+        dashboard_key = "H200_JANUS"
+    elif _is_hera2_run(run_name):
         dashboard_key = "H200_HERA2"
     elif _is_hera_run(run_name):
         dashboard_key = "H200_HERA"
@@ -194,17 +237,27 @@ def build_compare_filtered_rows(
     comparison_pairs,
     slice_by_config,
     selected_concurrencies,
+    label_1=None,
+    label_2=None,
 ):
-    """Collect only source rows represented by the displayed comparison pairs."""
+    """Collect only latest source rows represented by the comparison pairs."""
     filtered_rows = []
-    for source_df, config_index in ((version_1_rows, 0), (version_2_rows, 1)):
-        for model, config_1, config_2 in comparison_pairs:
-            config = (config_1, config_2)[config_index]
+    sources = (
+        (version_1_rows, label_1),
+        (version_2_rows, label_2),
+    )
+
+    for model, config_1, config_2 in comparison_pairs:
+        for (source_df, label), config in zip(sources, (config_1, config_2)):
             rows = slice_by_config(source_df, model, config)
             if selected_concurrencies:
                 rows = rows[rows["intended concurrency"].isin(selected_concurrencies)]
-            if not rows.empty:
-                filtered_rows.append(rows)
+            if rows.empty:
+                continue
+            rows = rows.copy()
+            if "label" in source_df.columns and label is not None:
+                rows["label"] = label
+            filtered_rows.append(rows)
 
     if not filtered_rows:
         return version_1_rows.iloc[0:0].copy()
