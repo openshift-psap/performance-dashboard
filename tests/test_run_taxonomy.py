@@ -27,7 +27,7 @@ from dashboard_taxonomy import (
     sync_selected_options,
     taxonomy_query_params,
     uses_legacy_methodology,
-    version_label_pair_mask,
+    version_label_additive_mask,
 )
 from manual_runs.scripts.vllm.import_manual_runs_json_v2 import parse_guidellm_json
 
@@ -174,15 +174,16 @@ def test_selected_label_pair_includes_only_that_release_and_label():
     assert release_rows.loc[
         release_rows["label"] == DEFAULT_LABEL, "uuid"
     ].tolist() == ["default"]
-    assert version_label_pair_mask(
-        release_rows, [("vLLM-0.24.0", "pcon")]
+    assert version_label_additive_mask(
+        release_rows, [("vLLM-0.24.0", "pcon")], ["vLLM-0.24.0"]
     ).tolist() == [False, True, False]
-    assert version_label_pair_mask(
-        release_rows, [("vLLM-0.24.0", DEFAULT_LABEL)]
+    assert version_label_additive_mask(
+        release_rows, [("vLLM-0.24.0", DEFAULT_LABEL)], ["vLLM-0.24.0"]
     ).tolist() == [True, False, False]
-    assert version_label_pair_mask(
+    assert version_label_additive_mask(
         release_rows,
         [("vLLM-0.24.0", DEFAULT_LABEL), ("vLLM-0.24.0", "pcon")],
+        ["vLLM-0.24.0"],
     ).tolist() == [True, True, False]
 
 
@@ -248,11 +249,13 @@ def test_version_label_pairs_preserve_release_scope():
             "label": ["pcon", "pcon", "pcoff"],
         }
     )
-    assert version_label_pair_mask(data, [("vLLM-0.23.0", "pcon")]).tolist() == [
-        True,
-        False,
-        False,
-    ]
+    # vLLM-0.24.0 is selected but unpaired and has no default-label rows,
+    # so all of its rows stay visible (issue #121 additive semantics).
+    assert version_label_additive_mask(
+        data,
+        [("vLLM-0.23.0", "pcon")],
+        ["vLLM-0.23.0", "vLLM-0.24.0"],
+    ).tolist() == [True, True, True]
 
 
 def test_appearance_query_mapping_round_trip():
@@ -365,6 +368,111 @@ def test_color_assignment_is_deterministic():
     colors = deterministic_color_map(["b", "a"])
     assert colors == deterministic_color_map(["a", "b"])
     assert colors["a"] != colors["b"]
+
+
+def test_additive_mask_keeps_other_versions_when_label_selected():
+    """Regression test for GitHub issue #121.
+
+    Selecting a label for one version must NOT drop other selected
+    versions that have no label pair selected.
+    """
+    data = pd.DataFrame(
+        {
+            "version": [
+                "RHAIIS-3.6-fast1",
+                "vLLM-0.26.0",
+                "vLLM-0.24.0",
+                "vLLM-0.24.0",
+            ],
+            "label": [
+                DEFAULT_LABEL,
+                DEFAULT_LABEL,
+                DEFAULT_LABEL,
+                "warmup-rampup",
+            ],
+        }
+    )
+    selected_versions = ["RHAIIS-3.6-fast1", "vLLM-0.26.0", "vLLM-0.24.0"]
+
+    # Scenario: user selects label "warmup-rampup" for vLLM-0.24.0 only.
+    # The other two versions have no label selection.
+    pairs = [("vLLM-0.24.0", "warmup-rampup")]
+    mask = version_label_additive_mask(data, pairs, selected_versions)
+
+    # All 3 versions should be kept: the labeled vLLM-0.24.0 row,
+    # plus the default-label rows for the other two versions.
+    assert mask.tolist() == [True, True, False, True]
+
+
+def test_additive_mask_no_pairs_shows_default_labels():
+    """When no label pairs are selected, only default-label rows survive."""
+    data = pd.DataFrame(
+        {
+            "version": ["vLLM-0.24.0", "vLLM-0.24.0"],
+            "label": [DEFAULT_LABEL, "warmup-rampup"],
+        }
+    )
+    mask = version_label_additive_mask(data, [], ["vLLM-0.24.0"])
+    assert mask.tolist() == [True, False]
+
+
+def test_additive_mask_all_versions_have_pairs():
+    """When every selected version has a label pair, only paired rows match."""
+    data = pd.DataFrame(
+        {
+            "version": ["vLLM-0.24.0", "vLLM-0.26.0", "vLLM-0.24.0"],
+            "label": [DEFAULT_LABEL, "beta", DEFAULT_LABEL],
+        }
+    )
+    pairs = [("vLLM-0.24.0", DEFAULT_LABEL), ("vLLM-0.26.0", "beta")]
+    mask = version_label_additive_mask(data, pairs, ["vLLM-0.24.0", "vLLM-0.26.0"])
+    assert mask.tolist() == [True, True, True]
+
+
+def test_additive_mask_keeps_rows_for_version_without_default_label():
+    data = pd.DataFrame(
+        {
+            "version": ["X", "X", "Y", "Y"],
+            "label": [DEFAULT_LABEL, "beta", "beta", "gamma"],
+        }
+    )
+
+    # Y is unpaired and has no default rows, so all of its rows survive.
+    mask = version_label_additive_mask(data, [("X", "beta")], ["X", "Y"])
+    assert mask.tolist() == [False, True, True, True]
+
+
+def test_additive_mask_coerces_version_and_label_types():
+    data = pd.DataFrame({"version": [1, 2], "label": [DEFAULT_LABEL, DEFAULT_LABEL]})
+
+    mask = version_label_additive_mask(data, [("1", DEFAULT_LABEL)], ["1", "2"])
+    assert mask.tolist() == [True, True]
+
+
+def test_additive_mask_ignores_stale_pairs_and_missing_selection():
+    data = pd.DataFrame(
+        {
+            "version": ["A", "A", "B"],
+            "label": [DEFAULT_LABEL, "x", DEFAULT_LABEL],
+        }
+    )
+
+    # A pair matching no rows contributes nothing.
+    assert version_label_additive_mask(
+        data, [("C", "y")], ["A", "B"]
+    ).tolist() == [True, False, True]
+    assert version_label_additive_mask(data, [("A", "x")], None).tolist() == [
+        False,
+        True,
+        False,
+    ]
+
+
+def test_additive_mask_missing_columns_return_all_false():
+    data = pd.DataFrame({"version": ["A"]})
+
+    assert not version_label_additive_mask(data, [], ["A"]).any()
+    assert not version_label_additive_mask(data, [("A", "x")], ["A"]).any()
 
 
 def test_manual_importer_preserves_label_in_version(tmp_path):
