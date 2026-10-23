@@ -31,6 +31,7 @@ from dashboard_styles import (
     initialize_session_state,
     initialize_streamlit_config,
 )
+from version_comparison import compare_version_runs
 
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
@@ -6362,77 +6363,27 @@ def render_compare_versions_summary_section(df, use_expander=True):
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
                 st.markdown("""
-                **Mean Change Calculation:**
-                - Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average) of all those changes
-                - Shows the average performance difference across all concurrency levels
-                - Can be affected by outliers (extreme values)
-                - Formula: `mean([(v1 - v2) / v2 x 100 for each concurrency level])`
+                **Per-run metrics**
+                - Each run UUID is one sample, grouped within the selected model and configuration.
+                - Peak throughput uses common concurrency levels. Geometric means use the selected common levels.
 
-                **Median Change Calculation:**
-                - Calculated by taking the percentage change at each common concurrency level, then taking the median of all those changes
-                - Shows the typical performance difference across all concurrency levels
-                - More robust to outliers than mean - better represents typical performance
-                - Formula: `median([(v1 - v2) / v2 x 100 for each concurrency level])`
+                **Values and uncertainty**
+                - V1 is the baseline and V2 is the comparison. The signed delta is V2 minus V1, in the metric's displayed unit.
+                - Each version's value is the median of its valid run-level metrics.
+                - The 95% bootstrap interval repeatedly resamples run metrics and estimates the difference between medians.
 
-                **Geometric Mean Change Calculation:**
+                **Regression status**
+                - Throughput regression: the entire interval is below zero. Latency regression: the entire interval is above zero.
+                - An interval in the opposite direction indicates improvement; an interval crossing zero means no clear change.
+                - Fewer than five valid run UUIDs per version is Inconclusive.
+                - Missing/shared UUIDs, duplicate rows for the same run/configuration/concurrency, and runs without all required concurrency levels are excluded.
 
-                *Step 1: Convert % changes to Growth Factors*
-                - A **growth factor** is a multiplier that represents the ratio between V1 and V2
-                - Formula: `growth_factor = 1 + (% change / 100)`
-                - Examples:
-                  - +10% → `1 + (10/100)` = **1.10** → means V1 is 110% of V2 (10% larger)
-                  - -20% → `1 + (-20/100)` = **0.80** → means V1 is 80% of V2 (20% smaller)
-                  - 0% → `1 + (0/100)` = **1.00** → means V1 equals V2 (no change)
-
-                *Step 2: Compute Geometric Mean of Growth Factors*
-                - Multiply all growth factors together, then take the nth root
-                - Formula: `geom_mean_factor = (∏ growth_factors)^(1/n)`
-                - Example: For [1.10, 0.90], geom_mean = (1.10 x 0.90)^0.5 = 0.99^0.5 ≈ 0.995
-
-                *Step 3: Convert back to % change*
-                - Formula: `geom_mean_% = (geom_mean_factor - 1) x 100`
-                - Example: 1.10 - 1 = 0.10 → 0.10 x 100 = +10%
-                - Example: 0.95 - 1 = -0.05 → -0.05 x 100 = -5%
-                - **Why subtract 1?** Because a growth factor of 1.00 means "no change" (0%). The "1" represents the original value, so we subtract it to isolate just the change portion.
-
-                *Why use Geometric Mean?*
-                - Arithmetic mean of +100% and -50% = +25% ❌ (misleading!)
-                - Geometric mean: (2.0 x 0.5)^0.5 - 1 = 1.0 - 1 = 0% ✅ (correct: doubling then halving = no net change)
-                - Better for ratios/percentages because it respects multiplicative relationships
-
-                **Peak Change Calculation:**
-                - **For Throughput**: `((Version 1 Max - Version 2 Max) / Version 2 Max) x 100`
-                  - Compares maximum throughput values (best = highest performance)
-                  - Higher is better
-                - **For Latency (TTFT/ITL)**: `((Version 1 Latency @ Max Throughput - Version 2 Latency @ Max Throughput) / Version 2 Latency @ Max Throughput) x 100`
-                  - Compares latency values at the concurrency where max throughput occurs for each version
-                  - This shows latency characteristics at peak performance
-                  - Lower is better
-
-                **How to Interpret the Percentage Values:**
-
-                The percentage shows how much higher or lower V1's values are compared to V2:
-                - **+X%** means V1's metric value is X% **higher** than V2's
-                - **-X%** means V1's metric value is X% **lower** than V2's
-
-                | Metric Type | +X% means | -X% means |
-                |-------------|-----------|-----------|
-                | **Throughput** | V1 is X% faster ✅ | V1 is X% slower ❌ |
-                | **Latency (TTFT/ITL)** | V1 is X% slower ❌ | V1 is X% faster ✅ |
-
-                *Example*: If TTFT shows +10%, it means V1's time-to-first-token is 10% higher (slower) than V2's.
-
-                **Status Classification:**
-                The status emoji is determined by consensus across all four metrics (Mean, Median, Geometric Mean, and Peak change):
-                - 🟢 **Better**: At least 3 out of 4 metrics show ≥5% improvement
-                - 🟡 **Similar**: Mixed signals (some metrics up, some down) or all metrics show <5% difference
-                - 🔴 **Worse**: At least 3 out of 4 metrics show ≥5% decline
-
-                This consensus approach provides a more robust assessment by requiring multiple metrics to agree before declaring a clear winner or loser.
-
-                **Note**: Each accelerator-TP combination is compared independently across all common concurrency levels.
+                This is a noise-based signal, not an SLO check or a measure of user impact.
                     """)
-        st.markdown(f"**Comparing:** {version_1} vs {version_2}")
+        st.markdown(
+            f"**V1 (baseline):** {version_1} &nbsp;|&nbsp; "
+            f"**V2 (comparison):** {version_2}"
+        )
 
         # Define metrics to compare
         metrics_config = {
@@ -6440,73 +6391,99 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 "column": "output_tok/sec",
                 "aggregation": "peak",
                 "higher_is_better": True,
-                "show_concurrency": True,
+                "unit": "tok/s",
+                "display_scale": 1,
+                "decimals": 1,
             },
             "Output Throughput (Geometric Mean)": {
                 "column": "output_tok/sec",
                 "aggregation": "geom_mean",
                 "higher_is_better": True,
-                "show_concurrency": False,
+                "unit": "tok/s",
+                "display_scale": 1,
+                "decimals": 1,
             },
             "Total Throughput (Geometric Mean)": {
                 "column": "total_tok/sec",
                 "aggregation": "geom_mean",
                 "higher_is_better": True,
-                "show_concurrency": False,
+                "unit": "tok/s",
+                "display_scale": 1,
+                "decimals": 1,
             },
             "End-to-End Latency (Geometric Mean)": {
                 "column": "request_latency_median",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
-                "show_concurrency": False,
+                "unit": "s",
+                "display_scale": 1,
+                "decimals": 3,
             },
             "TTFT P95 (Geometric Mean)": {
                 "column": "ttft_p95",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
-                "show_concurrency": False,
+                "unit": "s",
+                "display_scale": 0.001,
+                "decimals": 3,
             },
             "ITL P95 (Geometric Mean)": {
                 "column": "itl_p95",
                 "aggregation": "geom_mean",
                 "higher_is_better": False,
-                "show_concurrency": False,
+                "unit": "ms",
+                "display_scale": 1,
+                "decimals": 1,
             },
         }
 
-        get_comparison_result = compare_two_datasets
+        st.caption(
+            "Each UUID counts once. Missing or shared UUIDs, duplicate rows for a "
+            "run/configuration/concurrency, and runs missing required concurrency "
+            "levels are excluded."
+        )
 
-        # Check for duplicate rows within each comparison slice
-        dup_warnings = []
-        _seen_dup_checks = set()
-        for model, v1_cfg, v2_cfg in comparison_pairs:
-            for df_check, ver_name, cfg in [
-                (df_v1, version_1, v1_cfg),
-                (df_v2, version_2, v2_cfg),
-            ]:
-                dup_key = (ver_name, model, cfg)
-                if dup_key in _seen_dup_checks:
-                    continue
-                _seen_dup_checks.add(dup_key)
-                subset = _slice_by_config(df_check, model, cfg)
-                conc_counts = subset["intended concurrency"].value_counts()
-                dups = conc_counts[conc_counts > 1]
-                if not dups.empty:
-                    m_short = model.split("/")[-1] if "/" in model else model
-                    conc_list = ", ".join(str(int(c)) for c in sorted(dups.index))
-                    dup_warnings.append(
-                        f"**{ver_name}** — {m_short} ({_config_label(cfg)}): "
-                        f"duplicate rows at concurrency {conc_list}"
-                    )
-        if dup_warnings:
-            st.warning(
-                "⚠️ **Duplicate data rows detected** — geometric mean results may be "
-                "skewed. Consider removing duplicates from the CSV.\n\n"
-                + "\n".join(f"- {w}" for w in dup_warnings)
+        def _format_metric_value(value, metric_config, signed=False):
+            if value is None or pd.isna(value):
+                return "N/A"
+            value *= metric_config["display_scale"]
+            sign = "+" if signed and value >= 0 else ""
+            return (
+                f"{sign}{value:,.{metric_config['decimals']}f} {metric_config['unit']}"
+            )
+
+        def _format_comparison_cell(comparison, metric_config):
+            if comparison["status"] == "N/A":
+                return "N/A"
+
+            v1 = _format_metric_value(comparison["median_v1"], metric_config)
+            v2 = _format_metric_value(comparison["median_v2"], metric_config)
+            delta = _format_metric_value(
+                comparison["delta"], metric_config, signed=True
+            )
+            cell = f"V1 {v1}; V2 {v2}; Δ {delta}"
+            if comparison["ci_low"] is not None:
+                ci_low = _format_metric_value(
+                    comparison["ci_low"], metric_config, signed=True
+                )
+                ci_high = _format_metric_value(
+                    comparison["ci_high"], metric_config, signed=True
+                )
+                cell += f"; 95% CI [{ci_low}, {ci_high}]"
+            status_icon = {
+                "Regression": "🔴",
+                "Improvement": "🟢",
+                "No clear change": "⚪",
+                "Inconclusive": "🟡",
+            }.get(comparison["status"], "")
+            return (
+                f"{cell}; {status_icon} {comparison['status']} "
+                f"(n={comparison['n_v1']}/{comparison['n_v2']})"
             )
 
         # Build summary table data
         summary_data = []
+        dup_warnings = []
 
         for model, v1_cfg, v2_cfg in comparison_pairs:
             model_short = model.split("/")[-1] if "/" in model else model
@@ -6522,36 +6499,94 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 parallelism_str = f"({v1_label} → {v2_label})"
 
             row_data = {"Model": f"{model_short} {parallelism_str}"}
+            metric_results = {}
 
             for metric_name, metric_config in metrics_config.items():
-                pct_diff, v1_better, v1_peak, v2_peak, is_similar = (
-                    get_comparison_result(
-                        v1_model_data, v2_model_data, metric_config, selected_conc_set
-                    )
+                comparison = compare_version_runs(
+                    v1_model_data, v2_model_data, metric_config, selected_conc_set
+                )
+                metric_results[metric_name] = comparison
+                row_data[metric_name] = _format_comparison_cell(
+                    comparison, metric_config
                 )
 
-                if pct_diff is None:
-                    row_data[metric_name] = "N/A"
-                else:
-                    sign = "+" if pct_diff > 0 else ""
-                    if metric_config["show_concurrency"] and v1_peak is not None:
-                        cell_text = (
-                            f"{version_1} ({sign}{pct_diff:.1f}%) "
-                            f"peak@{v1_peak} vs {v2_peak}"
+            duplicate_details = []
+            for version_label, version, version_data, run_key, concurrency_key in [
+                (
+                    "V1 baseline",
+                    version_1,
+                    v1_model_data,
+                    "duplicate_run_ids_v1",
+                    "duplicate_concurrencies_v1",
+                ),
+                (
+                    "V2 comparison",
+                    version_2,
+                    v2_model_data,
+                    "duplicate_run_ids_v2",
+                    "duplicate_concurrencies_v2",
+                ),
+            ]:
+                duplicate_run_ids = sorted(
+                    {
+                        run_id
+                        for result in metric_results.values()
+                        for run_id in result[run_key]
+                    }
+                )
+                if duplicate_run_ids:
+                    duplicate_concurrencies = sorted(
+                        {
+                            concurrency
+                            for result in metric_results.values()
+                            for concurrency in result[concurrency_key]
+                        }
+                    )
+                    concurrencies = ", ".join(
+                        str(int(concurrency)) for concurrency in duplicate_concurrencies
+                    )
+                    run_uuids = version_data["uuid"].astype("string").str.strip()
+                    run_details = []
+                    for run_id in duplicate_run_ids:
+                        run_rows = version_data.loc[run_uuids.eq(run_id).fillna(False)]
+                        run_times = pd.to_datetime(
+                            pd.to_numeric(
+                                run_rows.get(
+                                    "guidellm_start_time_ms", pd.Series(dtype=float)
+                                ),
+                                errors="coerce",
+                            )
+                            .dropna()
+                            .unique(),
+                            unit="ms",
+                            errors="coerce",
+                            utc=True,
+                        ).dropna()
+                        run_time = (
+                            ", ".join(run_times.strftime("%Y-%m-%d %H:%M:%S UTC"))
+                            or "time unavailable"
                         )
-                    else:
-                        cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
-
-                    if is_similar:
-                        color = "🟡"
-                    elif v1_better:
-                        color = "🟢"
-                    else:
-                        color = "🔴"
-
-                    row_data[metric_name] = f"{color} {cell_text}"
+                        run_details.append(f"`{run_id}` ({run_time})")
+                    duplicate_details.append(
+                        f"**{version_label} ({version})** — duplicate run(s): "
+                        f"{', '.join(run_details)}; concurrency {concurrencies}"
+                    )
+            if duplicate_details:
+                dup_warnings.append(
+                    f"{model_short} ({parallelism_str}): "
+                    + "; ".join(duplicate_details)
+                )
 
             summary_data.append(row_data)
+
+        if dup_warnings:
+            st.warning(
+                "⚠️ **Duplicate data rows detected** — repeated rows for the same "
+                "run UUID, configuration, and concurrency are excluded from the "
+                "comparison. Affected versions, run UUIDs, and run times (UTC) "
+                "are listed below. Check the source CSV if this is unexpected.\n\n"
+                + "\n".join(f"- {warning}" for warning in dup_warnings)
+            )
 
         if summary_data:
             summary_df = pd.DataFrame(summary_data)
@@ -6813,27 +6848,27 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 ),
                 "Peak Output Throughput": st.column_config.TextColumn(
                     "Peak Output Throughput",
-                    help="Maximum output tokens/sec achieved. Shows peak concurrency for V1 vs V2 (e.g. peak@200 vs 100).",
+                    help="Median of each run's peak output throughput across common concurrency levels, in tok/s.",
                 ),
                 "Output Throughput (Geometric Mean)": st.column_config.TextColumn(
                     "Output Throughput (Geometric Mean)",
-                    help="Geometric mean of output tok/sec across selected concurrency levels",
+                    help="Median of per-run geometric mean output throughput across selected concurrency levels, in tok/s.",
                 ),
                 "Total Throughput (Geometric Mean)": st.column_config.TextColumn(
                     "Total Throughput (Geometric Mean)",
-                    help="Geometric mean of total (input + output) tok/sec across selected concurrency levels",
+                    help="Median of per-run geometric mean total throughput across selected concurrency levels, in tok/s.",
                 ),
                 "End-to-End Latency (Geometric Mean)": st.column_config.TextColumn(
                     "End-to-End Latency (Geometric Mean)",
-                    help="Geometric mean of request latency median across selected concurrency levels",
+                    help="Median of per-run geometric mean request latency across selected concurrency levels, in seconds.",
                 ),
                 "TTFT P95 (Geometric Mean)": st.column_config.TextColumn(
                     "TTFT P95 (Geometric Mean)",
-                    help="Geometric mean of Time-to-First-Token (P95) across all concurrency levels",
+                    help="Median of per-run geometric mean TTFT P95 across selected concurrency levels, displayed in seconds.",
                 ),
                 "ITL P95 (Geometric Mean)": st.column_config.TextColumn(
                     "ITL P95 (Geometric Mean)",
-                    help="Geometric mean of Inter-Token Latency (P95) across all concurrency levels",
+                    help="Median of per-run geometric mean ITL P95 across selected concurrency levels, in milliseconds.",
                 ),
             }
 
@@ -6848,10 +6883,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
             # Legend
             st.markdown("---")
             st.markdown(
-                f"**Legend:** "
-                f"🟢 {version_1} performs better than {version_2} | "
-                f"🔴 {version_1} performs worse than {version_2} | "
-                f"🟡 Similar Performance (< 5% difference)"
+                "**Legend:** "
+                "🔴 Regression = the full 95% interval is adverse | "
+                "🟢 Improvement = the full interval is favorable | "
+                "⚪ No clear change = the interval crosses zero | "
+                "🟡 Inconclusive = fewer than 5 valid runs per version"
             )
 
             # Show only source rows represented by the model/config pairs in the

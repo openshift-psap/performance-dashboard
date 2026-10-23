@@ -3,6 +3,8 @@
 import pandas as pd
 import pytest
 
+from version_comparison import compare_version_runs
+
 
 @pytest.mark.integration
 class TestDataPipeline:
@@ -370,6 +372,19 @@ class TestJSONImport:
 class TestVersionComparison:
     """Test the Compare Versions section functionality."""
 
+    @staticmethod
+    def _run_data(values, prefix, metric_column="metric", concurrency=1):
+        return pd.DataFrame(
+            [
+                {
+                    "uuid": f"{prefix}-{index}",
+                    "intended concurrency": concurrency,
+                    metric_column: value,
+                }
+                for index, value in enumerate(values)
+            ]
+        )
+
     def test_version_comparison_data_filtering(self, version_comparison_data):
         """Test that version comparison correctly filters data for two versions."""
         version_1 = "vLLM-0.10.0"
@@ -566,26 +581,228 @@ class TestVersionComparison:
         assert max_concurrency in [10, 25]  # Should be one of the test concurrencies
         assert max_concurrency == 25  # Max throughput (200) is at concurrency 25
 
-    def test_improvement_categorization(self):
-        """Test categorization of improvements (better/worse/similar)."""
-        # Test scenarios
-        scenarios = [
-            (10.0, "better"),  # >=5% improvement
-            (-10.0, "worse"),  # >=5% decline
-            (3.0, "similar"),  # <5% difference
-            (-3.0, "similar"),  # <5% difference
-        ]
+    def test_same_ratio_latency_changes_report_different_absolute_deltas(self):
+        """Same percentage changes retain their distinct native-unit deltas."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        }
+        examples = [(0.1, 0.2, 0.1), (1.25, 2.5, 1.25)]
 
-        for pct_change, expected_category in scenarios:
-            improvement = pct_change  # For throughput
-            if improvement >= 5:
-                category = "better"
-            elif improvement <= -5:
-                category = "worse"
-            else:
-                category = "similar"
+        for index, (baseline, comparison, expected_delta) in enumerate(examples):
+            result = compare_version_runs(
+                self._run_data([baseline] * 5, f"v1-{index}"),
+                self._run_data([comparison] * 5, f"v2-{index}"),
+                metric_config,
+                {1},
+            )
+            assert result["delta"] == pytest.approx(expected_delta)
+            assert result["status"] == "Regression"
 
-            assert category == expected_category
+    def test_regression_direction_follows_metric_type(self):
+        """Lower throughput and higher latency are adverse changes."""
+        throughput = {
+            "column": "metric",
+            "aggregation": "peak",
+            "higher_is_better": True,
+        }
+        latency = {**throughput, "higher_is_better": False}
+        baseline = self._run_data([100] * 5, "baseline")
+
+        lower_throughput = compare_version_runs(
+            baseline, self._run_data([90] * 5, "slower"), throughput, {1}
+        )
+        higher_throughput = compare_version_runs(
+            baseline, self._run_data([110] * 5, "faster"), throughput, {1}
+        )
+        lower_latency = compare_version_runs(
+            baseline, self._run_data([90] * 5, "faster"), latency, {1}
+        )
+        higher_latency = compare_version_runs(
+            baseline, self._run_data([110] * 5, "slower"), latency, {1}
+        )
+
+        assert lower_throughput["status"] == "Regression"
+        assert higher_throughput["status"] == "Improvement"
+        assert lower_latency["status"] == "Improvement"
+        assert higher_latency["status"] == "Regression"
+
+    def test_noise_width_controls_regression_classification(self):
+        """A change beyond low run noise flags; the same shift amid noise does not."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "peak",
+            "higher_is_better": False,
+        }
+        low_noise = compare_version_runs(
+            self._run_data([99.98, 99.99, 100, 100.01, 100.02], "low-v1"),
+            self._run_data([100.98, 100.99, 101, 101.01, 101.02], "low-v2"),
+            metric_config,
+            {1},
+        )
+        high_noise = compare_version_runs(
+            self._run_data([1, 50, 100, 150, 200], "high-v1"),
+            self._run_data([2, 51, 101, 151, 201], "high-v2"),
+            metric_config,
+            {1},
+        )
+
+        assert low_noise["status"] == "Regression"
+        assert high_noise["status"] == "No clear change"
+        assert high_noise["ci_low"] <= 0 <= high_noise["ci_high"]
+
+    def test_fewer_than_five_runs_are_inconclusive(self):
+        """Large observed changes are not flagged without five runs per version."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "peak",
+            "higher_is_better": False,
+        }
+        result = compare_version_runs(
+            self._run_data([1] * 4, "baseline"),
+            self._run_data([10] * 4, "comparison"),
+            metric_config,
+            {1},
+        )
+
+        assert result["status"] == "Inconclusive"
+        assert result["ci_low"] is None
+        assert result["n_v1"] == result["n_v2"] == 4
+
+    def test_missing_uuids_and_duplicate_run_rows_are_excluded(self):
+        """Missing IDs and duplicated run/config/concurrency rows do not add repeats."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "peak",
+            "higher_is_better": False,
+        }
+        baseline = self._run_data([100] * 5, "baseline")
+        baseline = pd.concat(
+            [
+                baseline,
+                baseline.iloc[[0]],
+                pd.DataFrame(
+                    [{"uuid": None, "intended concurrency": 1, "metric": 100}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        result = compare_version_runs(
+            baseline,
+            self._run_data([110] * 5, "comparison"),
+            metric_config,
+            {1},
+        )
+
+        assert result["n_v1"] == 4
+        assert result["n_v2"] == 5
+        assert result["duplicate_runs_v1"] == 1
+        assert result["duplicate_run_ids_v1"] == ["baseline-0"]
+        assert result["duplicate_concurrencies_v1"] == [1]
+        assert result["missing_uuid_rows_v1"] == 1
+        assert result["status"] == "Inconclusive"
+
+    def test_geometric_mean_is_computed_within_each_run(self):
+        """Selected concurrency values are aggregated before comparing run medians."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        }
+
+        def rows(prefix, values):
+            return pd.DataFrame(
+                [
+                    {
+                        "uuid": f"{prefix}-{run_index}",
+                        "intended concurrency": concurrency,
+                        "metric": value,
+                    }
+                    for run_index in range(5)
+                    for concurrency, value in enumerate(values, start=1)
+                ]
+            )
+
+        result = compare_version_runs(
+            rows("baseline", [4, 16]),
+            rows("comparison", [9, 25]),
+            metric_config,
+            {1, 2},
+        )
+
+        assert result["median_v1"] == pytest.approx(8)
+        assert result["median_v2"] == pytest.approx(15)
+        assert result["delta"] == pytest.approx(7)
+
+    def test_comparison_settings_are_grouped_without_counting_extra_runs(self):
+        """Each UUID contributes one sample after its settings are aggregated."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "geom_mean",
+            "higher_is_better": True,
+        }
+
+        def rows(prefix, settings):
+            return pd.DataFrame(
+                [
+                    {
+                        "uuid": f"{prefix}-{run_index}",
+                        "dataset": dataset,
+                        "intended concurrency": concurrency,
+                        "metric": value,
+                    }
+                    for run_index in range(5)
+                    for dataset, values in settings.items()
+                    for concurrency, value in enumerate(values, start=1)
+                ]
+            )
+
+        result = compare_version_runs(
+            rows("baseline", {"a": [4, 16], "b": [9, 25]}),
+            rows("comparison", {"a": [16, 64], "b": [25, 49]}),
+            metric_config,
+            {1, 2},
+        )
+
+        assert result["n_v1"] == result["n_v2"] == 5
+        assert result["median_v1"] == pytest.approx((8 * 15) ** 0.5)
+        assert result["median_v2"] == pytest.approx((32 * 35) ** 0.5)
+
+    def test_settings_cannot_fill_each_others_missing_concurrency_levels(self):
+        """Incomplete settings are excluded instead of forming a mixed run metric."""
+        metric_config = {
+            "column": "metric",
+            "aggregation": "peak",
+            "higher_is_better": True,
+        }
+
+        def rows(prefix, first, second):
+            return pd.DataFrame(
+                [
+                    {
+                        "uuid": f"{prefix}-{run_index}",
+                        "dataset": dataset,
+                        "intended concurrency": concurrency,
+                        "metric": value,
+                    }
+                    for run_index in range(5)
+                    for dataset, concurrency, value in [
+                        ("a", 1, first),
+                        ("b", 2, second),
+                    ]
+                ]
+            )
+
+        result = compare_version_runs(
+            rows("baseline", 100, 200),
+            rows("comparison", 110, 220),
+            metric_config,
+            {1, 2},
+        )
+
+        assert result["n_v1"] == result["n_v2"] == 0
+        assert result["status"] == "Inconclusive"
 
     def test_empty_version_handling(self, version_comparison_data):
         """Test handling of non-existent version."""
