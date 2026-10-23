@@ -1640,6 +1640,13 @@ def load_rhaiis_data(file_path: str = "consolidated_dashboard.csv") -> pd.DataFr
         for col in df.select_dtypes(include=["object"]).columns:
             df[col] = df[col].str.strip()  # type: ignore[assignment]
 
+        # Keep only aggregate rows: per-turn breakdown rows (turn_index 0, 1, 2…)
+        # from multi-turn benchmarks would double-count runs in comparisons.
+        # Mirrors the aggregate-row filter in dashboard.py.
+        if "turn_index" in df.columns:
+            _ti = df["turn_index"].astype(str).str.strip()  # type: ignore[misc]
+            df = df[df["turn_index"].isna() | (_ti == "") | (_ti == "nan")].copy()
+
         # Assign profile based on prompt/output tokens (same as llmd_data)
         if "prompt toks" in df.columns and "output toks" in df.columns:
             df["profile"] = df.apply(assign_profile, axis=1)
