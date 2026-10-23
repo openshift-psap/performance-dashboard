@@ -32,20 +32,22 @@ python import_manual_runs_json_v2.py <json_file> \
 
 ## Arguments
 
-| Argument             | Required | Description                                     | Example                                 |
-| -------------------- | -------- | ----------------------------------------------- | --------------------------------------- |
-| `json_file`          | Yes      | Path to guidellm JSON output file               | `llama-70b-vllm.json`                   |
-| `--model`            | Yes      | Model name (HuggingFace format)                 | `meta-llama/Llama-3.3-70B-Instruct`     |
-| `--version`          | Yes      | Framework/version identifier                    | `vLLM-0.13.0`, `TRT-LLM-1.2.0rc2.post1` |
-| `--tp`               | Yes      | Tensor parallelism size                         | `4`, `8`                                |
-| `--accelerator`      | Yes      | GPU/accelerator type                            | `H200`, `MI300X`, `TPU`                 |
-| `--runtime-args`     | Yes      | Server runtime configuration                    | See examples below                      |
-| `--image-tag`        | Yes      | Container image tag                             | `vllm/vllm-openai:v0.13.0`              |
-| `--guidellm-version` | Yes      | guidellm version used                           | `v0.5.1`, `v0.3.0`                      |
-| `--csv-file`         | No       | Output CSV path (default: `new_benchmarks.csv`) | `llama-70b-vllm.csv`                    |
-| `--dataset`          | No       | Real dataset name (for real-dataset runs)       | `mlperf-gpt-oss`, `sharegpt`            |
-| `--spec-decoding`    | No       | Speculative decoding method used                | `eagle3`, `ngram`                       |
-| `--prefix-caching`   | No       | Whether prefix caching was enabled              | `yes`, `no`                             |
+| Argument                 | Required | Description                                                   | Example                                 |
+| ------------------------ | -------- | ------------------------------------------------------------- | --------------------------------------- |
+| `json_file`              | Yes      | Path to guidellm JSON output file                             | `llama-70b-vllm.json`                   |
+| `--model`                | Yes      | Model name (HuggingFace format)                               | `meta-llama/Llama-3.3-70B-Instruct`     |
+| `--version`              | Yes      | Framework/version identifier                                  | `vLLM-0.13.0`, `TRT-LLM-1.2.0rc2.post1` |
+| `--tp`                   | Yes      | Tensor parallelism size                                       | `4`, `8`                                |
+| `--accelerator`          | Yes      | GPU/accelerator type                                          | `H200`, `MI300X`, `TPU`                 |
+| `--runtime-args`         | Yes      | Server runtime configuration                                  | See examples below                      |
+| `--image-tag`            | Yes      | Container image tag                                           | `vllm/vllm-openai:v0.13.0`              |
+| `--guidellm-version`     | Yes      | guidellm version used                                         | `v0.5.1`, `v0.3.0`                      |
+| `--csv-file`             | No       | Output CSV path (default: `new_benchmarks.csv`)               | `llama-70b-vllm.csv`                    |
+| `--dataset`              | No       | Real dataset name (for real-dataset runs)                     | `mlperf-gpt-oss`, `sharegpt`            |
+| `--spec-decoding`        | No       | Speculative decoding method used                              | `eagle3`, `ngram`                       |
+| `--prefix-caching`       | No       | Whether prefix caching was enabled                            | `yes`, `no`                             |
+| `--mlflow-run-id`        | No       | MLflow run UUID — enables clickable MLflow links in dashboard | `c6aa48a0d312448380621e1bf00a8a5d`      |
+| `--mlflow-experiment-id` | No       | MLflow experiment ID (used with `--mlflow-run-id`)            | `264`                                   |
 
 ## Examples
 
@@ -112,7 +114,7 @@ python import_manual_runs_json_v2.py \
   --csv-file "gemma-multiturn.csv"
 ```
 
-> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON.
+> **Note:** `turns`, `prefix_tokens`, `prefix_count`, and `request_type` are auto-detected from the guidellm JSON. For multi-turn benchmarks, the script emits one aggregate row per concurrency level (`turn_index` = empty) **plus** one per-turn row per turn per concurrency level (`turn_index` = 0, 1, 2, …) when `requests.successful`/`requests.errored` contain at least two distinct valid `turn_index` values. Other benchmarks emit aggregate rows only. On per-turn rows, `output_tok/sec` and `total_tok/sec` report the turn's aggregate throughput over the benchmark's measurement interval (the turn's tokens divided by the scheduler run duration), matching the GuideLLM total-throughput semantics of the aggregate row; `measured rps` is left empty because it is not computed per turn.
 
 ## Appending to Consolidated Dashboard
 
@@ -124,62 +126,65 @@ tail -n +2 my-benchmark.csv >> ../../../consolidated_dashboard.csv
 
 ## Output CSV Columns
 
-The script outputs 52 columns compatible with the performance dashboard:
+The script outputs 55 columns compatible with the performance dashboard:
 
-| #   | Column                    | Description                                          |
-| --- | ------------------------- | ---------------------------------------------------- |
-| 1   | `run`                     | Unique run identifier (`{accelerator}-{model}-{tp}`) |
-| 2   | `accelerator`             | GPU type (H200, MI300X, etc.)                        |
-| 3   | `model`                   | Model name                                           |
-| 4   | `version`                 | Framework version                                    |
-| 5   | `prompt toks`             | Configured prompt token count                        |
-| 6   | `output toks`             | Configured output token count                        |
-| 7   | `TP`                      | Tensor parallelism size                              |
-| 8   | `measured concurrency`    | Actual measured concurrency                          |
-| 9   | `intended concurrency`    | Requested concurrency (streams)                      |
-| 10  | `measured rps`            | Requests per second                                  |
-| 11  | `output_tok/sec`          | Output tokens per second                             |
-| 12  | `total_tok/sec`           | Total tokens per second                              |
-| 13  | `prompt_token_count_mean` | Mean prompt token count                              |
-| 14  | `prompt_token_count_p99`  | P99 prompt token count                               |
-| 15  | `output_token_count_mean` | Mean output token count                              |
-| 16  | `output_token_count_p99`  | P99 output token count                               |
-| 17  | `ttft_median`             | Time to first token - median (ms)                    |
-| 18  | `ttft_p95`                | Time to first token - P95 (ms)                       |
-| 19  | `ttft_p1`                 | Time to first token - P1 (ms)                        |
-| 20  | `ttft_p999`               | Time to first token - P99.9 (ms)                     |
-| 21  | `tpot_median`             | Time per output token - median (ms)                  |
-| 22  | `tpot_p95`                | Time per output token - P95 (ms)                     |
-| 23  | `tpot_p99`                | Time per output token - P99 (ms)                     |
-| 24  | `tpot_p999`               | Time per output token - P99.9 (ms)                   |
-| 25  | `tpot_p1`                 | Time per output token - P1 (ms)                      |
-| 26  | `itl_median`              | Inter-token latency - median (ms)                    |
-| 27  | `itl_p95`                 | Inter-token latency - P95 (ms)                       |
-| 28  | `itl_p999`                | Inter-token latency - P99.9 (ms)                     |
-| 29  | `itl_p1`                  | Inter-token latency - P1 (ms)                        |
-| 30  | `request_latency_median`  | End-to-end request latency - median (s)              |
-| 31  | `request_latency_min`     | End-to-end request latency - minimum (s)             |
-| 32  | `request_latency_max`     | End-to-end request latency - maximum (s)             |
-| 33  | `successful_requests`     | Number of successful requests                        |
-| 34  | `errored_requests`        | Number of errored requests                           |
-| 35  | `uuid`                    | Unique benchmark run ID                              |
-| 36  | `ttft_mean`               | Time to first token - mean (ms)                      |
-| 37  | `ttft_p99`                | Time to first token - P99 (ms)                       |
-| 38  | `itl_mean`                | Inter-token latency - mean (ms)                      |
-| 39  | `itl_p99`                 | Inter-token latency - P99 (ms)                       |
-| 40  | `runtime_args`            | Server configuration arguments                       |
-| 41  | `guidellm_start_time_ms`  | Benchmark start time (epoch ms)                      |
-| 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                        |
-| 43  | `image_tag`               | Container image used                                 |
-| 44  | `guidellm_version`        | guidellm version used                                |
-| 45  | `DP`                      | Data parallelism size (empty for TP runs)            |
-| 46  | `dataset`                 | Real dataset name (empty for synthetic runs)         |
-| 47  | `spec_decoding`           | Speculative decoding method (empty if none)          |
-| 48  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)        |
-| 49  | `turns`                   | Conversation turns for multiturn benchmarks          |
-| 50  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)         |
-| 51  | `prefix_count`            | Prefix count (auto-detected from JSON)               |
-| 52  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON) |
+| #   | Column                    | Description                                                                 |
+| --- | ------------------------- | --------------------------------------------------------------------------- |
+| 1   | `run`                     | Unique run identifier (`{accelerator}-{model}-{tp}`)                        |
+| 2   | `accelerator`             | GPU type (H200, MI300X, etc.)                                               |
+| 3   | `model`                   | Model name                                                                  |
+| 4   | `version`                 | Framework version                                                           |
+| 5   | `prompt toks`             | Configured prompt token count                                               |
+| 6   | `output toks`             | Configured output token count                                               |
+| 7   | `TP`                      | Tensor parallelism size                                                     |
+| 8   | `measured concurrency`    | Actual measured concurrency                                                 |
+| 9   | `intended concurrency`    | Requested concurrency (streams)                                             |
+| 10  | `measured rps`            | Requests per second                                                         |
+| 11  | `output_tok/sec`          | Output tokens per second                                                    |
+| 12  | `total_tok/sec`           | Total tokens per second                                                     |
+| 13  | `prompt_token_count_mean` | Mean prompt token count                                                     |
+| 14  | `prompt_token_count_p99`  | P99 prompt token count                                                      |
+| 15  | `output_token_count_mean` | Mean output token count                                                     |
+| 16  | `output_token_count_p99`  | P99 output token count                                                      |
+| 17  | `ttft_median`             | Time to first token - median (ms)                                           |
+| 18  | `ttft_p95`                | Time to first token - P95 (ms)                                              |
+| 19  | `ttft_p1`                 | Time to first token - P1 (ms)                                               |
+| 20  | `ttft_p999`               | Time to first token - P99.9 (ms)                                            |
+| 21  | `tpot_median`             | Time per output token - median (ms)                                         |
+| 22  | `tpot_p95`                | Time per output token - P95 (ms)                                            |
+| 23  | `tpot_p99`                | Time per output token - P99 (ms)                                            |
+| 24  | `tpot_p999`               | Time per output token - P99.9 (ms)                                          |
+| 25  | `tpot_p1`                 | Time per output token - P1 (ms)                                             |
+| 26  | `itl_median`              | Inter-token latency - median (ms)                                           |
+| 27  | `itl_p95`                 | Inter-token latency - P95 (ms)                                              |
+| 28  | `itl_p999`                | Inter-token latency - P99.9 (ms)                                            |
+| 29  | `itl_p1`                  | Inter-token latency - P1 (ms)                                               |
+| 30  | `request_latency_median`  | End-to-end request latency - median (s)                                     |
+| 31  | `request_latency_min`     | End-to-end request latency - minimum (s)                                    |
+| 32  | `request_latency_max`     | End-to-end request latency - maximum (s)                                    |
+| 33  | `successful_requests`     | Number of successful requests                                               |
+| 34  | `errored_requests`        | Number of errored requests                                                  |
+| 35  | `uuid`                    | Unique benchmark run ID                                                     |
+| 36  | `ttft_mean`               | Time to first token - mean (ms)                                             |
+| 37  | `ttft_p99`                | Time to first token - P99 (ms)                                              |
+| 38  | `itl_mean`                | Inter-token latency - mean (ms)                                             |
+| 39  | `itl_p99`                 | Inter-token latency - P99 (ms)                                              |
+| 40  | `runtime_args`            | Server configuration arguments                                              |
+| 41  | `guidellm_start_time_ms`  | Benchmark start time (epoch ms)                                             |
+| 42  | `guidellm_end_time_ms`    | Benchmark end time (epoch ms)                                               |
+| 43  | `image_tag`               | Container image used                                                        |
+| 44  | `guidellm_version`        | guidellm version used                                                       |
+| 45  | `DP`                      | Data parallelism size (empty for TP runs)                                   |
+| 46  | `dataset`                 | Real dataset name (empty for synthetic runs)                                |
+| 47  | `spec_decoding`           | Speculative decoding method (empty if none)                                 |
+| 48  | `prefix_caching`          | Prefix caching status (`yes`, `no`, or empty)                               |
+| 49  | `turn_index`              | Per-turn breakdown index (empty for aggregate rows)                         |
+| 50  | `turns`                   | Conversation turns for multiturn benchmarks                                 |
+| 51  | `prefix_tokens`           | Prefix token count (auto-detected from JSON)                                |
+| 52  | `prefix_count`            | Prefix count (auto-detected from JSON)                                      |
+| 53  | `request_type`            | GuideLLM API endpoint type (auto-detected from JSON)                        |
+| 54  | `mlflow_run_id`           | MLflow run UUID (from `--mlflow-run-id`, empty if not provided)             |
+| 55  | `mlflow_experiment_id`    | MLflow experiment ID (from `--mlflow-experiment-id`, empty if not provided) |
 
 ## Notes
 
