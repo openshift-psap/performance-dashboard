@@ -79,6 +79,8 @@ def test_grafana_link_uses_mi355x_dashboard():
     assert "/d/mi355x-rocm-gpu/vllm-2b-rocm-gpu-metrics-mi355x" in link
     assert "var-deployment_uuid=mi355x-run-uuid" in link
     assert "var-cluster_name=sno-mi355x" in link
+
+
 @pytest.mark.parametrize(
     ("run", "cluster"),
     [
