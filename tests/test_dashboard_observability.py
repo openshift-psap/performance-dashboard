@@ -105,6 +105,36 @@ def test_grafana_link_routes_b200_pirate_to_combined_dashboard():
 
 
 @pytest.mark.parametrize(
+    ("run", "expected_dashboard", "cluster"),
+    [
+        (
+            "B200-b200-RedHatAI/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4-1",
+            COMBINED_DASHBOARD,
+            "psap-b200-nm",
+        ),
+        (
+            "B200_B200-RedHatAI/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4-1",
+            COMBINED_DASHBOARD,
+            "psap-b200-nm",
+        ),
+        (
+            "B200-openai/gpt-oss-120b-1",
+            "/d/psap-b200-mlperf/vllm-2b-dcgm-metrics-psap-b200-mlperf",
+            None,
+        ),
+    ],
+)
+def test_grafana_link_routes_b200_runs_by_name(run, expected_dashboard, cluster):
+    link = create_grafana_link(_link_row(run, accelerator="B200"))
+
+    assert expected_dashboard in link
+    if cluster is None:
+        assert "var-cluster_name=psap-b200-nm" not in link
+    else:
+        assert f"var-cluster_name={cluster}" in link
+
+
+@pytest.mark.parametrize(
     ("run", "cluster"),
     [
         ("athena-gpt-oss-tp2", "psap-fire-athena"),
