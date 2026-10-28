@@ -231,14 +231,44 @@ def decode_version_label_pairs(raw_value):
     ]
 
 
-def version_label_pair_mask(df, pairs):
-    """Return a mask for rows matching selected version/label pairs."""
-    if not pairs:
-        return pd.Series(True, index=df.index)
+def version_label_additive_mask(df, pairs, selected_versions=None):
+    """Return a mask that applies label filtering additively per version.
+
+    When a user selects several versions and then picks label pairs for
+    only *some* of them, this mask keeps:
+    - rows matching an explicit (version, label) pair, AND
+    - default-label rows for versions that have no pair selected.
+
+    A selected version that has no default-label rows keeps all of its
+    rows, and pairs that match no rows contribute nothing. This prevents
+    label selections for one version from silently dropping other
+    selected versions (GitHub issue #121).
+    """
     if not {"version", "label"}.issubset(df.columns):
         return pd.Series(False, index=df.index)
-    pair_index = pd.MultiIndex.from_frame(df[["version", "label"]].astype(str))
-    return pd.Series(pair_index.isin(set(pairs)), index=df.index)
+
+    labels = df["label"].astype(str)
+    if not pairs:
+        # Baseline view with no label pairs: only default-label rows.
+        return labels.eq(DEFAULT_LABEL)
+
+    versions = df["version"].astype(str)
+    pair_index = pd.MultiIndex.from_arrays([versions, labels])
+    keep = {(str(version), str(label)) for version, label in pairs}
+    mask = pd.Series(pair_index.isin(keep), index=df.index)
+
+    unpaired = {str(version) for version in (selected_versions or ())} - {
+        version for version, _label in keep
+    }
+    if unpaired:
+        is_default = labels.eq(DEFAULT_LABEL)
+        mask |= versions.isin(unpaired) & is_default
+        # A version with no default-label rows keeps everything it has.
+        without_default = unpaired - set(versions[is_default])
+        if without_default:
+            mask |= versions.isin(without_default)
+
+    return mask
 
 
 def parse_filter_values(raw_value, available_values):

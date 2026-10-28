@@ -54,7 +54,7 @@ from dashboard_taxonomy import (
     sync_selected_options,
     taxonomy_query_params,
     uses_legacy_methodology,
-    version_label_pair_mask,
+    version_label_additive_mask,
 )
 from intelliconfig import render_intelliconfig_section
 
@@ -4688,8 +4688,8 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 )
 
         # Push all perf-plots URL params directly — fragment reruns don't trigger
-        # the parent encode_filters_to_url / from_dict, so widgets changed inside
-        # the fragment would otherwise leave the URL stale.
+        # the parent URL sync in main(), so widgets changed inside the fragment
+        # would otherwise leave the URL stale.
         # Suppress only Streamlit API errors (e.g. no session context outside a run);
         # let TypeError/AttributeError from bad values surface for debugging.
         try:
@@ -11985,47 +11985,6 @@ def main():
             },
         }
 
-        def encode_filters_to_url(
-            accelerators,
-            models,
-            versions,
-            profile,
-            tp_sizes,
-            labels=None,
-            uuids=None,
-        ):
-            """Encode filter and active-section state to URL parameters."""
-            url_params = {}
-
-            if accelerators:
-                url_params["accelerators"] = ",".join(accelerators)
-            if models:
-                url_params["models"] = ",".join(models)
-            if versions:
-                url_params["versions"] = ",".join(versions)
-            url_params.update(taxonomy_query_params(labels, uuids))
-            if profile:
-                url_params["profile"] = profile
-            if tp_sizes:
-                url_params["tp_sizes"] = ",".join(map(str, tp_sizes))
-
-            # Also push active section's widget state so the bare URL bar is shareable
-            active_slug = SECTION_TO_SLUG.get(
-                st.session_state.get("active_section", ""), ""
-            )
-            if active_slug:
-                url_params["section"] = active_slug
-                for url_key, ss_key in SECTION_FILTER_KEYS.get(active_slug, {}).items():
-                    val = st.session_state.get(ss_key)
-                    if val is not None:
-                        url_params[url_key] = (
-                            ",".join(map(str, val))
-                            if isinstance(val, list)
-                            else str(val)
-                        )
-
-            st.query_params.update(url_params)
-
         def build_share_url():
             """Build a full shareable URL including section and section-specific filters."""
             import urllib.parse
@@ -13345,13 +13304,13 @@ def main():
                     {label for _, label in selected_version_label_pairs}
                 )
 
-            run_temp = (
-                label_temp[
-                    version_label_pair_mask(label_temp, selected_version_label_pairs)
-                ]
-                if selected_version_label_pairs
-                else label_temp[label_temp["label"].eq(DEFAULT_LABEL)]
-            )
+            run_temp = label_temp[
+                version_label_additive_mask(
+                    label_temp,
+                    selected_version_label_pairs,
+                    selected_versions,
+                )
+            ]
             uuids = (
                 sorted(run_temp.loc[run_temp["uuid"] != "", "uuid"].unique().tolist())
                 if not run_temp.empty
@@ -13373,12 +13332,11 @@ def main():
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-            if selected_version_label_pairs:
-                temp_df = temp_df[
-                    version_label_pair_mask(temp_df, selected_version_label_pairs)
-                ]
-            else:
-                temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
+            temp_df = temp_df[
+                version_label_additive_mask(
+                    temp_df, selected_version_label_pairs, selected_versions
+                )
+            ]
             if selected_uuids:
                 temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
 
@@ -13419,6 +13377,17 @@ def main():
                 sorted(temp_df["model"].unique().tolist()) if not temp_df.empty else []
             )
 
+            # Detect models revealed by upstream filter changes (e.g. a newly
+            # selected label pair) so they can join the current selection.
+            avail_models_key = "previous_available_models"
+            prev_available_models = st.session_state.get(avail_models_key, None)
+            newly_available_models = (
+                [m for m in models if m not in prev_available_models]
+                if prev_available_models is not None
+                else []
+            )
+            st.session_state[avail_models_key] = models
+
             if st.session_state.get("clear_all_filters", False) or st.session_state.get(
                 "filters_were_cleared", False
             ):
@@ -13451,6 +13420,13 @@ def main():
                 preserved_selections = models
             elif prev_selected is not None:
                 preserved_selections = [m for m in prev_selected if m in models]
+                if newly_available_models:
+                    # Auto-select models revealed by upstream filter changes so
+                    # explicitly selected label pairs stay visible.
+                    preserved_selections += [
+                        m for m in newly_available_models if m not in preserved_selections
+                    ]
+                    st.session_state[prev_models_key] = preserved_selections
             else:
                 persisted = st.session_state.get("_persisted_models", None)
                 if persisted is not None:
@@ -13487,12 +13463,11 @@ def main():
                 temp_df = temp_df[temp_df["accelerator"].isin(selected_accelerators)]
             if selected_versions:
                 temp_df = temp_df[temp_df["version"].isin(selected_versions)]
-            if selected_version_label_pairs:
-                temp_df = temp_df[
-                    version_label_pair_mask(temp_df, selected_version_label_pairs)
-                ]
-            else:
-                temp_df = temp_df[temp_df["label"].eq(DEFAULT_LABEL)]
+            temp_df = temp_df[
+                version_label_additive_mask(
+                    temp_df, selected_version_label_pairs, selected_versions
+                )
+            ]
             if selected_uuids:
                 temp_df = temp_df[temp_df["uuid"].isin(selected_uuids)]
             if selected_profiles:
@@ -13650,7 +13625,10 @@ def main():
                 language=None,
             )
             st.caption(
-                "Selecting a release shows its unlabeled runs. Turn on the optional label filter to add labeled runs."
+                "Selecting a release shows its unlabeled runs. "
+                "Turn on the optional label filter to pick specific labels; "
+                "selecting a label shows only that label's runs for the release. "
+                "To also keep unlabeled runs, select the release's base entry."
             )
             st.markdown("### Valid filter combinations")
             st.markdown("View the available combinations of filters:")
@@ -13805,10 +13783,8 @@ def main():
                 if selected_mt_prefix_count is not None
                 else True
             )
-            _label = (
-                version_label_pair_mask(d, selected_version_label_pairs)
-                if selected_version_label_pairs
-                else d["label"].eq(DEFAULT_LABEL)
+            _label = version_label_additive_mask(
+                d, selected_version_label_pairs, selected_versions
             )
             _uuid = d["uuid"].isin(selected_uuids) if selected_uuids else True
             return d[
