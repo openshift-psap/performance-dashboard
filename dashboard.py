@@ -11525,17 +11525,17 @@ def main():
 
     df["custom_isl_osl"] = np.where(
         df["profile"] == "Custom ISL/OSL",
-        df["prompt toks"].astype(int).astype(str)
+        df["prompt toks"].fillna(0).astype(int).astype(str)
         + "/"
-        + df["output toks"].astype(int).astype(str),
+        + df["output toks"].fillna(0).astype(int).astype(str),
         "",
     )
 
     df["multiturn_isl_osl"] = np.where(
         df["profile"] == "Multi-turn",
-        df["prompt toks"].astype(int).astype(str)
+        df["prompt toks"].fillna(0).astype(int).astype(str)
         + "/"
-        + df["output toks"].astype(int).astype(str),
+        + df["output toks"].fillna(0).astype(int).astype(str),
         "",
     )
 
