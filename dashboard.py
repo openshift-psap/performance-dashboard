@@ -4478,7 +4478,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
         for _series_key in customizable_series:
             _color_key = (
                 "performance_color_"
-                + hashlib.sha1(_series_key.encode()).hexdigest()[:12]
+                + hashlib.sha1(_series_key.encode(), usedforsecurity=False).hexdigest()[
+                    :12
+                ]
             )
             _selected_color = st.session_state.get(_color_key)
             if _selected_color:
@@ -4491,7 +4493,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             _default_shape = default_shape_map[_trace_key]
             _shape_key = (
                 "performance_shape_"
-                + hashlib.sha1(_trace_key.encode()).hexdigest()[:12]
+                + hashlib.sha1(_trace_key.encode(), usedforsecurity=False).hexdigest()[
+                    :12
+                ]
             )
             _selected_shape = st.session_state.get(_shape_key)
             if _selected_shape in MARKER_SYMBOLS:
@@ -4604,7 +4608,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 )
                 color_key = (
                     "performance_color_"
-                    + hashlib.sha1(selected_series.encode()).hexdigest()[:12]
+                    + hashlib.sha1(
+                        selected_series.encode(), usedforsecurity=False
+                    ).hexdigest()[:12]
                 )
                 default_color = default_color_map[selected_series]
                 if color_key not in st.session_state:
@@ -4633,7 +4639,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
 
                 shape_key = (
                     "performance_shape_"
-                    + hashlib.sha1(selected_trace.encode()).hexdigest()[:12]
+                    + hashlib.sha1(
+                        selected_trace.encode(), usedforsecurity=False
+                    ).hexdigest()[:12]
                 )
                 default_shape = default_shape_map.get(selected_trace, "circle")
                 if (
@@ -4697,7 +4705,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                     st.query_params["pp_turn_conc"] = ",".join(
                         str(int(c)) for c in turn_conc
                     )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # nosec B110
             pass  # Outside Streamlit session context — no-op
 
 
