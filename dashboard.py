@@ -51,6 +51,7 @@ from dashboard_taxonomy import (
     parse_version_filter_values,
     run_identity,
     split_legacy_version,
+    sync_selected_option,
     sync_selected_options,
     taxonomy_query_params,
     uses_legacy_methodology,
@@ -4599,6 +4600,12 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                     .split(" | run ", 1)[0]
                     for key in customizable_series
                 }
+                st.session_state["performance_appearance_series"] = (
+                    sync_selected_option(
+                        st.session_state.get("performance_appearance_series"),
+                        customizable_series,
+                    )
+                )
                 selected_series = st.selectbox(
                     "Repeated configuration",
                     customizable_series,
@@ -4629,6 +4636,10 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                     ].iloc[0]
                     for key in customizable_traces
                 }
+                st.session_state["performance_appearance_run"] = sync_selected_option(
+                    st.session_state.get("performance_appearance_run"),
+                    customizable_traces,
+                )
                 selected_trace = st.selectbox(
                     "Repeated run",
                     customizable_traces,
