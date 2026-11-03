@@ -721,10 +721,12 @@ def _render_profile_guide():
         "**ISL** is input sequence length (prompt tokens). **OSL** is output "
         "sequence length (generated tokens). These are reference workload definitions."
     )
-    st.caption("stdev = standard deviation; min/max = token-count bounds.")
+    st.markdown("stdev = standard deviation; min/max = token-count bounds.")
     for pair, details in PROFILE_DETAILS.items():
         st.markdown(f"**{pair} — {details['name']}**")
-        st.caption(f"ISL: {details['prompt_tokens']} · OSL: {details['output_tokens']}")
+        st.markdown(
+            f"ISL: {details['prompt_tokens']} · OSL: {details['output_tokens']}"
+        )
         extras = []
         if "samples" in details:
             extras.append(f"{details['samples']} samples")
@@ -735,10 +737,10 @@ def _render_profile_guide():
         if "prefix_count" in details:
             extras.append(f"Prefix count: {details['prefix_count']}")
         if extras:
-            st.caption(" · ".join(extras))
+            st.markdown(" · ".join(extras))
         if "description" in details:
-            st.caption(details["description"])
-    st.caption(
+            st.markdown(details["description"])
+    st.markdown(
         "Multi-turn runs can use other ISL/OSL pairs, turn counts, and prefix "
         "settings. Check the run filters for exact values. Custom pairs show their "
         "input/output token counts; 0/0 denotes a real dataset."
@@ -4339,6 +4341,7 @@ def _render_performance_plot_data(
         width="stretch",
         hide_index=True,
         column_config=column_config,
+        row_height=38,
     )
 
 
@@ -8099,6 +8102,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 use_container_width=True,
                 hide_index=True,
                 column_config=filtered_data_column_config,
+                row_height=38,
             )
             st.download_button(
                 label="📥 Download Filtered Data as CSV",
@@ -12151,6 +12155,7 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
             column_config=column_config,
             disabled=disabled_cols,
             key="filtered_data_table",
+            row_height=38,
         )
 
         csv_data = display_filtered_df.to_csv(index=False).encode("utf-8")
