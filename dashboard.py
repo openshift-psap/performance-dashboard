@@ -607,12 +607,6 @@ PROFILE_DETAILS = {
         "output_tokens": "2048 (stdev=512, min=1, max=4096)",
         "description": "Variable-length requests with longer responses on average.",
     },
-    "2048/128": {
-        "name": "Short Prefill-Heavy",
-        "prompt_tokens": "2048",
-        "output_tokens": "128",
-        "description": "Prompts are much longer than the short responses.",
-    },
     "8000/1000": {
         "name": "Prefill-Heavy",
         "prompt_tokens": "8000",
