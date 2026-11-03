@@ -1212,8 +1212,7 @@ def _hm_cell(
     if marker:
         label += (
             '<span class="hm-p50-flag" '
-            'style="color:#dc2626;font-weight:700;margin-left:0.2rem" '
-            'title="P50 regressed >5 %">⚠</span>'
+            'style="color:#dc2626;font-weight:700;margin-left:0.2rem">⚠</span>'
         )
     title_attr = f' title="{html.escape(tooltip)}"' if tooltip else ""
     return f'<span class="hm-cell {cls}"{title_attr}>{label}</span>'
