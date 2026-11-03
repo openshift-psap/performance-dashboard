@@ -35,6 +35,8 @@ from thresholds import (
     P50_THRESHOLD_PCT,
     P95_THRESHOLD_PCT,
     is_similar_change,
+    p50_only_regression,
+    p95_is_regression,
     pct_threshold_for_column,
 )
 
@@ -804,6 +806,20 @@ def _compute_overview_data(
         },
     }
 
+    # Background P50 values used only to flag the TTFT/ITL P95 heatmap cells.
+    p50_metrics_cfg = {
+        "TTFT P50": {
+            "column": "ttft_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P50": {
+            "column": "itl_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
     df_curr = df[df["version"] == CURRENT].copy()
     df_prev = df[df["version"] == PREVIOUS].copy()
     df_vllm = df[df["version"] == VLLM].copy() if VLLM else pd.DataFrame()
@@ -874,6 +890,8 @@ def _compute_overview_data(
             row[f"{mname}_pct"] = pct
             row[f"{mname}_better"] = better
             row[f"{mname}_similar"] = similar
+        for mname, mc in p50_metrics_cfg.items():
+            row[f"{mname}_pct"] = compare_two_datasets(cd, pd_, mc, conc_for_geomean)[0]
         combo_results.append(row)
 
     # --- Aggregate KPIs ---
@@ -1168,7 +1186,14 @@ def _health_dots_html(health):
     return f'<span class="health-dots">{dots}</span>'
 
 
-def _hm_cell(pct, higher_is_better, similar=None):
+def _hm_cell(
+    pct,
+    higher_is_better,
+    similar=None,
+    force_regression=False,
+    marker=False,
+    tooltip=None,
+):
     """Return styled heatmap cell HTML for a % delta."""
     if pct is None:
         return '<span class="hm-cell hm-neutral">N/A</span>'
@@ -1178,7 +1203,9 @@ def _hm_cell(pct, higher_is_better, similar=None):
     label = f"{sign}{pct:.1f} %"
     if similar is None:
         similar = abs(norm) <= NEUTRAL_THRESHOLD_PCT
-    if similar:
+    if force_regression:
+        cls = "hm-regress-strong"
+    elif similar:
         cls = "hm-similar"
     elif norm > NEUTRAL_THRESHOLD_PCT:
         cls = "hm-improve-strong"
@@ -1186,7 +1213,10 @@ def _hm_cell(pct, higher_is_better, similar=None):
         cls = "hm-regress-strong"
     else:
         cls = "hm-similar"
-    return f'<span class="hm-cell {cls}">{label}</span>'
+    if marker:
+        label += ' <span class="hm-p50-flag" title="P50 regressed >5 %">⚠</span>'
+    title_attr = f' title="{html.escape(tooltip)}"' if tooltip else ""
+    return f'<span class="hm-cell {cls}"{title_attr}>{label}</span>'
 
 
 CA_CONFIGURATIONS = [
@@ -3324,7 +3354,9 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     )
     st.caption(
         "% delta vs. previous release (geometric mean across concurrency levels). "
-        f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %."
+        f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %. "
+        f"TTFT/ITL P95 cells also turn red when their P50 regresses by more than {P50_THRESHOLD_PCT:.0f} %; "
+        "⚠ marks a P50-driven red."
     )
 
     heatmap_cols = [
@@ -3628,9 +3660,18 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 unsafe_allow_html=True,
             )
             for j, (mname, hib, _) in enumerate(heatmap_cols):
+                pct = r.get(f"{mname}_pct")
+                similar = r.get(f"{mname}_similar")
+                p50_key = {"TTFT P95": "TTFT P50", "ITL P95": "ITL P50"}.get(mname)
+                p50_pct = r.get(f"{p50_key}_pct") if p50_key else None
+                force_regression = bool(p50_key and p95_is_regression(pct, p50_pct))
+                marker = bool(p50_key and p50_only_regression(pct, p50_pct))
+                tooltip = None
+                if p50_key and pct is not None and p50_pct is not None:
+                    tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
                 row_cols[j + 1].markdown(
                     f'<div style="text-align:center">'
-                    f"{_hm_cell(r.get(f'{mname}_pct'), hib, r.get(f'{mname}_similar'))}</div>",
+                    f"{_hm_cell(pct, hib, similar, force_regression=force_regression, marker=marker, tooltip=tooltip)}</div>",
                     unsafe_allow_html=True,
                 )
             with row_cols[-1]:
