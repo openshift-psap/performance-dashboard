@@ -3381,13 +3381,23 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             "aggregation": "geom_mean",
             "higher_is_better": True,
         },
-        "End-to-End Latency": {
+        "End-to-End Latency (P50)": {
             "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "TTFT P50": {
+            "column": "ttft_median",
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
         "TTFT P95": {
             "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P50": {
+            "column": "itl_median",
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
@@ -3499,7 +3509,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
                 v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
 
-            if col_name == "ttft_p95":
+            if col_name in ("ttft_median", "ttft_p95"):
                 v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
                 v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
 
@@ -3538,7 +3548,10 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
 
             if "tok/sec" in col_name:
                 y_title = "Tokens / sec"
-            elif "latency" in col_name.lower() or col_name == "ttft_p95":
+            elif "latency" in col_name.lower() or col_name in (
+                "ttft_median",
+                "ttft_p95",
+            ):
                 y_title = "Seconds"
             else:
                 y_title = "Milliseconds"
