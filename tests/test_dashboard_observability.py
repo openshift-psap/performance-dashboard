@@ -122,9 +122,15 @@ def test_grafana_link_routes_b200_pirate_to_combined_dashboard():
             "/d/psap-b200-mlperf/vllm-2b-dcgm-metrics-psap-b200-mlperf",
             None,
         ),
+        (
+            "B200-B200x-run",
+            "/d/psap-b200-mlperf/vllm-2b-dcgm-metrics-psap-b200-mlperf",
+            None,
+        ),
     ],
 )
 def test_grafana_link_routes_b200_runs_by_name(run, expected_dashboard, cluster):
+    """Route NM-style B200 names to the combined dashboard and leave others alone."""
     link = create_grafana_link(_link_row(run, accelerator="B200"))
 
     assert expected_dashboard in link
@@ -132,6 +138,13 @@ def test_grafana_link_routes_b200_runs_by_name(run, expected_dashboard, cluster)
         assert "var-cluster_name=psap-b200-nm" not in link
     else:
         assert f"var-cluster_name={cluster}" in link
+
+
+def test_grafana_link_routes_non_string_run_name_by_accelerator():
+    """Fall back to accelerator-based routing when the run name is not a string."""
+    link = create_grafana_link(_link_row(None, accelerator="B200"))
+
+    assert "/d/psap-b200-mlperf/vllm-2b-dcgm-metrics-psap-b200-mlperf" in link
 
 
 @pytest.mark.parametrize(
