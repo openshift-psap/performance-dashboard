@@ -4,6 +4,8 @@ from thresholds import (
     P50_THRESHOLD_PCT,
     P95_THRESHOLD_PCT,
     is_similar_change,
+    p50_only_regression,
+    p95_is_regression,
     pct_threshold_for_column,
 )
 
@@ -33,3 +35,19 @@ def test_e2e_latency_has_no_absolute_tolerance():
     # A 6 % E2E change is outside the 5 % band regardless of its absolute delta.
     assert not is_similar_change(6.0, "request_latency_median")
     assert not is_similar_change(-6.0, "request_latency_median")
+
+
+def test_p95_regression_includes_p50_or():
+    assert p95_is_regression(11.0, 0.0)
+    assert p95_is_regression(0.0, 6.0)
+    assert p95_is_regression(-15.0, 29.5)  # P50-only red despite P95 improving
+    assert not p95_is_regression(10.0, 5.0)  # inclusive boundaries are neutral
+    assert not p95_is_regression(5.0, 4.9)
+    assert not p95_is_regression(None, None)
+
+
+def test_p50_only_marker():
+    assert p50_only_regression(5.0, 6.0)
+    assert p50_only_regression(-15.0, 29.5)
+    assert not p50_only_regression(11.0, 6.0)  # P95 already caused the red
+    assert not p50_only_regression(5.0, 4.9)
