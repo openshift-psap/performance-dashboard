@@ -61,7 +61,7 @@ from thresholds import (
     P50_THRESHOLD_PCT,
     P95_THRESHOLD_PCT,
     is_similar_change,
-    p50_only_regression,
+    p50_regressed,
     pct_threshold_for_column,
 )
 
@@ -3468,7 +3468,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     st.caption(
         "% delta vs. previous release (geometric mean across concurrency levels). "
         f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %. "
-        f"TTFT/ITL P95 cells keep their P95 color but get a red ⚠ when their P50 regresses by more than {P50_THRESHOLD_PCT:.0f} %."
+        f"TTFT/ITL P95 cells keep their P95 color but get a red ⚠ whenever their P50 regresses by more than {P50_THRESHOLD_PCT:.0f} %."
     )
 
     heatmap_cols = [
@@ -3795,7 +3795,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 similar = r.get(f"{mname}_similar")
                 p50_key = {"TTFT P95": "TTFT P50", "ITL P95": "ITL P50"}.get(mname)
                 p50_pct = r.get(f"{p50_key}_pct") if p50_key else None
-                marker = bool(p50_key and p50_only_regression(pct, p50_pct))
+                marker = bool(p50_key and p50_regressed(p50_pct))
                 tooltip = None
                 if p50_key and pct is not None and p50_pct is not None:
                     tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
