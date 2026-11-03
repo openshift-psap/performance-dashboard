@@ -656,6 +656,7 @@ PROFILE_PAIRS_BY_LABEL = {
     "Profile E: Long Context (100k/1k)": "100000/1000",
     "Profile F: Heavy Heterogeneous (8k/800)": "8000/800",
 }
+HIDDEN_MAIN_FILTER_PAIRS = {"2048/128"}
 
 
 def assign_profile_vectorized(df):
@@ -13234,13 +13235,23 @@ def main():
             current_profile = st.session_state.get(
                 f"profile_filter_{st.session_state.filter_change_key}", None
             )
+            if (
+                current_profile
+                and _profile_option_label(current_profile) in HIDDEN_MAIN_FILTER_PAIRS
+            ):
+                current_profile = None
 
             # If no profile selected yet, determine the default that will be selected
             if not current_profile:
                 available_profiles_raw = sorted(df["profile"].unique().tolist())
                 _sp = ("Multi-turn", "Custom ISL/OSL")
                 available_profiles = (
-                    [p for p in available_profiles_raw if p not in _sp]
+                    [
+                        p
+                        for p in available_profiles_raw
+                        if p not in _sp
+                        and _profile_option_label(p) not in HIDDEN_MAIN_FILTER_PAIRS
+                    ]
                     + (["Multi-turn"] if "Multi-turn" in available_profiles_raw else [])
                     + (
                         ["Custom ISL/OSL"]
@@ -13348,7 +13359,12 @@ def main():
             # Sort so "Multi-turn" and "Custom ISL/OSL" always come last
             _special = ("Multi-turn", "Custom ISL/OSL")
             profiles = (
-                [p for p in profiles_raw if p not in _special]
+                [
+                    p
+                    for p in profiles_raw
+                    if p not in _special
+                    and _profile_option_label(p) not in HIDDEN_MAIN_FILTER_PAIRS
+                ]
                 + (["Multi-turn"] if "Multi-turn" in profiles_raw else [])
                 + (["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else [])
             )
