@@ -4,7 +4,7 @@ from thresholds import (
     P50_THRESHOLD_PCT,
     P95_THRESHOLD_PCT,
     is_similar_change,
-    p50_only_regression,
+    p50_regressed,
     pct_threshold_for_column,
 )
 
@@ -36,8 +36,8 @@ def test_e2e_latency_has_no_absolute_tolerance():
     assert not is_similar_change(-6.0, "request_latency_median")
 
 
-def test_p50_only_marker():
-    assert p50_only_regression(5.0, 6.0)
-    assert p50_only_regression(-15.0, 29.5)
-    assert not p50_only_regression(11.0, 6.0)  # P95 already caused the red
-    assert not p50_only_regression(5.0, 4.9)
+def test_p50_regressed_marker():
+    assert p50_regressed(6.0)
+    assert p50_regressed(29.5)
+    assert not p50_regressed(4.9)
+    assert not p50_regressed(None)
