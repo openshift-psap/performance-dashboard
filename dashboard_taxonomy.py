@@ -80,6 +80,11 @@ def split_legacy_version(version):
     if prefix == "RHAIIS" and tuple(
         int(part) for part in re.findall(r"\d+", match.group("release"))
     ) >= (3, 6):
+        parts = raw_version.split("-")
+        label = "-".join(parts[3:]).strip()
+        if match.start() == 0 and len(parts) >= 4 and label:
+            # Keep the build tag in the version, but split the remaining label.
+            return "-".join(parts[:3]), normalize_label(label)
         # RHAIIS 3.6+ build tags such as -fast1 are part of the version.
         return raw_version, DEFAULT_LABEL
 

@@ -83,6 +83,14 @@ def test_known_composite_versions_become_release_and_label():
         "RHAIIS-3.4GA",
         "fubon-no-caching",
     )
+    assert split_legacy_version("RHAIIS-3.6-fast1-bad") == (
+        "RHAIIS-3.6-fast1",
+        "bad",
+    )
+    assert split_legacy_version("RHAIIS-3.7-fast2-bad-rerun") == (
+        "RHAIIS-3.7-fast2",
+        "bad-rerun",
+    )
     assert split_legacy_version("AIC-0.10.0-vLLM-0.24.0-pcon") == (
         "AIC-0.10.0-vLLM-0.24.0",
         "pcon",
