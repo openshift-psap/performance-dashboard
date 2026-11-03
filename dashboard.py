@@ -587,16 +587,8 @@ def format_custom_isl_osl(pair):
 
 
 def _profile_option_label(profile):
-    """Explain standard profiles without changing their stored filter values."""
-    if profile == "Multi-turn":
-        return "Multi-turn — conversation workload"
-    if profile == "Custom ISL/OSL":
-        return "Custom ISL/OSL — run-specific lengths"
-    pair = PROFILE_PAIRS_BY_LABEL.get(profile, profile)
-    details = PROFILE_DETAILS.get(pair)
-    if profile == "128/128":
-        return "Short input/output (128/128)"
-    return f"{details['name']} ({pair})" if details else profile
+    """Show the ISL/OSL pair while preserving the stored profile value."""
+    return PROFILE_PAIRS_BY_LABEL.get(profile, profile)
 
 
 def _multiturn_pair_label(pair):
