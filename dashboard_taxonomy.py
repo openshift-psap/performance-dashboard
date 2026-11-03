@@ -108,9 +108,7 @@ def uses_legacy_methodology(version):
     release_parts = tuple(int(part) for part in match.group("release").split("."))
     release_parts += (0,) * (3 - len(release_parts))
     threshold = (
-        (3, 6, 0)
-        if match.group("prefix").casefold() == "rhaiis"
-        else (0, 26, 0)
+        (3, 6, 0) if match.group("prefix").casefold() == "rhaiis" else (0, 26, 0)
     )
     return release_parts < threshold
 
@@ -189,10 +187,9 @@ def latest_run_rows(df):
     if run_stats["start_time"].isna().any():
         latest_run_id = run_stats.sort_values("position", kind="stable").index[-1]
     else:
-        latest_run_id = (
-            run_stats.sort_values(["start_time", "position"], kind="stable")
-            .index[-1]
-        )
+        latest_run_id = run_stats.sort_values(
+            ["start_time", "position"], kind="stable"
+        ).index[-1]
     return df.iloc[(run_ids.eq(latest_run_id)).to_numpy().nonzero()[0]]
 
 
@@ -472,7 +469,13 @@ def add_trace_metadata(df, series_column="run_identifier", legend_options=None):
     if "runtime_args" not in result.columns:
         result["runtime_args"] = ""
     result["runtime_config_key"] = result["runtime_args"].map(_runtime_args_key)
-    for column in ("spec_decoding", "prefix_caching", "turns", "prefix_tokens", "prefix_count"):
+    for column in (
+        "spec_decoding",
+        "prefix_caching",
+        "turns",
+        "prefix_tokens",
+        "prefix_count",
+    ):
         if column in result.columns:
             result["runtime_config_key"] += (
                 ";" + column + "=" + result[column].fillna("").astype(str).str.strip()

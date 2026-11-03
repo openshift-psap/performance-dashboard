@@ -151,6 +151,7 @@ def process_sharegpt():
             repo_id="anon8231489123/ShareGPT_Vicuna_unfiltered",
             filename="ShareGPT_V3_unfiltered_cleaned_split.json",
             repo_type="dataset",
+            revision="192ab2185289094fc556ec8ce5ce1e8e587154ca",
         )
 
         with open(json_path, encoding="utf-8") as f:
@@ -249,14 +250,22 @@ def process_swebench_lite():
 
     try:
         import pandas as pd
-        from datasets import load_dataset
         from transformers import AutoTokenizer
 
+        from datasets import load_dataset
+
         print("  Loading SWE-bench_Lite test split from HuggingFace...")
-        ds = load_dataset("princeton-nlp/SWE-bench_Lite", split="test")
+        ds = load_dataset(
+            "princeton-nlp/SWE-bench_Lite",
+            split="test",
+            revision="6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2",
+        )
 
         print(f"  Tokenizing {len(ds):,} problem statements...")
-        tokenizer = AutoTokenizer.from_pretrained("google/gemma-4-26B-A4B-it")
+        tokenizer = AutoTokenizer.from_pretrained(
+            "google/gemma-4-26B-A4B-it",
+            revision="4d7ae4984b7db7de8f8457170b3f1a419ee76d52",
+        )
 
         input_lengths = []
         for row in ds:
