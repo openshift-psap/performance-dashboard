@@ -144,6 +144,14 @@ def _is_janus_run(run_name):
     return upper.startswith("JANUS-") or upper.startswith("JANUS_")
 
 
+def _is_b200_nm_run(run_name):
+    """Check if a run belongs to the B200 NM cluster."""
+    if not isinstance(run_name, str):
+        return False
+    upper = run_name.upper()
+    return upper.startswith("B200-B200-") or upper.startswith("B200_B200-")
+
+
 def create_grafana_link(row):
     """Create the same cluster- and date-aware Grafana link used by Filtered Data."""
     start_time = row.get("guidellm_start_time_ms")
@@ -171,6 +179,8 @@ def create_grafana_link(row):
         dashboard_key = "H200_HERA"
     elif _is_zeus2_run(run_name):
         dashboard_key = "H200_ZEUS2"
+    elif _is_b200_nm_run(run_name):
+        dashboard_key = "B200_PIRATE"
     elif accelerator == "H200":
         dashboard_key = (
             "H200_NEW" if start_ms >= H200_DASHBOARD_CUTOFF_MS else "H200_OLD"
