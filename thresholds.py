@@ -19,13 +19,6 @@ def is_similar_change(pct_diff, column):
     return abs(pct_diff) <= pct_threshold_for_column(column)
 
 
-def p95_is_regression(p95_pct, p50_pct):
-    """True when P95 regressed >10 % or its P50 regressed >5 %."""
-    if p95_pct is not None and p95_pct > P95_THRESHOLD_PCT:
-        return True
-    return p50_pct is not None and p50_pct > P50_THRESHOLD_PCT
-
-
 def p50_only_regression(p95_pct, p50_pct):
     """True when the P50 condition, not the P95 condition, made the cell red."""
     return (p50_pct is not None and p50_pct > P50_THRESHOLD_PCT) and not (

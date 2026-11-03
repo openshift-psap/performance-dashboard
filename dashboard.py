@@ -36,7 +36,6 @@ from thresholds import (
     P95_THRESHOLD_PCT,
     is_similar_change,
     p50_only_regression,
-    p95_is_regression,
     pct_threshold_for_column,
 )
 
@@ -1190,7 +1189,6 @@ def _hm_cell(
     pct,
     higher_is_better,
     similar=None,
-    force_regression=False,
     marker=False,
     tooltip=None,
 ):
@@ -1203,9 +1201,7 @@ def _hm_cell(
     label = f"{sign}{pct:.1f} %"
     if similar is None:
         similar = abs(norm) <= NEUTRAL_THRESHOLD_PCT
-    if force_regression:
-        cls = "hm-regress-strong"
-    elif similar:
+    if similar:
         cls = "hm-similar"
     elif norm > NEUTRAL_THRESHOLD_PCT:
         cls = "hm-improve-strong"
@@ -1214,7 +1210,11 @@ def _hm_cell(
     else:
         cls = "hm-similar"
     if marker:
-        label += ' <span class="hm-p50-flag" title="P50 regressed >5 %">⚠</span>'
+        label += (
+            '<span class="hm-p50-flag" '
+            'style="color:#dc2626;font-weight:700;margin-left:0.2rem" '
+            'title="P50 regressed >5 %">⚠</span>'
+        )
     title_attr = f' title="{html.escape(tooltip)}"' if tooltip else ""
     return f'<span class="hm-cell {cls}"{title_attr}>{label}</span>'
 
@@ -3096,7 +3096,12 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                     unsafe_allow_html=True,
                 )
 
-                with st.expander("Per-model breakdown and comparisons", expanded=False):
+                with st.expander(
+                    f"Per-model breakdown and comparisons "
+                    f"(throughput ±{P50_THRESHOLD_PCT:.0f} %, "
+                    f"TTFT/ITL P95 ±{P95_THRESHOLD_PCT:.0f} %)",
+                    expanded=False,
+                ):
                     st.markdown(
                         f"""<div class="overview-card-detail">
 Per-model delta (geometric mean, {_accel_display(parity_accel)}):
@@ -3105,14 +3110,14 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     <th style="text-align:left">Model</th>
     <th style="text-align:center">TP</th>
     <th style="text-align:left">Profile</th>
-    <th style="text-align:right">Throughput Δ</th>
-    <th style="text-align:right">TTFT P95 Δ</th>
-    <th style="text-align:right">ITL P95 Δ</th>
+    <th style="text-align:right">Throughput Δ (±{P50_THRESHOLD_PCT:.0f} %)</th>
+    <th style="text-align:right">TTFT P95 Δ (±{P95_THRESHOLD_PCT:.0f} %)</th>
+    <th style="text-align:right">ITL P95 Δ (±{P95_THRESHOLD_PCT:.0f} %)</th>
 </tr></thead>
 <tbody>{vllm_table_rows}</tbody>
 </table>
 <br>
-🟢 Ahead (beyond threshold) · 🟡 At Parity (within threshold) · 🔴 Behind (beyond threshold)<br>
+🟢 Ahead (beyond threshold) · 🟡 At Parity (throughput ±{P50_THRESHOLD_PCT:.0f} %, TTFT/ITL P95 ±{P95_THRESHOLD_PCT:.0f} %) · 🔴 Behind (beyond threshold)<br>
 <i>For latency metrics (TTFT/ITL), lower is better — a negative Δ means RHAIIS is faster.</i>
 </div>""",
                         unsafe_allow_html=True,
@@ -3355,8 +3360,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     st.caption(
         "% delta vs. previous release (geometric mean across concurrency levels). "
         f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %. "
-        f"TTFT/ITL P95 cells also turn red when their P50 regresses by more than {P50_THRESHOLD_PCT:.0f} %; "
-        "⚠ marks a P50-driven red."
+        f"TTFT/ITL P95 cells keep their P95 color but get a red ⚠ when their P50 regresses by more than {P50_THRESHOLD_PCT:.0f} %."
     )
 
     heatmap_cols = [
@@ -3664,14 +3668,13 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 similar = r.get(f"{mname}_similar")
                 p50_key = {"TTFT P95": "TTFT P50", "ITL P95": "ITL P50"}.get(mname)
                 p50_pct = r.get(f"{p50_key}_pct") if p50_key else None
-                force_regression = bool(p50_key and p95_is_regression(pct, p50_pct))
                 marker = bool(p50_key and p50_only_regression(pct, p50_pct))
                 tooltip = None
                 if p50_key and pct is not None and p50_pct is not None:
                     tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
                 row_cols[j + 1].markdown(
                     f'<div style="text-align:center">'
-                    f"{_hm_cell(pct, hib, similar, force_regression=force_regression, marker=marker, tooltip=tooltip)}</div>",
+                    f"{_hm_cell(pct, hib, similar, marker=marker, tooltip=tooltip)}</div>",
                     unsafe_allow_html=True,
                 )
             with row_cols[-1]:
