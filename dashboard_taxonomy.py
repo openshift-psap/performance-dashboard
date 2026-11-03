@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime, timezone
 from itertools import cycle
 
 import pandas as pd
@@ -65,6 +66,50 @@ def display_version_label(version, label):
     """Show the base release for unlabeled runs and append non-empty labels."""
     display = display_label(label)
     return str(version) if display == "—" else f"{version}-{display}"
+
+
+_CLUSTER_NAMES = frozenset(
+    {"hera", "hera2", "zeus", "zeus2", "athena", "janus", "pirate"}
+)
+
+
+def run_cluster(run_value):
+    """Return the cluster embedded in a run name, if any.
+
+    Runs on a named cluster use ``<accelerator>-<cluster>-<model>-<parallelism>``
+    (or ``<cluster>-<accelerator>-...`` for Athena/Janus).
+    """
+    if not isinstance(run_value, str):
+        return ""
+    tokens = run_value.strip().replace("_", "-").split("-", 2)[:2]
+    for token in tokens:
+        normalized = token.strip().casefold()
+        if normalized in _CLUSTER_NAMES:
+            return normalized
+    return ""
+
+
+def hardware_label(accelerator, run_value):
+    """Combine an accelerator with the cluster embedded in its run name."""
+    if accelerator is None or pd.isna(accelerator):
+        hardware = "?"
+    else:
+        hardware = str(accelerator).strip() or "?"
+    cluster = run_cluster(run_value)
+    return f"{hardware} ({cluster})" if cluster else hardware
+
+
+def format_run_date(value):
+    """Format an epoch-milliseconds value as a UTC date string."""
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return "—"
+    try:
+        return datetime.fromtimestamp(float(numeric) / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d"
+        )
+    except (OverflowError, OSError, ValueError):
+        return "—"
 
 
 def split_legacy_version(version):

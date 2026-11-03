@@ -43,6 +43,8 @@ from dashboard_taxonomy import (
     display_label,
     display_version_label,
     encode_query_mapping,
+    format_run_date,
+    hardware_label,
     is_valid_hex_color,
     latest_run_rows,
     normalize_taxonomy_columns,
@@ -3942,9 +3944,18 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
         filtered_df = filtered_df.copy()
         if "label" not in filtered_df.columns:
             filtered_df["label"] = DEFAULT_LABEL
-        for _column in ("profile", "uuid", "runtime_args"):
+        for _column in (
+            "profile",
+            "uuid",
+            "runtime_args",
+            "run",
+            "image_tag",
+            "request_type",
+        ):
             if _column not in filtered_df.columns:
                 filtered_df[_column] = ""
+        if "guidellm_start_time_ms" not in filtered_df.columns:
+            filtered_df["guidellm_start_time_ms"] = np.nan
         for _column in (
             "spec_decoding",
             "prefix_caching",
@@ -4198,6 +4209,10 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             "uuid",
             "display_label",
             "runtime_args_preview",
+            "hardware_display",
+            "image_tag_display",
+            "run_date_display",
+            "request_type_display",
         ]
         if _has_env_vars:
             _plot_custom_data.append("env_vars_preview")
@@ -4310,6 +4325,33 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 _env_vars_preview
             )
 
+        def _add_tooltip_columns(frame):
+            """Add display columns for hardware, image, date, and endpoint."""
+            frame = frame.copy()
+            frame["hardware_display"] = frame.apply(
+                lambda row: hardware_label(row.get("accelerator"), row.get("run")),
+                axis=1,
+            )
+            for column, target in (
+                ("image_tag", "image_tag_display"),
+                ("request_type", "request_type_display"),
+            ):
+                values = (
+                    frame[column].fillna("").astype(str).str.strip()
+                    if column in frame.columns
+                    else pd.Series("", index=frame.index)
+                )
+                frame[target] = values.map(
+                    lambda value: html.escape(value) if value else "—"
+                )
+            start_times = (
+                frame["guidellm_start_time_ms"]
+                if "guidellm_start_time_ms" in frame.columns
+                else pd.Series(np.nan, index=frame.index)
+            )
+            frame["run_date_display"] = start_times.map(format_run_date)
+            return frame
+
         plot_df = filtered_df_sorted
         if _is_turn_view:
             per_turn_plot_df["display_label"] = per_turn_plot_df["label"].map(
@@ -4332,6 +4374,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             plot_df["legend_label"] += " | conc=" + plot_df[
                 "intended concurrency"
             ].apply(lambda value: str(int(value)) if pd.notna(value) else "?")
+        plot_df = _add_tooltip_columns(plot_df)
 
         def _filter_values(column, *, skip_default=False):
             values = []
@@ -4518,6 +4561,13 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             custom_shapes,
         )
         if fig is not None:
+            _custom_index = {
+                column: position for position, column in enumerate(_plot_custom_data)
+            }
+
+            def _custom(field):
+                return f"%{{customdata[{_custom_index[field]}]}}"
+
             for trace in fig.data:
                 trace_key = trace.name
                 trace_rows = plot_df[plot_df["trace_label"] == trace_key]
@@ -4544,12 +4594,18 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 hovertemplate = (
                     f"{plot_x_label}: %{{x}}<br>"
                     f"{y_axis_display_label}: %{{y}}<br>"
-                    "Label: %{customdata[1]}<br>"
-                    "UUID: %{customdata[0]}<br>"
-                    "Runtime Args:<br>%{customdata[2]}"
+                    f"Hardware: {_custom('hardware_display')}<br>"
+                    f"Image Tag: {_custom('image_tag_display')}<br>"
+                    f"Run Date: {_custom('run_date_display')}<br>"
+                    f"GuideLLM Endpoint: {_custom('request_type_display')}<br>"
+                    f"Label: {_custom('display_label')}<br>"
+                    f"UUID: {_custom('uuid')}<br>"
+                    f"Runtime Args:<br>{_custom('runtime_args_preview')}"
                 )
                 if _has_env_vars:
-                    hovertemplate += "<br>Environment Variables:<br>%{customdata[3]}"
+                    hovertemplate += (
+                        f"<br>Environment Variables:<br>{_custom('env_vars_preview')}"
+                    )
                 trace.hovertemplate = hovertemplate + "<extra></extra>"
 
         _legend_parts = "Accelerator | Model | Version | TP"

@@ -17,12 +17,15 @@ from dashboard_taxonomy import (
     encode_query_mapping,
     encode_version_label_pairs,
     filter_taxonomy,
+    format_run_date,
+    hardware_label,
     is_valid_hex_color,
     normalize_label,
     normalize_taxonomy_columns,
     parse_accelerator_values,
     parse_filter_values,
     parse_version_filter_values,
+    run_cluster,
     split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
@@ -399,3 +402,33 @@ def test_manual_importer_preserves_label_in_version(tmp_path):
     assert normalized["version"].tolist() == ["vLLM-0.28.0"]
     assert normalized["label"].tolist() == ["pcon-mnbt"]
     assert "user" not in result.columns
+
+
+def test_run_cluster_extracts_cluster_from_run_names():
+    assert run_cluster("H200-zeus2-Qwen/Qwen3.8-27B-1") == "zeus2"
+    assert run_cluster("H200-hera-openai/gpt-oss-120b-1") == "hera"
+    assert run_cluster("H200-hera2-model-1") == "hera2"
+    assert run_cluster("H200_HERA-model-1") == "hera"
+    assert run_cluster("ATHENA-accelerator-model-1") == "athena"
+    assert run_cluster("JANUS-accelerator-model-1") == "janus"
+    assert run_cluster("H200-meta-llama/Llama-3.3-70B-Instruct-2") == ""
+    assert run_cluster("H200-bart-large-1") == ""
+    assert run_cluster(None) == ""
+    assert run_cluster(float("nan")) == ""
+
+
+def test_hardware_label_combines_accelerator_and_cluster():
+    assert hardware_label("H200", "H200-zeus2-Qwen/Qwen3.8-27B-1") == "H200 (zeus2)"
+    assert hardware_label("H200", "H200-hera-openai/gpt-oss-120b-1") == "H200 (hera)"
+    assert hardware_label("H200", "H200-meta-llama/Llama-3.3-70B-Instruct-2") == "H200"
+    assert hardware_label("MI300X", "MI300X-model-1") == "MI300X"
+    assert hardware_label(None, None) == "?"
+
+
+def test_format_run_date_uses_utc_date():
+    assert format_run_date(1762291394911) == "2025-11-04"
+    assert format_run_date("1762291394911") == "2025-11-04"
+    assert format_run_date(0) == "1970-01-01"
+    assert format_run_date(None) == "—"
+    assert format_run_date("") == "—"
+    assert format_run_date("not-a-date") == "—"
