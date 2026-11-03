@@ -49,6 +49,7 @@ from dashboard_taxonomy import (
     parse_accelerator_values,
     parse_filter_values,
     parse_version_filter_values,
+    resolve_version_label_pairs,
     run_identity,
     split_legacy_version,
     sync_selected_option,
@@ -12108,8 +12109,9 @@ def main():
             url_accelerators = []
             url_models = []
             url_versions = []
-            url_version_label_pairs = decode_version_label_pairs(
-                query_params.get("version_labels")
+            url_version_label_pairs = resolve_version_label_pairs(
+                decode_version_label_pairs(query_params.get("version_labels")),
+                all_version_label_pairs,
             )
             url_labels = []
             url_uuids = []

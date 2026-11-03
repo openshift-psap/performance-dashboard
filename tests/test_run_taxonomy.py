@@ -23,6 +23,7 @@ from dashboard_taxonomy import (
     parse_accelerator_values,
     parse_filter_values,
     parse_version_filter_values,
+    resolve_version_label_pairs,
     split_legacy_version,
     sync_selected_option,
     sync_selected_options,
@@ -84,6 +85,14 @@ def test_known_composite_versions_become_release_and_label():
         "RHAIIS-3.4GA",
         "fubon-no-caching",
     )
+    assert split_legacy_version("RHAIIS-3.6-fast1-bad") == (
+        "RHAIIS-3.6-fast1",
+        "bad",
+    )
+    assert split_legacy_version("RHAIIS-3.7-fast2-bad-rerun") == (
+        "RHAIIS-3.7-fast2",
+        "bad-rerun",
+    )
     assert split_legacy_version("AIC-0.10.0-vLLM-0.24.0-pcon") == (
         "AIC-0.10.0-vLLM-0.24.0",
         "pcon",
@@ -135,6 +144,22 @@ def test_old_version_urls_resolve_labels_without_splitting_rhaiis_36_versions():
         ("vLLM-0.24.0", "pcon"),
         ("RHAIIS-3.6-fast2", DEFAULT_LABEL),
     }
+
+
+def test_legacy_rhaiis_bad_version_query_resolves_to_label():
+    data = normalize_taxonomy_columns(
+        pd.DataFrame({"version": ["RHAIIS-3.6-fast2", "RHAIIS-3.6-fast2-bad"]})
+    )
+
+    versions, pairs = parse_version_filter_values(
+        "RHAIIS-3.6-fast2-bad",
+        data["version"].unique(),
+        data[["version", "label"]].drop_duplicates().itertuples(index=False, name=None),
+        include_default_for_exact=True,
+    )
+
+    assert versions == ["RHAIIS-3.6-fast2"]
+    assert pairs == [("RHAIIS-3.6-fast2", "bad")]
 
 
 def test_nvidia_url_alias_resolves_to_available_nvidia_accelerators():
@@ -254,6 +279,17 @@ def test_version_label_pairs_preserve_release_scope():
         False,
         False,
     ]
+
+
+def test_legacy_version_label_pairs_resolve_embedded_rhaiis_labels():
+    data = normalize_taxonomy_columns(
+        pd.DataFrame({"version": ["RHAIIS-3.6-fast2-bad"]})
+    )
+    available_pairs = data[["version", "label"]].itertuples(index=False, name=None)
+
+    assert resolve_version_label_pairs(
+        [("RHAIIS-3.6-fast2-bad", DEFAULT_LABEL)], available_pairs
+    ) == [("RHAIIS-3.6-fast2", "bad")]
 
 
 def test_appearance_query_mapping_round_trip():

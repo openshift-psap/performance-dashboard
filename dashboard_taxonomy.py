@@ -80,6 +80,11 @@ def split_legacy_version(version):
     if prefix == "RHAIIS" and tuple(
         int(part) for part in re.findall(r"\d+", match.group("release"))
     ) >= (3, 6):
+        parts = raw_version.split("-")
+        label = "-".join(parts[3:]).strip()
+        if match.start() == 0 and len(parts) >= 4 and label:
+            # Keep the build tag in the version, but split the remaining label.
+            return "-".join(parts[:3]), normalize_label(label)
         # RHAIIS 3.6+ build tags such as -fast1 are part of the version.
         return raw_version, DEFAULT_LABEL
 
@@ -229,6 +234,25 @@ def decode_version_label_pairs(raw_value):
         for pair in parsed
         if isinstance(pair, list) and len(pair) == 2 and all(pair)
     ]
+
+
+def resolve_version_label_pairs(pairs, available_pairs):
+    """Resolve exact URL pairs, including labels embedded by older URLs."""
+    available_pairs = {tuple(pair) for pair in available_pairs}
+    resolved = []
+    for raw_version, raw_label in pairs:
+        pair = (str(raw_version), str(raw_label))
+        candidates = [pair]
+        version, inferred_label = split_legacy_version(pair[0])
+        if version != pair[0]:
+            if pair[1] == DEFAULT_LABEL:
+                candidates.append((str(version), str(inferred_label)))
+            candidates.append((str(version), pair[1]))
+        for candidate in candidates:
+            if candidate in available_pairs and candidate not in resolved:
+                resolved.append(candidate)
+                break
+    return resolved
 
 
 def version_label_pair_mask(df, pairs):
