@@ -1,5 +1,6 @@
 """Small, dependency-light helpers for dashboard run taxonomy."""
 
+import html
 import json
 import re
 from datetime import datetime, timezone
@@ -110,6 +111,58 @@ def format_run_date(value):
         )
     except (OverflowError, OSError, ValueError):
         return "—"
+
+
+def add_tooltip_columns(frame):
+    """Add display columns used by performance plot hover tooltips."""
+    result = frame.copy()
+    if result.empty:
+        result["hardware_display"] = pd.Series("", index=result.index, dtype="object")
+    else:
+        result["hardware_display"] = result.apply(
+            lambda row: hardware_label(row.get("accelerator"), row.get("run")),
+            axis=1,
+        )
+    for column, target in (
+        ("image_tag", "image_tag_display"),
+        ("request_type", "request_type_display"),
+    ):
+        values = (
+            result[column].fillna("").astype(str).str.strip()
+            if column in result.columns
+            else pd.Series("", index=result.index)
+        )
+        result[target] = values.map(lambda value: html.escape(value) if value else "—")
+    start_times = (
+        result["guidellm_start_time_ms"]
+        if "guidellm_start_time_ms" in result.columns
+        else pd.Series(float("nan"), index=result.index)
+    )
+    result["run_date_display"] = start_times.map(format_run_date)
+    return result
+
+
+def build_tooltip_template(columns, x_label, y_label, has_env_vars=False):
+    """Build a performance plot hovertemplate from the customdata column order."""
+    index = {column: position for position, column in enumerate(columns)}
+
+    def field(name):
+        return f"%{{customdata[{index[name]}]}}"
+
+    template = (
+        f"{x_label}: %{{x}}<br>"
+        f"{y_label}: %{{y}}<br>"
+        f"Hardware: {field('hardware_display')}<br>"
+        f"Image Tag: {field('image_tag_display')}<br>"
+        f"Run Date: {field('run_date_display')}<br>"
+        f"GuideLLM Endpoint: {field('request_type_display')}<br>"
+        f"Label: {field('display_label')}<br>"
+        f"UUID: {field('uuid')}<br>"
+        f"Runtime Args:<br>{field('runtime_args_preview')}"
+    )
+    if has_env_vars:
+        template += f"<br>Environment Variables:<br>{field('env_vars_preview')}"
+    return template + "<extra></extra>"
 
 
 def split_legacy_version(version):

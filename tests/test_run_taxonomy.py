@@ -7,7 +7,9 @@ import pandas as pd
 from dashboard_taxonomy import (
     DEFAULT_LABEL,
     UNLABELED,
+    add_tooltip_columns,
     add_trace_metadata,
+    build_tooltip_template,
     compact_series_label,
     decode_query_mapping,
     decode_version_label_pairs,
@@ -432,3 +434,124 @@ def test_format_run_date_uses_utc_date():
     assert format_run_date(None) == "—"
     assert format_run_date("") == "—"
     assert format_run_date("not-a-date") == "—"
+
+
+def test_format_run_date_handles_out_of_range():
+    assert format_run_date(float("inf")) == "—"
+    assert format_run_date(10**20) == "—"
+
+
+def test_add_tooltip_columns_formats_run_metadata():
+    result = add_tooltip_columns(
+        pd.DataFrame(
+            {
+                "run": [
+                    "H200-hera2-openai/gpt-oss-120b-1",
+                    "H200-meta-llama/Llama-3.3-70B-Instruct-2",
+                ],
+                "accelerator": ["H200", "H200"],
+                "image_tag": ["3.6.0-fast.1-1789484859", None],
+                "request_type": ["/v1/chat/completions", ""],
+                "guidellm_start_time_ms": [1762291394911, None],
+            }
+        )
+    )
+    assert result["hardware_display"].tolist() == ["H200 (hera2)", "H200"]
+    assert result["image_tag_display"].tolist() == ["3.6.0-fast.1-1789484859", "—"]
+    assert result["request_type_display"].tolist() == ["/v1/chat/completions", "—"]
+    assert result["run_date_display"].tolist() == ["2025-11-04", "—"]
+
+
+def test_add_tooltip_columns_handles_missing_columns():
+    result = add_tooltip_columns(pd.DataFrame({"accelerator": ["MI300X"]}))
+    assert result["hardware_display"].tolist() == ["MI300X"]
+    assert result["image_tag_display"].tolist() == ["—"]
+    assert result["request_type_display"].tolist() == ["—"]
+    assert result["run_date_display"].tolist() == ["—"]
+
+
+def test_add_tooltip_columns_escapes_html():
+    result = add_tooltip_columns(
+        pd.DataFrame(
+            {
+                "accelerator": ["H200"],
+                "run": ["H200-model-1"],
+                "image_tag": ["vllm/<tag>"],
+                "request_type": ["a&b"],
+            }
+        )
+    )
+    assert result["image_tag_display"].tolist() == ["vllm/&lt;tag&gt;"]
+    assert result["request_type_display"].tolist() == ["a&amp;b"]
+
+
+def test_add_tooltip_columns_handles_empty_frame():
+    result = add_tooltip_columns(
+        pd.DataFrame(
+            columns=[
+                "run",
+                "accelerator",
+                "image_tag",
+                "request_type",
+                "guidellm_start_time_ms",
+            ]
+        )
+    )
+    assert result.empty
+    assert list(result.columns) == [
+        "run",
+        "accelerator",
+        "image_tag",
+        "request_type",
+        "guidellm_start_time_ms",
+        "hardware_display",
+        "image_tag_display",
+        "request_type_display",
+        "run_date_display",
+    ]
+
+
+def test_build_tooltip_template_uses_column_order():
+    template = build_tooltip_template(
+        [
+            "uuid",
+            "display_label",
+            "runtime_args_preview",
+            "hardware_display",
+            "image_tag_display",
+            "run_date_display",
+            "request_type_display",
+        ],
+        "Concurrency",
+        "Throughput",
+    )
+    assert "Concurrency: %{x}" in template
+    assert "Throughput: %{y}" in template
+    assert "Hardware: %{customdata[3]}" in template
+    assert "Image Tag: %{customdata[4]}" in template
+    assert "Run Date: %{customdata[5]}" in template
+    assert "GuideLLM Endpoint: %{customdata[6]}" in template
+    assert "Label: %{customdata[1]}" in template
+    assert "UUID: %{customdata[0]}" in template
+    assert "Runtime Args:<br>%{customdata[2]}" in template
+    assert "Environment Variables" not in template
+    assert template.endswith("<extra></extra>")
+
+
+def test_build_tooltip_template_includes_env_vars_index():
+    template = build_tooltip_template(
+        [
+            "uuid",
+            "display_label",
+            "runtime_args_preview",
+            "hardware_display",
+            "image_tag_display",
+            "run_date_display",
+            "request_type_display",
+            "env_vars_preview",
+        ],
+        "Concurrency",
+        "Throughput",
+        has_env_vars=True,
+    )
+    assert "Environment Variables:<br>%{customdata[7]}" in template
