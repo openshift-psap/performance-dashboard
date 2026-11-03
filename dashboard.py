@@ -594,6 +594,65 @@ def _resolve_baseline_df(h200_df, baseline, fallback_version, profile_full):
     return pd.concat([preferred, fallback_rows], ignore_index=True)
 
 
+PROFILE_DETAILS = {
+    "1000/1000": {
+        "name": "Balanced Profile",
+        "prompt_tokens": "1000",
+        "output_tokens": "1000",
+        "description": "Equal-length prompts and responses.",
+    },
+    "512/2048": {
+        "name": "Heterogeneous",
+        "prompt_tokens": "512 (stdev=128, min=1, max=1024)",
+        "output_tokens": "2048 (stdev=512, min=1, max=4096)",
+        "description": "Variable-length requests with longer responses on average.",
+    },
+    "8000/1000": {
+        "name": "Prefill-Heavy",
+        "prompt_tokens": "8000",
+        "output_tokens": "1000",
+        "samples": "50",
+        "description": "Long prompts with moderate-length responses.",
+    },
+    "100000/1000": {
+        "name": "Long Context Prefill-Heavy",
+        "prompt_tokens": "100000",
+        "output_tokens": "1000",
+        "samples": "10",
+        "description": "Very long prompts with moderate-length responses.",
+    },
+    "8000/800": {
+        "name": "Heavy Heterogeneous",
+        "prompt_tokens": "8000 (stdev=8500, min=50, max=30000)",
+        "output_tokens": "800 (stdev=1500, min=20, max=8000)",
+        "description": (
+            "Simulates realistic chat patterns with large prompts and smaller "
+            "outputs. Samples 450 seconds of traffic."
+        ),
+    },
+    "128/128": {
+        "name": "Multi-turn Profile",
+        "prompt_tokens": "128",
+        "output_tokens": "128",
+        "turns": "5",
+        "prefix_tokens": "512",
+        "prefix_count": "10,000",
+        "description": "Multi-turn conversation benchmark with 5 turns and 512-token prefix.",
+        "aliases": ["Multi-turn"],
+    },
+}
+
+PROFILE_PAIRS_BY_LABEL = {
+    "Profile A: Balanced (1k/1k)": "1000/1000",
+    "Profile B: Variable Workload (512/2k)": "512/2048",
+    "Profile C: Large Prompt (2k/128)": "2048/128",
+    "Profile D: Prefill Heavy (8k/1k)": "8000/1000",
+    "Profile E: Long Context (100k/1k)": "100000/1000",
+    "Profile F: Heavy Heterogeneous (8k/800)": "8000/800",
+}
+HIDDEN_MAIN_FILTER_PAIRS = {"2048/128"}
+
+
 def assign_profile_vectorized(df):
     """Assigns human-readable profile names based on token counts (vectorized)."""
     prompt = df["prompt toks"]
@@ -632,6 +691,52 @@ def format_custom_isl_osl(pair):
     if pair == "0/0":
         return "Real Dataset (0/0)"
     return pair
+
+
+def _profile_option_label(profile):
+    """Show the ISL/OSL pair while preserving the stored profile value."""
+    return PROFILE_PAIRS_BY_LABEL.get(profile, profile)
+
+
+def _multiturn_pair_label(pair):
+    """Avoid calling a multi-turn 1000/1000 run a balanced single-turn run."""
+    return f"{pair} — Multi-turn reference" if pair == "128/128" else pair
+
+
+def _render_profile_guide():
+    st.markdown(
+        "**ISL** is input sequence length (prompt tokens). **OSL** is output "
+        "sequence length (generated tokens). These are reference workload definitions."
+    )
+    st.markdown("stdev = standard deviation; min/max = token-count bounds.")
+    for pair, details in PROFILE_DETAILS.items():
+        st.markdown(f"**{pair} — {details['name']}**")
+        st.markdown(
+            f"ISL: {details['prompt_tokens']} · OSL: {details['output_tokens']}"
+        )
+        extras = []
+        if "samples" in details:
+            extras.append(f"{details['samples']} samples")
+        if "turns" in details:
+            extras.append(f"{details['turns']} turns")
+        if "prefix_tokens" in details:
+            extras.append(f"Prefix tokens: {details['prefix_tokens']}")
+        if "prefix_count" in details:
+            extras.append(f"Prefix count: {details['prefix_count']}")
+        if extras:
+            st.markdown(" · ".join(extras))
+        if "description" in details:
+            st.markdown(details["description"])
+    st.markdown(
+        "Multi-turn runs can use other ISL/OSL pairs, turn counts, and prefix "
+        "settings. Check the run filters for exact values. Custom pairs show their "
+        "input/output token counts; 0/0 denotes a real dataset."
+    )
+
+
+def _render_profile_guide_popover():
+    with st.popover("ℹ️ Profile guide"):
+        _render_profile_guide()
 
 
 def _display_profile(profile, custom_isl_osl=""):
@@ -3923,6 +4028,310 @@ def render_dataset_representation_section(selected_profile, use_expander=True):
                     st.error("Could not generate histograms from the dataset.")
 
 
+def _bulleted_hover_lines(lines):
+    """Indent and bullet individual values in Plotly hover labels."""
+    return "<br>".join(
+        f"\u00a0\u00a0• {html.escape(line)}" for line in lines if line.strip()
+    )
+
+
+def _performance_plot_chart_key(plot_df, trace_column, x_column, y_column):
+    """Reset point selections when the plotted data or axes change."""
+    chart_columns = plot_df[[trace_column, x_column, y_column]].astype(str)
+    row_hashes = pd.util.hash_pandas_object(chart_columns, index=False)
+    digest = hashlib.sha1(usedforsecurity=False)
+    digest.update(f"{x_column}|{y_column}".encode())
+    digest.update(row_hashes.values.tobytes())
+    return f"performance_plots_chart_{digest.hexdigest()[:12]}"
+
+
+def _add_performance_plot_hint(fig):
+    """Show the plot interaction hint above the chart's data area."""
+    fig.add_annotation(
+        text="💡 Click a line or point to reveal the detailed table below",
+        xref="paper",
+        yref="paper",
+        x=1,
+        y=1,
+        xanchor="right",
+        yanchor="bottom",
+        showarrow=False,
+        align="right",
+        bgcolor="rgba(239, 246, 255, 0.96)",
+        bordercolor="#93C5FD",
+        borderwidth=1,
+        borderpad=6,
+        font={"size": 12, "color": "#1E3A5F"},
+    )
+
+
+def _merge_performance_plot_line_selection(selected_curves, points, trace_count):
+    """Add clicked or area-selected lines to the current comparison."""
+    new_curves = {
+        point["curve_number"]
+        for point in points
+        if isinstance(point.get("curve_number"), int)
+        and 0 <= point["curve_number"] < trace_count
+    }
+    return sorted(set(selected_curves) | new_curves)
+
+
+def _render_performance_plot_data(
+    plot_df,
+    fig,
+    trace_column,
+    x_column,
+    y_column,
+    selection_key,
+    label_formatter=None,
+):
+    """Show the source rows for selected plot lines, using their actual colors."""
+    st.subheader("📄 Filtered Data for Plot Lines")
+    st.caption(
+        "Click points or select an area on the plot to add lines to the comparison. "
+        "You can also choose lines below; the table shows all plotted rows for each line."
+    )
+    selected_curves = st.multiselect(
+        "Plot lines to compare",
+        options=range(len(fig.data)),
+        format_func=lambda curve_number: (
+            f"{curve_number + 1}. {fig.data[curve_number].name}"
+        ),
+        key=selection_key,
+    )
+    selected_curves = sorted(selected_curves)
+
+    def _clear_comparison():
+        st.session_state[selection_key] = []
+        reset_key = f"{selection_key}_reset"
+        st.session_state[reset_key] = st.session_state.get(reset_key, 0) + 1
+
+    st.button(
+        "Clear comparison",
+        key=f"{selection_key}_clear",
+        on_click=_clear_comparison,
+    )
+    if not selected_curves:
+        return
+
+    def _hex_color(value):
+        if isinstance(value, str) and len(value) == 7 and value.startswith("#"):
+            try:
+                int(value[1:], 16)
+                return value.upper()
+            except ValueError:
+                pass
+        if isinstance(value, str) and value.startswith("rgb(") and value.endswith(")"):
+            try:
+                rgb = [int(part.strip()) for part in value[4:-1].split(",")]
+                if len(rgb) == 3 and all(0 <= component <= 255 for component in rgb):
+                    return "#{:02X}{:02X}{:02X}".format(*rgb)
+            except ValueError:
+                pass
+        return "#636EFA"
+
+    trace_info = {}
+    for curve_number in selected_curves:
+        trace = fig.data[curve_number]
+        trace_key = trace.meta if isinstance(trace.meta, str) else trace.name
+        line_color = trace.line.color
+        if line_color is None:
+            line_color = trace.marker.color
+        trace_info[trace_key] = {
+            "order": curve_number,
+            "color": _hex_color(line_color),
+            "dash": trace.line.dash or "solid",
+            "name": trace.name,
+        }
+
+    selected_rows = plot_df[plot_df[trace_column].isin(trace_info)].copy()
+    valid_axes = (
+        pd.to_numeric(selected_rows[x_column], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .notna()
+        & pd.to_numeric(selected_rows[y_column], errors="coerce")
+        .replace([np.inf, -np.inf], np.nan)
+        .notna()
+    )
+    selected_rows = selected_rows[valid_axes].copy()
+    if selected_rows.empty:
+        st.info("The selected line has no plottable rows for these axes.")
+        return
+    selected_rows["_plot_order"] = selected_rows[trace_column].map(
+        lambda key: trace_info[key]["order"]
+    )
+    selected_rows = selected_rows.sort_values(
+        ["_plot_order", x_column], kind="stable"
+    ).reset_index(drop=True)
+    row_colors = (
+        selected_rows[trace_column].map(lambda key: trace_info[key]["color"]).tolist()
+    )
+    line_labels = selected_rows[trace_column].map(
+        lambda key: "•••" if "dot" in trace_info[key]["dash"] else "━━"
+    )
+
+    display_rows = selected_rows.drop(
+        columns=[
+            "_plot_order",
+            "model_short",
+            "run_identifier",
+            "trace_label",
+            "legend_label",
+            "line_style",
+            "line_opacity",
+            "marker_symbol",
+            "runtime_config_key",
+            "runtime_variant_count",
+            "run_rank",
+            "display_label",
+            "runtime_args_preview",
+            "env_vars_preview",
+            "_plot_label",
+            "custom_isl_osl",
+            "multiturn_isl_osl",
+        ],
+        errors="ignore",
+    )
+    if label_formatter is not None and "label" in display_rows:
+        display_rows["label"] = display_rows["label"].map(label_formatter)
+    display_rows = add_observability_links(
+        display_rows, MLFLOW_BASE_URL, MLFLOW_WORKSPACE
+    )
+    display_rows = display_rows.drop(
+        columns=["mlflow_run_id", "mlflow_experiment_id"], errors="ignore"
+    )
+    integer_columns = (
+        "prompt toks",
+        "output toks",
+        "TP",
+        "DP",
+        "intended concurrency",
+        "successful_requests",
+        "errored_requests",
+        "turns",
+        "prefix_tokens",
+        "prefix_count",
+        "turn_index",
+        "guidellm_start_time_ms",
+        "guidellm_end_time_ms",
+    )
+    integer_display_columns = []
+    for column in integer_columns:
+        if column not in display_rows:
+            continue
+        source = display_rows[column]
+        numeric = pd.to_numeric(source, errors="coerce")
+        populated = source.notna() & source.astype(str).str.strip().ne("")
+        non_null = numeric.dropna()
+        if (
+            numeric[populated].notna().all()
+            and np.isfinite(non_null.to_numpy(dtype=float)).all()
+            and non_null.mod(1).eq(0).all()
+        ):
+            try:
+                display_rows[column] = numeric.astype("Int64")
+            except (TypeError, ValueError, OverflowError):
+                continue
+            integer_display_columns.append(column)
+    if "guidellm_start_time_ms" in display_rows:
+        from datetime import datetime
+
+        def _run_date(timestamp):
+            try:
+                return datetime.fromtimestamp(float(timestamp) / 1000).strftime(
+                    "%Y-%m-%d"
+                )
+            except (TypeError, ValueError, OverflowError, OSError):
+                return None
+
+        display_rows["Run Date"] = display_rows["guidellm_start_time_ms"].map(_run_date)
+    display_rows.insert(0, "Row #", range(1, len(display_rows) + 1))
+    display_rows.insert(0, "Plot line", line_labels.to_list())
+
+    columns = display_rows.columns.tolist()
+    if "label" in columns and "version" in columns:
+        columns.remove("label")
+        columns.insert(columns.index("version") + 1, "label")
+    details_after_tp = [
+        column
+        for column in ("uuid", "grafana_metrics_link", "mlflow_link")
+        if column in columns
+    ]
+    for column in details_after_tp:
+        columns.remove(column)
+    details_index = columns.index("TP") + 1 if "TP" in columns else len(columns)
+    columns[details_index:details_index] = details_after_tp
+    if "Run Date" in columns:
+        columns.remove("Run Date")
+        columns.append("Run Date")
+    display_rows = display_rows[columns]
+
+    def _shade_row(row):
+        color = row_colors[row.name]
+        rgb = [int(color[index : index + 2], 16) for index in (1, 3, 5)]
+        background = f"background-color: rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, 0.10)"
+        return [background] * len(row)
+
+    def _style_line(row):
+        color = row_colors[row.name]
+        red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+        foreground = (
+            "#111827" if 0.299 * red + 0.587 * green + 0.114 * blue > 150 else "#FFFFFF"
+        )
+        return [f"background-color: {color}; color: {foreground}; font-weight: 700"]
+
+    column_config = {
+        "Plot line": st.column_config.TextColumn(
+            "Plot line",
+            help="Matches the color and line style in the chart",
+            pinned=True,
+        ),
+        "Row #": st.column_config.NumberColumn("Row #", format="%d", pinned=True),
+        "run": st.column_config.TextColumn("run", pinned=True),
+        "version": st.column_config.TextColumn("version", pinned=True),
+        "intended concurrency": st.column_config.NumberColumn(
+            "Concurrency", width=110, pinned=True
+        ),
+        "grafana_metrics_link": st.column_config.LinkColumn(
+            "Grafana Metrics", display_text="View Metrics 📊"
+        ),
+        "mlflow_link": st.column_config.LinkColumn(
+            "MLflow", display_text="View Run 🧪"
+        ),
+    }
+    if "label" in display_rows:
+        column_config["label"] = st.column_config.TextColumn("label", pinned=True)
+    for column in integer_display_columns:
+        column_config[column] = st.column_config.NumberColumn(
+            "Concurrency" if column == "intended concurrency" else column,
+            format="%d",
+            width=110 if column == "intended concurrency" else None,
+            pinned=column == "intended concurrency",
+        )
+
+    legend_lines = []
+    for info in trace_info.values():
+        marker = "•••" if "dot" in info["dash"] else "━━"
+        legend_lines.append(
+            f'<span style="color: {info["color"]}; font-weight: 700">{marker}</span> '
+            + html.escape(str(info["name"]))
+        )
+    st.caption(
+        f"Showing {len(display_rows)} rows from {len(trace_info)} selected line(s)."
+    )
+    st.markdown("<br>".join(legend_lines), unsafe_allow_html=True)
+    styled_rows = display_rows.style.apply(_shade_row, axis=1).apply(
+        _style_line, axis=1, subset=["Plot line"]
+    )
+    st.dataframe(
+        styled_rows,
+        width="stretch",
+        hide_index=True,
+        column_config=column_config,
+        row_height=38,
+    )
+
+
 @st.fragment
 def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander=True):
     """📊 Performance Plots Section - Complete functionality from original."""
@@ -4197,6 +4606,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             .any()
         )
         _plot_custom_data = [
+            "accelerator",
+            "model",
+            "version",
             "uuid",
             "display_label",
             "runtime_args_preview",
@@ -4209,8 +4621,10 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
         def _runtime_args_preview(value):
             """Show engine arguments first and omit low-value logging flags."""
             if value is None or (isinstance(value, float) and pd.isna(value)):
-                return ""
+                return "None configured"
             raw_value = str(value).strip()
+            if not raw_value:
+                return "None configured"
             if ";" in raw_value:
                 arguments = [part.strip() for part in raw_value.split(";")]
             else:
@@ -4268,9 +4682,9 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             ordered_arguments = [
                 argument for _, argument in sorted(important)
             ] + remaining
-            preview = "<br>".join(
-                html.escape(argument) for argument in ordered_arguments
-            )
+            preview = _bulleted_hover_lines(ordered_arguments)
+            if not preview:
+                return "None configured"
             return preview if len(preview) <= 800 else preview[:797] + "..."
 
         def _env_vars_preview(value):
@@ -4286,7 +4700,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 try:
                     parsed_value = json.loads(raw_value)
                 except (json.JSONDecodeError, TypeError):
-                    return html.escape(raw_value)
+                    return _bulleted_hover_lines([raw_value])
             else:
                 parsed_value = value
 
@@ -4298,10 +4712,23 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                         if isinstance(env_value, str)
                         else json.dumps(env_value, ensure_ascii=False)
                     )
-                    lines.append(f"{html.escape(str(key))}: {html.escape(value_text)}")
-                preview = "<br>".join(lines)
+                    lines.append(f"{key}: {value_text}")
+                preview = _bulleted_hover_lines(lines)
+            elif isinstance(parsed_value, list):
+                preview = _bulleted_hover_lines(
+                    [
+                        item
+                        if isinstance(item, str)
+                        else json.dumps(item, ensure_ascii=False)
+                        for item in parsed_value
+                    ]
+                )
             else:
-                preview = html.escape(json.dumps(parsed_value, ensure_ascii=False))
+                preview = _bulleted_hover_lines(
+                    [json.dumps(parsed_value, ensure_ascii=False)]
+                )
+            if not preview:
+                return "None configured"
             return preview if len(preview) <= 800 else preview[:797] + "..."
 
         filtered_df_sorted["runtime_args_preview"] = filtered_df_sorted[
@@ -4522,6 +4949,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
         if fig is not None:
             for trace in fig.data:
                 trace_key = trace.name
+                trace.meta = trace_key
                 trace_rows = plot_df[plot_df["trace_label"] == trace_key]
                 if trace_rows.empty:
                     continue
@@ -4546,12 +4974,15 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 hovertemplate = (
                     f"{plot_x_label}: %{{x}}<br>"
                     f"{y_axis_display_label}: %{{y}}<br>"
-                    "Label: %{customdata[1]}<br>"
-                    "UUID: %{customdata[0]}<br>"
-                    "Runtime Args:<br>%{customdata[2]}"
+                    "Accelerator: %{customdata[0]}<br>"
+                    "Model: %{customdata[1]}<br>"
+                    "Version: %{customdata[2]}<br>"
+                    "Label: %{customdata[4]}<br>"
+                    "UUID: %{customdata[3]}<br>"
+                    "Runtime Args:<br>%{customdata[5]}"
                 )
                 if _has_env_vars:
-                    hovertemplate += "<br>Environment Variables:<br>%{customdata[3]}"
+                    hovertemplate += "<br>Environment Variables:<br>%{customdata[6]}"
                 trace.hovertemplate = hovertemplate + "<extra></extra>"
 
         _legend_parts = "Accelerator | Model | Version | TP"
@@ -4576,15 +5007,45 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 height=560,
                 margin={"l": 80, "r": 250, "t": 130, "b": 60},
             )
+            base_chart_key = _performance_plot_chart_key(
+                plot_df, "trace_label", plot_x, y_axis
+            )
+            selection_key = f"{base_chart_key}_compare_lines"
+            if not st.session_state.get(selection_key):
+                _add_performance_plot_hint(fig)
+            reset_count = st.session_state.get(f"{selection_key}_reset", 0)
+            chart_key = f"{base_chart_key}_{reset_count}"
+
+            def _on_plot_selection():
+                st.session_state[selection_key] = (
+                    _merge_performance_plot_line_selection(
+                        st.session_state.get(selection_key, []),
+                        st.session_state[chart_key]["selection"]["points"],
+                        len(fig.data),
+                    )
+                )
+
             st.plotly_chart(
                 fig,
                 use_container_width=True,
                 theme=None,
-                key="performance_plots_chart",
+                key=chart_key,
+                on_select=_on_plot_selection,
+                selection_mode=("points", "box", "lasso"),
             )
         st.caption(
             "Click legend entries to show or hide a series. Dotted runs with the same color are duplicate runs with identical runtime args that differ only by UUID. Dotted runs with different shapes have different runtime args. Hover a point for its label, UUID, and important runtime args."
         )
+        if fig is not None:
+            _render_performance_plot_data(
+                plot_df,
+                fig,
+                "trace_label",
+                plot_x,
+                y_axis,
+                selection_key,
+                label_formatter=display_label,
+            )
 
         with st.expander("🎨 Customize", expanded=False, width=725):
             if not customizable_traces:
@@ -4955,11 +5416,13 @@ def render_pareto_plots_section(preloaded_df=None, use_expander=True):
                 "Select ISL/OSL",
                 options=unique_isl_osl,
                 index=default_idx,
+                format_func=_profile_option_label,
                 key="pareto_isl_osl_select",
                 help="ISL = Input Sequence Length (prompt tokens), OSL = Output Sequence Length (output tokens)",
                 on_change=keep_expander_open,
                 args=("pareto_expanded",),
             )
+            _render_profile_guide_popover()
 
         # Filter by selected ISL/OSL
         results = [
@@ -5694,10 +6157,12 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
             selected_profile = st.selectbox(
                 "Select ISL/OSL Profile",
                 options=profiles,
+                format_func=_profile_option_label,
                 key=profile_key,
                 on_change=keep_expander_open,
                 args=("performance_trends_expanded",),
             )
+            _render_profile_guide_popover()
 
         profile_df = model_df[model_df["profile"] == selected_profile].copy()
 
@@ -6442,10 +6907,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 "Select ISL/OSL Profile",
                 options=available_profiles,
                 index=profile_default_index,
+                format_func=_profile_option_label,
                 key="compare_summary_profile",
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
             )
+            _render_profile_guide_popover()
 
         # Secondary custom ISL/OSL pair filter
         selected_custom_pair = None
@@ -6471,6 +6938,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     "Select ISL/OSL",
                     options=mt_pairs,
                     index=mt_default_index,
+                    format_func=_multiturn_pair_label,
                     key="compare_summary_mt_isl_osl",
                     on_change=keep_expander_open,
                     args=("compare_versions_summary_expanded",),
@@ -7579,9 +8047,25 @@ def render_compare_versions_summary_section(df, use_expander=True):
             filtered_data = filtered_data[display_columns]
 
             filtered_data_column_config = {
+                "run": st.column_config.TextColumn(
+                    "run",
+                    help="Unique identifier combining accelerator, model, and TP configuration",
+                    pinned=True,
+                ),
+                "version": st.column_config.TextColumn(
+                    "version",
+                    help="Inference server version for this benchmark run",
+                    pinned=True,
+                ),
                 "label": st.column_config.TextColumn(
                     "Label",
                     help="Selected benchmark label for this release.",
+                    pinned=True,
+                ),
+                "intended concurrency": st.column_config.NumberColumn(
+                    "intended concurrency",
+                    help="Target concurrency level for this benchmark run",
+                    pinned=True,
                 ),
                 "grafana_metrics_link": st.column_config.LinkColumn(
                     "Grafana Metrics",
@@ -7605,6 +8089,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 use_container_width=True,
                 hide_index=True,
                 column_config=filtered_data_column_config,
+                row_height=38,
             )
             st.download_button(
                 label="📥 Download Filtered Data as CSV",
@@ -10465,10 +10950,12 @@ def render_energy_carbon_methodology_section(full_df, use_expander=True):
                                 "ISL/OSL Profile",
                                 available_profiles,
                                 index=default_profile_idx,
+                                format_func=_profile_option_label,
                                 key="energy_profile_filter",
                                 help="Select ISL/OSL profile for energy calculation",
                                 on_change=keep_energy_expander_open,
                             )
+                            _render_profile_guide_popover()
                         else:
                             selected_energy_profile = None
 
@@ -11416,6 +11903,7 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
             "label": st.column_config.TextColumn(
                 "label",
                 help="User-provided benchmark label for this configuration",
+                pinned=True,
             ),
             "legacy_version": st.column_config.TextColumn(
                 "legacy version",
@@ -11654,6 +12142,7 @@ def render_filtered_data_section(filtered_df, per_turn_df=None, use_expander=Tru
             column_config=column_config,
             disabled=disabled_cols,
             key="filtered_data_table",
+            row_height=38,
         )
 
         csv_data = display_filtered_df.to_csv(index=False).encode("utf-8")
@@ -12740,13 +13229,23 @@ def main():
             current_profile = st.session_state.get(
                 f"profile_filter_{st.session_state.filter_change_key}", None
             )
+            if (
+                current_profile
+                and _profile_option_label(current_profile) in HIDDEN_MAIN_FILTER_PAIRS
+            ):
+                current_profile = None
 
             # If no profile selected yet, determine the default that will be selected
             if not current_profile:
                 available_profiles_raw = sorted(df["profile"].unique().tolist())
                 _sp = ("Multi-turn", "Custom ISL/OSL")
                 available_profiles = (
-                    [p for p in available_profiles_raw if p not in _sp]
+                    [
+                        p
+                        for p in available_profiles_raw
+                        if p not in _sp
+                        and _profile_option_label(p) not in HIDDEN_MAIN_FILTER_PAIRS
+                    ]
                     + (["Multi-turn"] if "Multi-turn" in available_profiles_raw else [])
                     + (
                         ["Custom ISL/OSL"]
@@ -12854,7 +13353,12 @@ def main():
             # Sort so "Multi-turn" and "Custom ISL/OSL" always come last
             _special = ("Multi-turn", "Custom ISL/OSL")
             profiles = (
-                [p for p in profiles_raw if p not in _special]
+                [
+                    p
+                    for p in profiles_raw
+                    if p not in _special
+                    and _profile_option_label(p) not in HIDDEN_MAIN_FILTER_PAIRS
+                ]
                 + (["Multi-turn"] if "Multi-turn" in profiles_raw else [])
                 + (["Custom ISL/OSL"] if "Custom ISL/OSL" in profiles_raw else [])
             )
@@ -12938,12 +13442,14 @@ def main():
                     "2️⃣ Select Input/Output Sequence Length (ISL/OSL)",
                     profiles,
                     index=_profile_idx,
-                    format_func=clean_profile_name,
+                    format_func=_profile_option_label,
                     key=profile_key,
+                    help="ISL is prompt tokens; OSL is generated tokens. Open the guide below for workload details.",
                 )
                 if profiles
                 else None
             )
+            _render_profile_guide_popover()
 
             selected_profiles = (
                 [selected_profile] if selected_profile is not None else []
@@ -13102,6 +13608,7 @@ def main():
                     selected_multiturn_isl_osl = st.selectbox(
                         "Select ISL/OSL",
                         mt_pairs,
+                        format_func=_multiturn_pair_label,
                         key=mt_isl_key,
                     )
                     st.session_state.selected_multiturn_isl_osl = (
