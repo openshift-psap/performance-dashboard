@@ -334,6 +334,12 @@ def sync_selected_options(previous, available, *, select_all=False):
     return [value for value in (previous or []) if value in available]
 
 
+def sync_selected_option(previous, available):
+    """Keep a single-value widget selection valid as its options change."""
+    available = list(available)
+    return previous if previous in available else (available[0] if available else None)
+
+
 def taxonomy_query_params(
     labels=None,
     uuids=None,

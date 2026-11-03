@@ -24,6 +24,7 @@ from dashboard_taxonomy import (
     parse_filter_values,
     parse_version_filter_values,
     split_legacy_version,
+    sync_selected_option,
     sync_selected_options,
     taxonomy_query_params,
     uses_legacy_methodology,
@@ -281,6 +282,14 @@ def test_select_all_state_tracks_new_options_without_overriding_manual_selection
     assert sync_selected_options(["tp-1"], ["tp-1", "tp-2"], select_all=False) == [
         "tp-1"
     ]
+
+
+def test_single_selection_resets_when_profile_options_change():
+    assert sync_selected_option("current", ["current", "other"]) == "current"
+    assert sync_selected_option("stale-profile-series", ["new-profile-series"]) == (
+        "new-profile-series"
+    )
+    assert sync_selected_option("stale", []) is None
 
 
 def test_duplicate_runs_are_dotted_and_single_runs_are_solid():
