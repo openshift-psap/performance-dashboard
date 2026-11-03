@@ -236,6 +236,25 @@ def decode_version_label_pairs(raw_value):
     ]
 
 
+def resolve_version_label_pairs(pairs, available_pairs):
+    """Resolve exact URL pairs, including labels embedded by older URLs."""
+    available_pairs = {tuple(pair) for pair in available_pairs}
+    resolved = []
+    for raw_version, raw_label in pairs:
+        pair = (str(raw_version), str(raw_label))
+        candidates = [pair]
+        version, inferred_label = split_legacy_version(pair[0])
+        if version != pair[0]:
+            if pair[1] == DEFAULT_LABEL:
+                candidates.append((str(version), str(inferred_label)))
+            candidates.append((str(version), pair[1]))
+        for candidate in candidates:
+            if candidate in available_pairs and candidate not in resolved:
+                resolved.append(candidate)
+                break
+    return resolved
+
+
 def version_label_pair_mask(df, pairs):
     """Return a mask for rows matching selected version/label pairs."""
     if not pairs:
