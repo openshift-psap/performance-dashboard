@@ -3590,16 +3590,18 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         st.markdown(
             "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
         )
-        btn_cols = st.columns(len(_hm_dialog_metrics))
-        for i, mname in enumerate(_hm_dialog_metrics):
-            with btn_cols[i]:
-                if st.button(
-                    f"📊 {mname}",
-                    key=f"hm_dlg_btn_{i}",
-                    use_container_width=True,
-                    type="primary",
-                ):
-                    st.session_state._hm_dlg_selected_metric = mname
+        metric_names = list(_hm_dialog_metrics)
+        for row_start in range(0, len(metric_names), 4):
+            btn_cols = st.columns(4)
+            for i, mname in enumerate(metric_names[row_start : row_start + 4]):
+                with btn_cols[i]:
+                    if st.button(
+                        f"📊 {mname}",
+                        key=f"hm_dlg_btn_{row_start + i}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state._hm_dlg_selected_metric = mname
 
         selected_metric = st.session_state.get("_hm_dlg_selected_metric")
         if selected_metric and selected_metric in _hm_dialog_metrics:
