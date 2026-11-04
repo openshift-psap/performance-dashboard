@@ -709,9 +709,10 @@ def get_app_css():
         text-align: left;
         background: #111827;
         color: #fff;
-        padding: 0.4rem 0.6rem;
+        padding: 0.45rem 0.7rem;
         border-radius: 4px;
-        font-size: 0.78rem;
+        font-size: 0.9rem;
+        font-weight: 600;
         z-index: 10000;
         pointer-events: none;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
