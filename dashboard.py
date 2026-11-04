@@ -3686,6 +3686,8 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 tooltip = None
                 if p50_key and pct is not None and p50_pct is not None:
                     tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
+                    if p50_regressed(p50_pct):
+                        tooltip += " (P50 regressed >5%)"
                 row_cols[j + 1].markdown(
                     f'<div style="text-align:center">'
                     f"{_hm_cell(pct, hib, similar, marker=marker, tooltip=tooltip)}</div>",
