@@ -572,6 +572,26 @@ def get_app_css():
     .hm-neutral        { background: #f3f4f6; color: #6b7280; }
     .hm-regress-strong { background: #fca5a5; color: #7f1d1d; }
 
+    .hm-cell[data-tooltip] {
+        position: relative;
+        cursor: help;
+    }
+    .hm-cell[data-tooltip]:hover::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: calc(100% + 6px);
+        right: 0;
+        background: #111827;
+        color: #fff;
+        padding: 0.35rem 0.55rem;
+        border-radius: 4px;
+        font-size: 0.72rem;
+        white-space: nowrap;
+        z-index: 10000;
+        pointer-events: none;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
     /* Extras: New-in-release callout */
     .new-release-callout {
         background: #f0fdf4;
