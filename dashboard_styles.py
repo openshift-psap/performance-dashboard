@@ -684,20 +684,37 @@ def get_app_css():
         position: relative;
         cursor: help;
     }
+    .hm-cell[data-tooltip]:hover {
+        box-shadow: 0 0 0 2px #111827;
+    }
+    .hm-cell[data-tooltip]:hover::before {
+        content: "";
+        position: absolute;
+        bottom: calc(100% + 5px);
+        right: 18px;
+        border: 5px solid transparent;
+        border-top-color: #111827;
+        z-index: 10001;
+        pointer-events: none;
+    }
     .hm-cell[data-tooltip]:hover::after {
         content: attr(data-tooltip);
         position: absolute;
-        bottom: calc(100% + 6px);
+        bottom: calc(100% + 10px);
         right: 0;
+        width: max-content;
+        max-width: 340px;
+        white-space: normal;
+        line-height: 1.3;
+        text-align: left;
         background: #111827;
         color: #fff;
-        padding: 0.35rem 0.55rem;
+        padding: 0.4rem 0.6rem;
         border-radius: 4px;
-        font-size: 0.72rem;
-        white-space: nowrap;
+        font-size: 0.78rem;
         z-index: 10000;
         pointer-events: none;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
     }
 
     /* Extras: New-in-release callout */
