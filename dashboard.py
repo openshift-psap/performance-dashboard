@@ -3712,9 +3712,76 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 f"Geometric mean uses: {conc_str}."
             )
 
-    # Column widths: Model | metric columns | compare button
+    # ── Sort controls ───────────────────────────────────────────────
+    _hm_sort_labels = ["Model", "Profile"] + [
+        f"{mname} Δ" for mname, _, _ in heatmap_cols
+    ]
+    _hm_toolbar = st.columns([2.2, 3.3, 4.5])
+    with _hm_toolbar[0]:
+        _hm_sort_label = st.selectbox(
+            "Sort rows by",
+            _hm_sort_labels,
+            index=0,
+            key="hm_sort_label",
+        )
+    _hm_is_text_sort = _hm_sort_label in ("Model", "Profile")
+    _hm_dir_options = (
+        ["A → Z", "Z → A"] if _hm_is_text_sort else ["Best first", "Worst first"]
+    )
+    with _hm_toolbar[1]:
+        _hm_sort_dir = st.radio(
+            "Direction",
+            _hm_dir_options,
+            index=0,
+            horizontal=True,
+            key=f"hm_sort_dir_{'text' if _hm_is_text_sort else _hm_sort_label}",
+        )
+    st.caption(
+        "Sorting applies within each accelerator section. "
+        "**Best first** = highest throughput / lowest latency; "
+        "for metric sorts, rows without comparison data go last."
+    )
+
+    def _hm_sorted_results(results, label, direction):
+        rows = list(results)
+        if label == "Model":
+            rows.sort(
+                key=lambda r: (
+                    r["short_name"].lower(),
+                    r["tp"],
+                    _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+                ),
+                reverse=(direction == "Z → A"),
+            )
+            return rows
+        if label == "Profile":
+            rows.sort(
+                key=lambda r: (
+                    _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+                    r["short_name"].lower(),
+                    r["tp"],
+                ),
+                reverse=(direction == "Z → A"),
+            )
+            return rows
+        mname = label.removesuffix(" Δ")
+        higher_is_better = next(h for m, h, _ in heatmap_cols if m == mname)
+        present = [r for r in rows if r.get(f"{mname}_pct") is not None]
+        missing = [r for r in rows if r.get(f"{mname}_pct") is None]
+        present.sort(
+            key=lambda r: (
+                r["short_name"].lower(),
+                r["tp"],
+                _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+            )
+        )
+        reverse = (direction == "Best first") == higher_is_better
+        present.sort(key=lambda r: r[f"{mname}_pct"], reverse=reverse)
+        return present + missing
+
+    # Column widths: Model | Profile | metric columns | compare button
     _hm_n_metrics = len(heatmap_cols)
-    _hm_widths = [3.5] + [1.5] * _hm_n_metrics + [0.5]
+    _hm_widths = [2.8, 1.8] + [1.4] * _hm_n_metrics + [0.5]
 
     _accel_colors = {
         "H200": "#22c55e",
@@ -3736,7 +3803,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             unsafe_allow_html=True,
         )
         seen = {}
-        for r in info["results"]:
+        for r in _hm_sorted_results(info["results"], _hm_sort_label, _hm_sort_dir):
             key = (
                 r["model"],
                 r["tp"],
@@ -3761,8 +3828,12 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             f'<div style="{_hdr_base}">Model</div>',
             unsafe_allow_html=True,
         )
+        hdr[1].markdown(
+            f'<div style="{_hdr_base}">Profile</div>',
+            unsafe_allow_html=True,
+        )
         for j, (_, _, label) in enumerate(heatmap_cols):
-            hdr[j + 1].markdown(
+            hdr[j + 2].markdown(
                 f'<div style="{_hdr_base};justify-content:center;text-align:center">{label}</div>',
                 unsafe_allow_html=True,
             )
@@ -3788,7 +3859,12 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             row_cols[0].markdown(
                 f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
                 f'padding:0.45rem 0">'
-                f"{sname} (TP{tp}) {profile_short}</div>",
+                f"{sname} (TP{tp})</div>",
+                unsafe_allow_html=True,
+            )
+            row_cols[1].markdown(
+                f'<div style="color:#4b5563;font-size:0.85rem;padding:0.45rem 0">'
+                f"{profile_short}</div>",
                 unsafe_allow_html=True,
             )
             for j, (mname, hib, _) in enumerate(heatmap_cols):
@@ -3800,7 +3876,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 tooltip = None
                 if p50_key and pct is not None and p50_pct is not None:
                     tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
-                row_cols[j + 1].markdown(
+                row_cols[j + 2].markdown(
                     f'<div style="text-align:center">'
                     f"{_hm_cell(pct, hib, similar, marker=marker, tooltip=tooltip)}</div>",
                     unsafe_allow_html=True,
