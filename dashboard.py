@@ -3477,7 +3477,9 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         '<div style="font-size:0.8rem;color:#6b7280">'
         '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement</span> &nbsp; '
         '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (within threshold)</span> &nbsp; '
-        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression</span>'
+        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression</span> &nbsp; '
+        '<span style="font-size:0.75rem;color:#dc2626;font-weight:700">⚠</span> '
+        '<span style="font-size:0.75rem">= corresponding P50 regressed &gt;5 %</span>'
         "</div></div>",
         unsafe_allow_html=True,
     )
