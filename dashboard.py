@@ -277,6 +277,12 @@ OVERVIEW_RELEASE_PAIRS = [
     },
     # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
     {
+        "current": "vLLM-0.31.0",
+        "previous": "vLLM-0.28.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
         "current": "vLLM-0.24.0",
         "previous": "vLLM-0.18.0",
         "upstream": None,
