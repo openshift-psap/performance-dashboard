@@ -3716,31 +3716,12 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     _hm_sort_labels = ["Model", "Profile"] + [
         f"{mname} Δ" for mname, _, _ in heatmap_cols
     ]
-    _hm_toolbar = st.columns([2.2, 3.3, 4.5])
-    with _hm_toolbar[0]:
-        _hm_sort_label = st.selectbox(
-            "Sort rows by",
-            _hm_sort_labels,
-            index=0,
-            key="hm_sort_label",
-        )
-    _hm_is_text_sort = _hm_sort_label in ("Model", "Profile")
-    _hm_dir_options = (
-        ["A → Z", "Z → A"] if _hm_is_text_sort else ["Best first", "Worst first"]
-    )
-    with _hm_toolbar[1]:
-        _hm_sort_dir = st.radio(
-            "Direction",
-            _hm_dir_options,
-            index=0,
-            horizontal=True,
-            key=f"hm_sort_dir_{'text' if _hm_is_text_sort else _hm_sort_label}",
-        )
     st.caption(
-        "Sorting applies within each accelerator section. "
+        "Each accelerator can be sorted independently. "
         "**Best first** = highest throughput / lowest latency; "
         "for metric sorts, rows without comparison data go last. "
-        "In **Model** sort, dark rules mark model boundaries."
+        "Dark rules mark model boundaries in **Model** sort and "
+        "profile boundaries in **Profile** sort."
     )
 
     def _hm_sorted_results(results, label, direction):
@@ -3803,6 +3784,27 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             f"{_accel_display(accel)}</div>",
             unsafe_allow_html=True,
         )
+        _hm_toolbar = st.columns([2.2, 3.3, 4.5])
+        with _hm_toolbar[0]:
+            _hm_sort_label = st.selectbox(
+                "Sort rows by",
+                _hm_sort_labels,
+                index=0,
+                key=f"hm_sort_label_{accel}",
+            )
+        _hm_is_text_sort = _hm_sort_label in ("Model", "Profile")
+        _hm_dir_options = (
+            ["A → Z", "Z → A"] if _hm_is_text_sort else ["Best first", "Worst first"]
+        )
+        _hm_dir_key = "text" if _hm_is_text_sort else _hm_sort_label
+        with _hm_toolbar[1]:
+            _hm_sort_dir = st.radio(
+                "Direction",
+                _hm_dir_options,
+                index=0,
+                horizontal=True,
+                key=f"hm_sort_dir_{accel}_{_hm_dir_key}",
+            )
         seen = {}
         for r in _hm_sorted_results(info["results"], _hm_sort_label, _hm_sort_dir):
             key = (
@@ -3846,20 +3848,24 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         # Data rows
         _n_rows = len(seen)
         _prev_model_name = None
+        _prev_profile = None
         for i, (
             (_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc, _turns),
             r,
         ) in enumerate(seen.items()):
             sname = r["short_name"]
             profile_short = _display_profile(profile, cisl_osl)
-            _new_model_group = _hm_sort_label == "Model" and sname != _prev_model_name
-            _divider = "2px solid #111827" if _new_model_group else "1px solid #e5e7eb"
+            _new_group = (_hm_sort_label == "Model" and sname != _prev_model_name) or (
+                _hm_sort_label == "Profile" and profile_short != _prev_profile
+            )
+            _divider = "2px solid #111827" if _new_group else "1px solid #e5e7eb"
             if i > 0:
                 st.markdown(
                     f'<hr style="margin:0;border:none;border-top:{_divider}">',
                     unsafe_allow_html=True,
                 )
             _prev_model_name = sname
+            _prev_profile = profile_short
             row_cols = st.columns(_hm_widths)
             row_cols[0].markdown(
                 f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
