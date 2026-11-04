@@ -31,13 +31,34 @@ from dashboard_styles import (
     initialize_session_state,
     initialize_streamlit_config,
 )
-from thresholds import (
-    P50_THRESHOLD_PCT,
-    P95_THRESHOLD_PCT,
-    is_similar_change,
-    p50_regressed,
-    pct_threshold_for_column,
-)
+
+# ── Regression threshold policy ─────────────────────────────────
+# P50/central metrics: throughput and the E2E latency median.
+P50_THRESHOLD_PCT = 5.0
+
+# P95 latency metrics: TTFT P95 and ITL P95.
+P95_THRESHOLD_PCT = 10.0
+
+P95_COLUMNS = frozenset({"ttft_p95", "itl_p95"})
+
+# Legacy alias for the P50/central-metric dead-zone used by throughput labels.
+NEUTRAL_THRESHOLD_PCT = P50_THRESHOLD_PCT
+
+
+def pct_threshold_for_column(column):
+    """Return the percentage dead-zone for a metric column."""
+    return P95_THRESHOLD_PCT if column in P95_COLUMNS else P50_THRESHOLD_PCT
+
+
+def is_similar_change(pct_diff, column):
+    """True when the percentage change is inside the column's dead-zone."""
+    return abs(pct_diff) <= pct_threshold_for_column(column)
+
+
+def p50_regressed(p50_pct):
+    """True when the P50 change is outside the P50 dead-zone."""
+    return p50_pct is not None and p50_pct > P50_THRESHOLD_PCT
+
 
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
@@ -174,9 +195,6 @@ OVERVIEW_RELEASE_PAIRS = [
         "additional": [],
     },
 ]
-
-# Legacy alias for the P50/central-metric dead-zone used by throughput labels.
-NEUTRAL_THRESHOLD_PCT = P50_THRESHOLD_PCT
 
 ACCELERATOR_DISPLAY_NAMES = {
     "H200": "NVIDIA H200",
