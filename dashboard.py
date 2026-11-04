@@ -3627,7 +3627,8 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     st.caption(
         "Sorting applies within each accelerator section. "
         "**Best first** = highest throughput / lowest latency; "
-        "for metric sorts, rows without comparison data go last."
+        "for metric sorts, rows without comparison data go last. "
+        "In **Model** sort, dark rules mark model boundaries."
     )
 
     def _hm_sorted_results(results, label, direction):
@@ -3732,17 +3733,21 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
 
         # Data rows
         _n_rows = len(seen)
+        _prev_model_name = None
         for i, (
             (_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc, _turns),
             r,
         ) in enumerate(seen.items()):
             sname = r["short_name"]
             profile_short = _display_profile(profile, cisl_osl)
+            _new_model_group = _hm_sort_label == "Model" and sname != _prev_model_name
+            _divider = "2px solid #111827" if _new_model_group else "1px solid #e5e7eb"
             if i > 0:
                 st.markdown(
-                    '<hr style="margin:0;border:none;border-top:1px solid #e5e7eb">',
+                    f'<hr style="margin:0;border:none;border-top:{_divider}">',
                     unsafe_allow_html=True,
                 )
+            _prev_model_name = sname
             row_cols = st.columns(_hm_widths)
             row_cols[0].markdown(
                 f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
