@@ -18,6 +18,34 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
+# ── Regression threshold policy ─────────────────────────────────
+# P50/central metrics: throughput and the E2E latency median.
+P50_THRESHOLD_PCT = 5.0
+
+# P95 latency metrics: TTFT P95 and ITL P95.
+P95_THRESHOLD_PCT = 10.0
+
+P95_COLUMNS = frozenset({"ttft_p95", "itl_p95"})
+
+# Legacy alias for the P50/central-metric dead-zone used by throughput labels.
+LLMD_NEUTRAL_THRESHOLD_PCT = P50_THRESHOLD_PCT
+
+
+def pct_threshold_for_column(column):
+    """Return the percentage dead-zone for a metric column."""
+    return P95_THRESHOLD_PCT if column in P95_COLUMNS else P50_THRESHOLD_PCT
+
+
+def is_similar_change(pct_diff, column):
+    """True when the percentage change is inside the column's dead-zone."""
+    return abs(pct_diff) <= pct_threshold_for_column(column)
+
+
+def p50_regressed(p50_pct):
+    """True when the P50 change is outside the P50 dead-zone."""
+    return p50_pct is not None and p50_pct > P50_THRESHOLD_PCT
+
+
 # Set global Plotly template if not already set by main dashboard
 if "plotly_white_light" not in pio.templates:
     _light_hover = go.layout.Template(
@@ -50,8 +78,6 @@ AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 
 # ── Overview version configuration ────────────────────────────────
-LLMD_NEUTRAL_THRESHOLD_PCT = 2.0
-
 LLMD_OVERVIEW_RELEASE_PAIRS = [
     {
         "label": "RHOAI 3.4 vs 3.3",
@@ -142,19 +168,23 @@ def _llmd_display_profile(profile, custom_isl_osl=""):
     return str(profile)
 
 
-def _llmd_hm_cell(pct, higher_is_better):
+def _llmd_hm_cell(pct, higher_is_better, similar=None):
     """Return styled heatmap cell HTML for a % delta."""
     if pct is None:
         return '<span class="hm-cell hm-neutral">N/A</span>'
     norm = pct if higher_is_better else -pct
     sign = "+" if pct > 0 else ""
     label = f"{sign}{pct:.1f} %"
-    if norm > 5:
-        cls = "hm-improve-strong"
-    elif norm >= -5:
+    if similar is None:
+        similar = abs(norm) <= LLMD_NEUTRAL_THRESHOLD_PCT
+    if similar:
         cls = "hm-similar"
-    else:
+    elif norm > LLMD_NEUTRAL_THRESHOLD_PCT:
+        cls = "hm-improve-strong"
+    elif norm < -LLMD_NEUTRAL_THRESHOLD_PCT:
         cls = "hm-regress-strong"
+    else:
+        cls = "hm-similar"
     return f'<span class="hm-cell {cls}">{label}</span>'
 
 
@@ -264,7 +294,13 @@ def _compare_two_datasets(data_a, data_b, metric_config, user_conc_set):
     pct_diff = ((a_val - b_val) / b_val) * 100
     a_better = pct_diff > 0 if higher_is_better else pct_diff < 0
 
-    return pct_diff, a_better, a_peak_conc, b_peak_conc, abs(pct_diff) < 5
+    return (
+        pct_diff,
+        a_better,
+        a_peak_conc,
+        b_peak_conc,
+        is_similar_change(pct_diff, column),
+    )
 
 
 def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
@@ -375,7 +411,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
     for r in combo_results:
         for mname, mc in metrics_cfg.items():
             pct = r.get(f"{mname}_pct")
-            if pct is not None:
+            if pct is not None and not r.get(f"{mname}_similar"):
                 all_normalised.append(pct if mc["higher_is_better"] else -pct)
     worst_regression = min(all_normalised) if all_normalised else 0.0
 
@@ -385,7 +421,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
         for r in combo_results
         if r.get("Throughput_pct") is not None
         and not r.get("Throughput_better")
-        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+        and not r.get("Throughput_similar")
     )
     win_rate = ((total_cmp - losses) / total_cmp * 100) if total_cmp > 0 else 100.0
 
@@ -408,7 +444,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
     for r in combo_results:
         for mname, mc in metrics_cfg.items():
             pct = r.get(f"{mname}_pct")
-            if pct is not None:
+            if pct is not None and not r.get(f"{mname}_similar"):
                 norm = pct if mc["higher_is_better"] else -pct
                 if abs(norm - worst_regression) < 0.01:
                     worst_reg_combo = r
@@ -417,21 +453,19 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
     win_combos = [
         r
         for r in combo_results
-        if r.get("Throughput_better") is True
-        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+        if r.get("Throughput_better") is True and not r.get("Throughput_similar")
     ]
     loss_combos = [
         r
         for r in combo_results
         if r.get("Throughput_pct") is not None
         and not r.get("Throughput_better")
-        and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+        and not r.get("Throughput_similar")
     ]
     neutral_combos = [
         r
         for r in combo_results
-        if r.get("Throughput_pct") is not None
-        and abs(r.get("Throughput_pct", 0)) <= LLMD_NEUTRAL_THRESHOLD_PCT
+        if r.get("Throughput_pct") is not None and r.get("Throughput_similar")
     ]
 
     # Per-accelerator rollup
@@ -446,7 +480,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
             for r in ar
             if r.get("Throughput_pct") is not None
             and not r.get("Throughput_better")
-            and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+            and not r.get("Throughput_similar")
         )
         awr = ((at - al) / at * 100) if at > 0 else 100.0
 
@@ -454,7 +488,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
         for r in ar:
             for mname, mc in metrics_cfg.items():
                 pct = r.get(f"{mname}_pct")
-                if pct is not None:
+                if pct is not None and not r.get(f"{mname}_similar"):
                     norm = pct if mc["higher_is_better"] else -pct
                     if norm < worst_v:
                         worst_v, worst_m, worst_raw = norm, mname, pct
@@ -487,7 +521,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
             for r in results
             if r.get("Throughput_pct") is not None
             and not r.get("Throughput_better")
-            and abs(r.get("Throughput_pct", 0)) > LLMD_NEUTRAL_THRESHOLD_PCT
+            and not r.get("Throughput_similar")
         )
         fwr = ((ft - fl) / ft * 100) if ft > 0 else 100.0
 
@@ -495,7 +529,7 @@ def _compute_llmd_overview_data(df, version_pairs, upstream_pairs=None):
         for r in results:
             for mname, mc in metrics_cfg.items():
                 pct = r.get(f"{mname}_pct")
-                if pct is not None:
+                if pct is not None and not r.get(f"{mname}_similar"):
                     norm = pct if mc["higher_is_better"] else -pct
                     if norm < worst_v:
                         worst_v, worst_m, worst_raw = norm, mname, pct
@@ -2354,7 +2388,7 @@ def render_compare_versions_section(df, use_expander=True):
             st.markdown(f"### {selected_accelerator} GPU, ISL/OSL: {profile_short}")
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
-                st.markdown("""
+                st.markdown(f"""
 **Geometric Mean Calculation:**
 - Computes the geometric mean of the metric values across the selected concurrency levels
 - Better for ratios/percentages because it respects multiplicative relationships
@@ -2372,7 +2406,7 @@ def render_compare_versions_section(df, use_expander=True):
 | **Throughput** | V1 is faster | V1 is slower |
 | **Latency** | V1 is slower | V1 is faster |
 
-**Status:** 🟢 Better (>=5%) | 🟡 Similar (<5%) | 🔴 Worse (>=5%)
+**Status:** 🟢 Better (beyond threshold) | 🟡 Similar (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%) | 🔴 Worse (beyond threshold)
                 """)
         st.markdown(f"**Comparing:** {version_1} vs {version_2}")
 
@@ -2719,7 +2753,7 @@ def render_compare_versions_section(df, use_expander=True):
                 f"**Legend:** "
                 f"🟢 {version_1} performs better than {version_2} | "
                 f"🔴 {version_1} performs worse than {version_2} | "
-                f"🟡 Similar Performance (< 5% difference)"
+                f"🟡 Similar Performance (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%)"
             )
 
             st.markdown("---")
@@ -2786,23 +2820,24 @@ def render_compare_versions_section(df, use_expander=True):
                         return f"~{int(val):,}{unit}"
                     return f"~{val:,.{decimals}f}{unit}"
 
-                def _winner(v1_val, v2_val, higher_is_better, metric_label):
+                def _winner(v1_val, v2_val, higher_is_better, metric_label, column):
                     if pd.isna(v1_val) or pd.isna(v2_val) or v2_val == 0:
                         return "N/A"
                     pct = ((v1_val - v2_val) / v2_val) * 100
+                    threshold = pct_threshold_for_column(column)
                     if higher_is_better:
-                        if pct > 5:
+                        if pct > threshold:
                             return f"{version_1} has +{abs(pct):.1f}% higher {metric_label}"
-                        elif pct < -5:
+                        elif pct < -threshold:
                             return f"{version_2} has +{abs(pct):.1f}% higher {metric_label}"
                         else:
                             return f"Similar (~{abs(pct):.1f}% difference)"
                     else:
-                        if pct < -5:
+                        if pct < -threshold:
                             return (
                                 f"{version_1} has {abs(pct):.1f}% lower {metric_label}"
                             )
-                        elif pct > 5:
+                        elif pct > threshold:
                             return (
                                 f"{version_2} has {abs(pct):.1f}% lower {metric_label}"
                             )
@@ -2820,6 +2855,7 @@ def render_compare_versions_section(df, use_expander=True):
                                 v2_peak_throughput,
                                 True,
                                 "peak output throughput",
+                                "output_tok/sec",
                             ),
                         },
                         {
@@ -2831,6 +2867,7 @@ def render_compare_versions_section(df, use_expander=True):
                                 v2_total_throughput,
                                 True,
                                 "total throughput",
+                                "total_tok/sec",
                             ),
                         },
                         {
@@ -2838,7 +2875,11 @@ def render_compare_versions_section(df, use_expander=True):
                             version_1: _fmt(v1_e2e_latency, "s", 0, round_up=True),
                             version_2: _fmt(v2_e2e_latency, "s", 0, round_up=True),
                             "Difference/Winner": _winner(
-                                v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
+                                v1_e2e_latency,
+                                v2_e2e_latency,
+                                False,
+                                "E2E latency",
+                                "request_latency_median",
                             ),
                         },
                         {
@@ -2850,7 +2891,7 @@ def render_compare_versions_section(df, use_expander=True):
                             if pd.notna(v2_ttft)
                             else "N/A",
                             "Difference/Winner": _winner(
-                                v1_ttft, v2_ttft, False, "P95 TTFT"
+                                v1_ttft, v2_ttft, False, "P95 TTFT", "ttft_p95"
                             ),
                         },
                         {
@@ -2858,7 +2899,7 @@ def render_compare_versions_section(df, use_expander=True):
                             version_1: _fmt(v1_itl, "ms", 0, round_up=True),
                             version_2: _fmt(v2_itl, "ms", 0, round_up=True),
                             "Difference/Winner": _winner(
-                                v1_itl, v2_itl, False, "P95 ITL"
+                                v1_itl, v2_itl, False, "P95 ITL", "itl_p95"
                             ),
                         },
                     ]
@@ -2936,12 +2977,7 @@ combinations.<br><br>
 
     with c2:
         wr_val = data["worst_regression"]
-        if wr_val < -5:
-            wr_cls = "val-red"
-        elif wr_val < 0:
-            wr_cls = "val-amber"
-        else:
-            wr_cls = "val-green"
+        wr_cls = "val-red" if wr_val < 0 else "val-green"
         wr_icon = "⊖" if wr_val < 0 else "✓"
         wc = data.get("worst_reg_combo")
         wm = data.get("worst_reg_metric", "")
@@ -3076,7 +3112,7 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
         st.caption(
             f"Comparing RHOAI releases against their upstream llm-d equivalents "
             f"({ups_versions_str}). "
-            '"At parity" means within 5 %.'
+            f'"At parity" means within ±{P50_THRESHOLD_PCT:.0f} % for throughput and ±{P95_THRESHOLD_PCT:.0f} % for TTFT/ITL P95.'
         )
 
         ups_avg_cls = "val-green" if data["ups_avg"] >= 0 else "val-red"
@@ -3339,7 +3375,9 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
         with st.expander("Per-model details & comparison", expanded=False):
             st.caption(
                 "Per-model delta (geometric mean across concurrency levels). "
-                "🟢 Ahead (> 5 %) · 🟡 At Parity (± 5 %) · 🔴 Behind (> 5 %). "
+                "🟢 Ahead (beyond threshold) · "
+                "🟡 At Parity (within threshold) · "
+                "🔴 Behind (beyond threshold). "
                 "For latency metrics (TTFT/ITL), lower is better."
             )
 
@@ -3512,9 +3550,9 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
                     if pct is None:
                         continue
                     icon = (
-                        "🟢"
-                        if pct > LLMD_NEUTRAL_THRESHOLD_PCT
-                        else ("🟡" if pct >= -LLMD_NEUTRAL_THRESHOLD_PCT else "🔴")
+                        "🟡"
+                        if r.get("Throughput_similar")
+                        else ("🟢" if pct > 0 else "🔴")
                     )
                     prof = _llmd_display_profile(r["profile"])
                     variant = r.get("variant", "")
@@ -3613,9 +3651,7 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
                 if pct is None:
                     continue
                 icon = (
-                    "🟢"
-                    if pct > LLMD_NEUTRAL_THRESHOLD_PCT
-                    else ("🟡" if pct >= -LLMD_NEUTRAL_THRESHOLD_PCT else "🔴")
+                    "🟡" if r.get("Throughput_similar") else ("🟢" if pct > 0 else "🔴")
                 )
                 prof = _llmd_display_profile(r["profile"])
                 variant = r.get("variant", "")
@@ -3659,14 +3695,15 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
         '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap">'
         '<div><h3 style="margin:0">Regression Heatmap</h3></div>'
         '<div style="font-size:0.8rem;color:#6b7280">'
-        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement (&gt;5 %)</span> &nbsp; '
-        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (±5 %)</span> &nbsp; '
-        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression (&gt;5 %)</span>'
+        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement</span> &nbsp; '
+        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (within threshold)</span> &nbsp; '
+        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression</span>'
         "</div></div>",
         unsafe_allow_html=True,
     )
     st.caption(
-        "% delta vs. previous release (geometric mean across concurrency levels)."
+        "% delta vs. previous release (geometric mean across concurrency levels). "
+        f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %."
     )
 
     heatmap_cols = [
@@ -3967,7 +4004,7 @@ Changes within ±{LLMD_NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<b
                 for j, (mname, hib, _) in enumerate(heatmap_cols):
                     row_cols[j + 1].markdown(
                         f'<div style="text-align:center">'
-                        f"{_llmd_hm_cell(r.get(f'{mname}_pct'), hib)}</div>",
+                        f"{_llmd_hm_cell(r.get(f'{mname}_pct'), hib, r.get(f'{mname}_similar'))}</div>",
                         unsafe_allow_html=True,
                     )
                 with row_cols[-1]:
@@ -4662,12 +4699,13 @@ def render_llmd_competitive_analysis_section(df):
     st.caption(
         "Each comparison below shows a per-model summary: "
         "a model is a **Win** if it has more metric wins than losses "
-        "(baseline outperforms by ≥5%), "
+        "(baseline moves beyond the metric threshold), "
         "a **Loss** if it has more metric losses than wins "
-        "(baseline underperforms by ≥5%), "
+        "(baseline moves beyond the metric threshold), "
         "and **Similar** otherwise. "
         "Metrics evaluated: Output Throughput, Total Throughput, "
-        "End-to-End Latency, TTFT P95, and ITL P95 geometric means."
+        "End-to-End Latency, TTFT P95, and ITL P95 geometric means. "
+        f"Thresholds: P50 metrics ±{P50_THRESHOLD_PCT:.0f}%, P95 metrics ±{P95_THRESHOLD_PCT:.0f}%."
     )
 
     st.markdown(
@@ -5231,7 +5269,7 @@ def render_llmd_competitive_analysis_section(df):
                                     f"**Legend:** "
                                     f"🟢 {baseline} outperforms {competitor} | "
                                     f"🔴 {baseline} underperforms {competitor} | "
-                                    f"🟡 Similar Performance (< 5% difference)"
+                                    f"🟡 Similar Performance (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%)"
                                 )
 
             if group_scores:
@@ -5402,7 +5440,7 @@ def render_llmd_competitive_analysis_section(df):
                                 f"&nbsp;|&nbsp; "
                                 f"🔴 {bl} loses majority of metrics "
                                 f"&nbsp;|&nbsp; "
-                                f"🟡 Similar (tied or &lt;5% diff)</div>"
+                                f"🟡 Similar (tied or within threshold)</div>"
                                 f"</details></div>",
                                 unsafe_allow_html=True,
                             )

@@ -33,6 +33,34 @@ from dashboard_styles import (
     initialize_streamlit_config,
 )
 
+# ── Regression threshold policy ─────────────────────────────────
+# P50/central metrics: throughput and the E2E latency median.
+P50_THRESHOLD_PCT = 5.0
+
+# P95 latency metrics: TTFT P95 and ITL P95.
+P95_THRESHOLD_PCT = 10.0
+
+P95_COLUMNS = frozenset({"ttft_p95", "itl_p95"})
+
+# Legacy alias for the P50/central-metric dead-zone used by throughput labels.
+NEUTRAL_THRESHOLD_PCT = P50_THRESHOLD_PCT
+
+
+def pct_threshold_for_column(column):
+    """Return the percentage dead-zone for a metric column."""
+    return P95_THRESHOLD_PCT if column in P95_COLUMNS else P50_THRESHOLD_PCT
+
+
+def is_similar_change(pct_diff, column):
+    """True when the percentage change is inside the column's dead-zone."""
+    return abs(pct_diff) <= pct_threshold_for_column(column)
+
+
+def p50_regressed(p50_pct):
+    """True when the P50 change is outside the P50 dead-zone."""
+    return p50_pct is not None and p50_pct > P50_THRESHOLD_PCT
+
+
 # Set global Plotly template: white background with white hover labels
 _light_hover = go.layout.Template(
     layout=go.Layout(
@@ -168,9 +196,6 @@ OVERVIEW_RELEASE_PAIRS = [
         "additional": [],
     },
 ]
-
-# ±3 % dead-zone: changes within this range are "neutral" (neither win nor loss)
-NEUTRAL_THRESHOLD_PCT = 2.0
 
 ACCELERATOR_DISPLAY_NAMES = {
     "H200": "NVIDIA H200",
@@ -443,7 +468,13 @@ def compare_two_datasets(data_a, data_b, metric_config, user_conc_set):
     pct_diff = ((a_val - b_val) / b_val) * 100
     a_better = pct_diff > 0 if higher_is_better else pct_diff < 0
 
-    return pct_diff, a_better, a_peak_conc, b_peak_conc, abs(pct_diff) < 5
+    return (
+        pct_diff,
+        a_better,
+        a_peak_conc,
+        b_peak_conc,
+        is_similar_change(pct_diff, column),
+    )
 
 
 def _resolve_baseline_df(h200_df, baseline, fallback_version, profile_full):
@@ -898,6 +929,20 @@ def _compute_overview_data(
         },
     }
 
+    # Background P50 values used only to flag the TTFT/ITL P95 heatmap cells.
+    p50_metrics_cfg = {
+        "TTFT P50": {
+            "column": "ttft_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P50": {
+            "column": "itl_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+    }
+
     df_curr = df[df["version"] == CURRENT].copy()
     df_prev = df[df["version"] == PREVIOUS].copy()
     df_vllm = df[df["version"] == VLLM].copy() if VLLM else pd.DataFrame()
@@ -968,6 +1013,8 @@ def _compute_overview_data(
             row[f"{mname}_pct"] = pct
             row[f"{mname}_better"] = better
             row[f"{mname}_similar"] = similar
+        for mname, mc in p50_metrics_cfg.items():
+            row[f"{mname}_pct"] = compare_two_datasets(cd, pd_, mc, conc_for_geomean)[0]
         combo_results.append(row)
 
     # --- Aggregate KPIs ---
@@ -981,7 +1028,7 @@ def _compute_overview_data(
     for r in combo_results:
         for mname, mc in metrics_cfg.items():
             pct = r.get(f"{mname}_pct")
-            if pct is not None:
+            if pct is not None and not r.get(f"{mname}_similar"):
                 all_normalised.append(pct if mc["higher_is_better"] else -pct)
     worst_regression = min(all_normalised) if all_normalised else 0.0
 
@@ -991,7 +1038,7 @@ def _compute_overview_data(
         for r in combo_results
         if r.get("Throughput_pct") is not None
         and not r.get("Throughput_better")
-        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+        and not r.get("Throughput_similar")
     )
     win_rate = ((total_cmp - losses) / total_cmp * 100) if total_cmp > 0 else 100.0
 
@@ -1015,7 +1062,7 @@ def _compute_overview_data(
     for r in combo_results:
         for mname, mc in metrics_cfg.items():
             pct = r.get(f"{mname}_pct")
-            if pct is not None:
+            if pct is not None and not r.get(f"{mname}_similar"):
                 norm = pct if mc["higher_is_better"] else -pct
                 if abs(norm - worst_regression) < 0.01:
                     worst_reg_combo = r
@@ -1025,21 +1072,19 @@ def _compute_overview_data(
     win_combos = [
         r
         for r in combo_results
-        if r.get("Throughput_better") is True
-        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+        if r.get("Throughput_better") is True and not r.get("Throughput_similar")
     ]
     loss_combos = [
         r
         for r in combo_results
         if r.get("Throughput_pct") is not None
         and not r.get("Throughput_better")
-        and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+        and not r.get("Throughput_similar")
     ]
     neutral_combos = [
         r
         for r in combo_results
-        if r.get("Throughput_pct") is not None
-        and abs(r.get("Throughput_pct", 0)) <= NEUTRAL_THRESHOLD_PCT
+        if r.get("Throughput_pct") is not None and r.get("Throughput_similar")
     ]
 
     # --- Per-accelerator rollup ---
@@ -1054,7 +1099,7 @@ def _compute_overview_data(
             for r in ar
             if r.get("Throughput_pct") is not None
             and not r.get("Throughput_better")
-            and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+            and not r.get("Throughput_similar")
         )
         awr = ((at - al) / at * 100) if at > 0 else 100.0
 
@@ -1062,7 +1107,7 @@ def _compute_overview_data(
         for r in ar:
             for mname, mc in metrics_cfg.items():
                 pct = r.get(f"{mname}_pct")
-                if pct is not None:
+                if pct is not None and not r.get(f"{mname}_similar"):
                     norm = pct if mc["higher_is_better"] else -pct
                     if norm < worst_v:
                         worst_v, worst_m, worst_raw = norm, mname, pct
@@ -1095,7 +1140,7 @@ def _compute_overview_data(
             for r in results
             if r.get("Throughput_pct") is not None
             and not r.get("Throughput_better")
-            and abs(r.get("Throughput_pct", 0)) > NEUTRAL_THRESHOLD_PCT
+            and not r.get("Throughput_similar")
         )
         fwr = ((ft - fl) / ft * 100) if ft > 0 else 100.0
 
@@ -1103,7 +1148,7 @@ def _compute_overview_data(
         for r in results:
             for mname, mc in metrics_cfg.items():
                 pct = r.get(f"{mname}_pct")
-                if pct is not None:
+                if pct is not None and not r.get(f"{mname}_similar"):
                     norm = pct if mc["higher_is_better"] else -pct
                     if norm < worst_v:
                         worst_v, worst_m, worst_raw = norm, mname, pct
@@ -1264,7 +1309,13 @@ def _health_dots_html(health):
     return f'<span class="health-dots">{dots}</span>'
 
 
-def _hm_cell(pct, higher_is_better):
+def _hm_cell(
+    pct,
+    higher_is_better,
+    similar=None,
+    marker=False,
+    tooltip=None,
+):
     """Return styled heatmap cell HTML for a % delta."""
     if pct is None:
         return '<span class="hm-cell hm-neutral">N/A</span>'
@@ -1272,13 +1323,23 @@ def _hm_cell(pct, higher_is_better):
     norm = pct if higher_is_better else -pct
     sign = "+" if pct > 0 else ""
     label = f"{sign}{pct:.1f} %"
-    if norm > 5:
-        cls = "hm-improve-strong"
-    elif norm >= -5:
+    if similar is None:
+        similar = abs(norm) <= NEUTRAL_THRESHOLD_PCT
+    if similar:
         cls = "hm-similar"
-    else:
+    elif norm > NEUTRAL_THRESHOLD_PCT:
+        cls = "hm-improve-strong"
+    elif norm < -NEUTRAL_THRESHOLD_PCT:
         cls = "hm-regress-strong"
-    return f'<span class="hm-cell {cls}">{label}</span>'
+    else:
+        cls = "hm-similar"
+    if marker:
+        label += (
+            '<span class="hm-p50-flag" '
+            'style="color:#dc2626;font-weight:700;margin-left:0.2rem">⚠</span>'
+        )
+    tooltip_attr = f' data-tooltip="{html.escape(tooltip)}"' if tooltip else ""
+    return f'<span class="hm-cell {cls}"{tooltip_attr}>{label}</span>'
 
 
 CA_CONFIGURATIONS = [
@@ -1539,7 +1600,7 @@ def _render_ca_scorecard(score_placeholder, group_scores):
 </summary>
 <hr style="margin:0.6rem 0;border:none;border-top:1px solid rgba(0,0,0,0.1);">
 {competitor_rows}
-<div style="margin-top:0.6rem;font-size:0.8rem;opacity:0.7;">🟢 {bl} wins majority of metrics &nbsp;|&nbsp; 🔴 {bl} loses majority of metrics &nbsp;|&nbsp; 🟡 Similar (tied or &lt;5% diff)</div>
+<div style="margin-top:0.6rem;font-size:0.8rem;opacity:0.7;">🟢 {bl} wins majority of metrics &nbsp;|&nbsp; 🔴 {bl} loses majority of metrics &nbsp;|&nbsp; 🟡 Similar (tied or within threshold)</div>
 </details>
 </div>""",
                     unsafe_allow_html=True,
@@ -1877,10 +1938,11 @@ def render_competitive_analysis_section(df):
     st.markdown(selected_ca["description"])
     st.caption(
         "Each comparison below shows a per-model summary: "
-        "a model is a **Win** if it has more metric wins than losses (baseline outperforms by ≥5%), "
-        "a **Loss** if it has more metric losses than wins (baseline underperforms by ≥5%), "
+        "a model is a **Win** if it has more metric wins than losses (baseline moves beyond the metric threshold), "
+        "a **Loss** if it has more metric losses than wins (baseline moves beyond the metric threshold), "
         "and **Similar** otherwise. "
-        "Metrics evaluated: Output Throughput, Total Throughput, End-to-End Latency, TTFT P95, and ITL P95 geometric means."
+        "Metrics evaluated: Output Throughput, Total Throughput, End-to-End Latency, TTFT P95, and ITL P95 geometric means. "
+        f"Thresholds: P50 metrics ±{P50_THRESHOLD_PCT:.0f}%, P95 metrics ±{P95_THRESHOLD_PCT:.0f}%."
     )
 
     st.markdown(
@@ -2570,7 +2632,7 @@ def render_competitive_analysis_section(df):
                                     f"**Legend:** "
                                     f"🟢 {baseline} performs better than {competitor} | "
                                     f"🔴 {baseline} performs worse than {competitor} | "
-                                    f"🟡 Similar Performance (< 5% difference)"
+                                    f"🟡 Similar Performance (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%)"
                                 )
 
             _render_ca_scorecard(score_placeholder, group_scores)
@@ -2653,12 +2715,7 @@ combinations.<br><br>
     # Worst Regression
     with c2:
         wr_val = data["worst_regression"]
-        if wr_val < -5:
-            wr_cls = "val-red"
-        elif wr_val < 0:
-            wr_cls = "val-amber"
-        else:
-            wr_cls = "val-green"
+        wr_cls = "val-red" if wr_val < 0 else "val-green"
         wr_icon = "⊖" if wr_val < 0 else "✓"
         wc = data.get("worst_reg_combo")
         wm = data.get("worst_reg_metric", "")
@@ -2795,7 +2852,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             f"{ov_current} builds on vLLM {_vllm_ver} — the goal is matching or exceeding upstream "
             f"performance. Comparisons are shown separately for {_parity_accelerator_names} "
             "when matching benchmark configurations are available. "
-            '"At parity" means within 5 %.'
+            f'"At parity" means within ±{P50_THRESHOLD_PCT:.0f} % for throughput and ±{P95_THRESHOLD_PCT:.0f} % for TTFT/ITL P95.'
         )
         available_vllm_accels = [
             accelerator
@@ -3162,7 +3219,12 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                     unsafe_allow_html=True,
                 )
 
-                with st.expander("Per-model breakdown and comparisons", expanded=False):
+                with st.expander(
+                    f"Per-model breakdown and comparisons "
+                    f"(throughput ±{P50_THRESHOLD_PCT:.0f} %, "
+                    f"TTFT/ITL P95 ±{P95_THRESHOLD_PCT:.0f} %)",
+                    expanded=False,
+                ):
                     st.markdown(
                         f"""<div class="overview-card-detail">
 Per-model delta (geometric mean, {_accel_display(parity_accel)}):
@@ -3171,14 +3233,14 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     <th style="text-align:left">Model</th>
     <th style="text-align:center">TP</th>
     <th style="text-align:left">Profile</th>
-    <th style="text-align:right">Throughput Δ</th>
-    <th style="text-align:right">TTFT P95 Δ</th>
-    <th style="text-align:right">ITL P95 Δ</th>
+    <th style="text-align:right">Throughput Δ (±{P50_THRESHOLD_PCT:.0f} %)</th>
+    <th style="text-align:right">TTFT P95 Δ (±{P95_THRESHOLD_PCT:.0f} %)</th>
+    <th style="text-align:right">ITL P95 Δ (±{P95_THRESHOLD_PCT:.0f} %)</th>
 </tr></thead>
 <tbody>{vllm_table_rows}</tbody>
 </table>
 <br>
-🟢 Ahead (&gt; 5 % better) · 🟡 At Parity (within ± 5 %) · 🔴 Behind (&gt; 5 % worse)<br>
+🟢 Ahead (beyond threshold) · 🟡 At Parity (throughput ±{P50_THRESHOLD_PCT:.0f} %, TTFT/ITL P95 ±{P95_THRESHOLD_PCT:.0f} %) · 🔴 Behind (beyond threshold)<br>
 <i>For latency metrics (TTFT/ITL), lower is better — a negative Δ means RHAIIS is faster.</i>
 </div>""",
                         unsafe_allow_html=True,
@@ -3269,9 +3331,9 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                     if pct is None:
                         continue
                     icon = (
-                        "🟢"
-                        if pct > NEUTRAL_THRESHOLD_PCT
-                        else ("🟡" if pct >= -NEUTRAL_THRESHOLD_PCT else "🔴")
+                        "🟡"
+                        if r.get("Throughput_similar")
+                        else ("🟢" if pct > 0 else "🔴")
                     )
                     prof = _display_profile(r["profile"], r.get("custom_isl_osl", ""))
                     detail_lines += (
@@ -3371,9 +3433,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 if pct is None:
                     continue
                 icon = (
-                    "🟢"
-                    if pct > NEUTRAL_THRESHOLD_PCT
-                    else ("🟡" if pct >= -NEUTRAL_THRESHOLD_PCT else "🔴")
+                    "🟡" if r.get("Throughput_similar") else ("🟢" if pct > 0 else "🔴")
                 )
                 prof = _display_profile(r["profile"], r.get("custom_isl_osl", ""))
                 detail_lines += (
@@ -3414,14 +3474,17 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap">'
         '<div><h3 style="margin:0">Regression Heatmap</h3></div>'
         '<div style="font-size:0.8rem;color:#6b7280">'
-        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement (&gt;5 %)</span> &nbsp; '
-        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (±5 %)</span> &nbsp; '
-        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression (&gt;5 %)</span>'
+        '<span class="hm-cell hm-improve-strong" style="font-size:0.75rem">■ Improvement</span> &nbsp; '
+        '<span class="hm-cell hm-similar" style="font-size:0.75rem">■ Similar (within threshold)</span> &nbsp; '
+        '<span class="hm-cell hm-regress-strong" style="font-size:0.75rem">■ Regression</span> &nbsp; '
+        '<span style="font-size:0.75rem;color:#dc2626;font-weight:700">⚠</span> '
+        '<span style="font-size:0.75rem">= corresponding P50 regressed &gt;5 %</span>'
         "</div></div>",
         unsafe_allow_html=True,
     )
     st.caption(
-        "% delta vs. previous release (geometric mean across concurrency levels)."
+        "% delta vs. previous release (geometric mean across concurrency levels). "
+        f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %."
     )
 
     heatmap_cols = [
@@ -3442,13 +3505,23 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             "aggregation": "geom_mean",
             "higher_is_better": True,
         },
-        "End-to-End Latency": {
+        "End-to-End Latency (P50)": {
             "column": "request_latency_median",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "TTFT P50": {
+            "column": "ttft_median",
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
         "TTFT P95": {
             "column": "ttft_p95",
+            "aggregation": "geom_mean",
+            "higher_is_better": False,
+        },
+        "ITL P50": {
+            "column": "itl_median",
             "aggregation": "geom_mean",
             "higher_is_better": False,
         },
@@ -3531,16 +3604,18 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         st.markdown(
             "**📊 View detailed graphs** — click any metric to compare across concurrency levels:"
         )
-        btn_cols = st.columns(len(_hm_dialog_metrics))
-        for i, mname in enumerate(_hm_dialog_metrics):
-            with btn_cols[i]:
-                if st.button(
-                    f"📊 {mname}",
-                    key=f"hm_dlg_btn_{i}",
-                    use_container_width=True,
-                    type="primary",
-                ):
-                    st.session_state._hm_dlg_selected_metric = mname
+        metric_names = list(_hm_dialog_metrics)
+        for row_start in range(0, len(metric_names), 4):
+            btn_cols = st.columns(4)
+            for i, mname in enumerate(metric_names[row_start : row_start + 4]):
+                with btn_cols[i]:
+                    if st.button(
+                        f"📊 {mname}",
+                        key=f"hm_dlg_btn_{row_start + i}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        st.session_state._hm_dlg_selected_metric = mname
 
         selected_metric = st.session_state.get("_hm_dlg_selected_metric")
         if selected_metric and selected_metric in _hm_dialog_metrics:
@@ -3560,7 +3635,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 v1_vals.append(float(g1.mean()) if len(g1) > 0 else None)
                 v2_vals.append(float(g2.mean()) if len(g2) > 0 else None)
 
-            if col_name == "ttft_p95":
+            if col_name in ("ttft_median", "ttft_p95"):
                 v1_vals = [v / 1000 if v is not None else None for v in v1_vals]
                 v2_vals = [v / 1000 if v is not None else None for v in v2_vals]
 
@@ -3599,7 +3674,10 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
 
             if "tok/sec" in col_name:
                 y_title = "Tokens / sec"
-            elif "latency" in col_name.lower() or col_name == "ttft_p95":
+            elif "latency" in col_name.lower() or col_name in (
+                "ttft_median",
+                "ttft_p95",
+            ):
                 y_title = "Seconds"
             else:
                 y_title = "Milliseconds"
@@ -3645,9 +3723,58 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
                 f"Geometric mean uses: {conc_str}."
             )
 
-    # Column widths: Model | metric columns | compare button
+    # ── Sort controls ───────────────────────────────────────────────
+    _hm_sort_labels = ["Model", "Profile"] + [
+        f"{mname} Δ" for mname, _, _ in heatmap_cols
+    ]
+    st.caption(
+        "Each accelerator can be sorted independently. "
+        "**Best first** = highest throughput / lowest latency; "
+        "for metric sorts, rows without comparison data go last. "
+        "Dark rules mark model boundaries in **Model** sort and "
+        "profile boundaries in **Profile** sort."
+    )
+
+    def _hm_sorted_results(results, label, direction):
+        rows = list(results)
+        if label == "Model":
+            rows.sort(
+                key=lambda r: (
+                    r["short_name"].lower(),
+                    r["tp"],
+                    _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+                ),
+                reverse=(direction == "Z → A"),
+            )
+            return rows
+        if label == "Profile":
+            rows.sort(
+                key=lambda r: (
+                    _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+                    r["short_name"].lower(),
+                    r["tp"],
+                ),
+                reverse=(direction == "Z → A"),
+            )
+            return rows
+        mname = label.removesuffix(" Δ")
+        higher_is_better = next(h for m, h, _ in heatmap_cols if m == mname)
+        present = [r for r in rows if r.get(f"{mname}_pct") is not None]
+        missing = [r for r in rows if r.get(f"{mname}_pct") is None]
+        present.sort(
+            key=lambda r: (
+                r["short_name"].lower(),
+                r["tp"],
+                _display_profile(r["profile"], r.get("custom_isl_osl", "")).lower(),
+            )
+        )
+        reverse = (direction == "Best first") == higher_is_better
+        present.sort(key=lambda r: r[f"{mname}_pct"], reverse=reverse)
+        return present + missing
+
+    # Column widths: Model | Profile | metric columns | compare button
     _hm_n_metrics = len(heatmap_cols)
-    _hm_widths = [3.5] + [1.5] * _hm_n_metrics + [0.5]
+    _hm_widths = [2.8, 1.8] + [1.4] * _hm_n_metrics + [0.5]
 
     _accel_colors = {
         "H200": "#22c55e",
@@ -3668,8 +3795,29 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             f"{_accel_display(accel)}</div>",
             unsafe_allow_html=True,
         )
+        _hm_toolbar = st.columns([2.2, 3.3, 4.5])
+        with _hm_toolbar[0]:
+            _hm_sort_label = st.selectbox(
+                "Sort rows by",
+                _hm_sort_labels,
+                index=0,
+                key=f"hm_sort_label_{accel}",
+            )
+        _hm_is_text_sort = _hm_sort_label in ("Model", "Profile")
+        _hm_dir_options = (
+            ["A → Z", "Z → A"] if _hm_is_text_sort else ["Best first", "Worst first"]
+        )
+        _hm_dir_key = "text" if _hm_is_text_sort else _hm_sort_label
+        with _hm_toolbar[1]:
+            _hm_sort_dir = st.radio(
+                "Direction",
+                _hm_dir_options,
+                index=0,
+                horizontal=True,
+                key=f"hm_sort_dir_{accel}_{_hm_dir_key}",
+            )
         seen = {}
-        for r in info["results"]:
+        for r in _hm_sorted_results(info["results"], _hm_sort_label, _hm_sort_dir):
             key = (
                 r["model"],
                 r["tp"],
@@ -3694,8 +3842,12 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
             f'<div style="{_hdr_base}">Model</div>',
             unsafe_allow_html=True,
         )
+        hdr[1].markdown(
+            f'<div style="{_hdr_base}">Profile</div>',
+            unsafe_allow_html=True,
+        )
         for j, (_, _, label) in enumerate(heatmap_cols):
-            hdr[j + 1].markdown(
+            hdr[j + 2].markdown(
                 f'<div style="{_hdr_base};justify-content:center;text-align:center">{label}</div>',
                 unsafe_allow_html=True,
             )
@@ -3706,28 +3858,49 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
 
         # Data rows
         _n_rows = len(seen)
+        _prev_model_name = None
+        _prev_profile = None
         for i, (
             (_model_key, tp, profile, cisl_osl, _dset, _sdec, _pc, _turns),
             r,
         ) in enumerate(seen.items()):
             sname = r["short_name"]
             profile_short = _display_profile(profile, cisl_osl)
+            _new_group = (_hm_sort_label == "Model" and sname != _prev_model_name) or (
+                _hm_sort_label == "Profile" and profile_short != _prev_profile
+            )
+            _divider = "2px solid #111827" if _new_group else "1px solid #e5e7eb"
             if i > 0:
                 st.markdown(
-                    '<hr style="margin:0;border:none;border-top:1px solid #e5e7eb">',
+                    f'<hr style="margin:0;border:none;border-top:{_divider}">',
                     unsafe_allow_html=True,
                 )
+            _prev_model_name = sname
+            _prev_profile = profile_short
             row_cols = st.columns(_hm_widths)
             row_cols[0].markdown(
                 f'<div style="font-weight:600;color:#1a1f36;font-size:0.88rem;'
                 f'padding:0.45rem 0">'
-                f"{sname} (TP{tp}) {profile_short}</div>",
+                f"{sname} (TP{tp})</div>",
+                unsafe_allow_html=True,
+            )
+            row_cols[1].markdown(
+                f'<div style="color:#4b5563;font-size:0.85rem;padding:0.45rem 0">'
+                f"{profile_short}</div>",
                 unsafe_allow_html=True,
             )
             for j, (mname, hib, _) in enumerate(heatmap_cols):
-                row_cols[j + 1].markdown(
+                pct = r.get(f"{mname}_pct")
+                similar = r.get(f"{mname}_similar")
+                p50_key = {"TTFT P95": "TTFT P50", "ITL P95": "ITL P50"}.get(mname)
+                p50_pct = r.get(f"{p50_key}_pct") if p50_key else None
+                marker = bool(p50_key and p50_regressed(p50_pct))
+                tooltip = None
+                if p50_key and pct is not None and p50_pct is not None:
+                    tooltip = f"{mname}: {pct:+.1f}% · {p50_key}: {p50_pct:+.1f}%"
+                row_cols[j + 2].markdown(
                     f'<div style="text-align:center">'
-                    f"{_hm_cell(r.get(f'{mname}_pct'), hib)}</div>",
+                    f"{_hm_cell(pct, hib, similar, marker=marker, tooltip=tooltip)}</div>",
                     unsafe_allow_html=True,
                 )
             with row_cols[-1]:
@@ -6910,7 +7083,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
-                st.markdown("""
+                st.markdown(f"""
                 **Mean Change Calculation:**
                 - Calculated by taking the percentage change at each common concurrency level, then taking the arithmetic mean (average) of all those changes
                 - Shows the average performance difference across all concurrency levels
@@ -6973,9 +7146,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
                 **Status Classification:**
                 The status emoji is determined by consensus across all four metrics (Mean, Median, Geometric Mean, and Peak change):
-                - 🟢 **Better**: At least 3 out of 4 metrics show ≥5% improvement
-                - 🟡 **Similar**: Mixed signals (some metrics up, some down) or all metrics show <5% difference
-                - 🔴 **Worse**: At least 3 out of 4 metrics show ≥5% decline
+                - 🟢 **Better**: At least 3 out of 4 metrics move beyond their threshold
+                - 🟡 **Similar**: Mixed signals or all metrics stay within their threshold
+                - 🔴 **Worse**: At least 3 out of 4 metrics move beyond their threshold
+                - Thresholds: P50 metrics ±{P50_THRESHOLD_PCT:.0f}%; P95 metrics ±{P95_THRESHOLD_PCT:.0f}%
 
                 This consensus approach provides a more robust assessment by requiring multiple metrics to agree before declaring a clear winner or loser.
 
@@ -7400,7 +7574,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 f"**Legend:** "
                 f"🟢 {version_1} performs better than {version_2} | "
                 f"🔴 {version_1} performs worse than {version_2} | "
-                f"🟡 Similar Performance (< 5% difference)"
+                f"🟡 Similar Performance (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%)"
             )
 
             # Show only source rows represented by the model/config pairs in the
@@ -7732,7 +7906,7 @@ def render_compare_configurations_section(
             st.markdown(f"### Comparing: {config_1_short} vs {config_2_short}")
         with popover_col:
             with st.popover("ℹ️ How are these calculated?"):
-                st.markdown("""
+                st.markdown(f"""
                 **Geometric Mean Change Calculation:**
 
                 *Step 1: Convert % changes to Growth Factors*
@@ -7762,7 +7936,7 @@ def render_compare_configurations_section(
                 | **Throughput** | M1 is X% faster | M1 is X% slower |
                 | **Latency** | M1 is X% slower | M1 is X% faster |
 
-                **Status:** 🟢 Better (>=5% improvement) | 🟡 Similar (<5%) | 🔴 Worse (>=5% decline)
+                **Status:** 🟢 Better (beyond threshold) | 🟡 Similar (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%) | 🔴 Worse (beyond threshold)
                     """)
 
         st.markdown(f"**Comparing:** {config_1_short} vs {config_2_short}")
@@ -8149,7 +8323,7 @@ def render_compare_configurations_section(
                 f"**Legend:** "
                 f"🟢 {config_1_short} performs better than {config_2_short} | "
                 f"🔴 {config_1_short} performs worse than {config_2_short} | "
-                f"🟡 Similar Performance (< 5% difference)"
+                f"🟡 Similar Performance (within threshold: P50 ±{P50_THRESHOLD_PCT:.0f}%, P95 ±{P95_THRESHOLD_PCT:.0f}%)"
             )
 
             # Detailed version+TP comparison sections
@@ -8218,24 +8392,27 @@ def render_compare_configurations_section(
                         return f"~{int(val):,}{unit}"
                     return f"~{val:,.{decimals}f}{unit}"
 
-                def get_winner_text(m1_val, m2_val, higher_is_better, metric_name):
+                def get_winner_text(
+                    m1_val, m2_val, higher_is_better, metric_name, column
+                ):
                     """Generate winner text for a metric."""
                     if pd.isna(m1_val) or pd.isna(m2_val) or m2_val == 0:
                         return "N/A"
 
                     pct_diff = ((m1_val - m2_val) / m2_val) * 100
+                    threshold = pct_threshold_for_column(column)
 
                     if higher_is_better:
-                        if pct_diff > 5:
+                        if pct_diff > threshold:
                             return f"{config_1_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
-                        elif pct_diff < -5:
+                        elif pct_diff < -threshold:
                             return f"{config_2_short} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
                     else:
-                        if pct_diff < -5:
+                        if pct_diff < -threshold:
                             return f"{config_1_short} has {abs(pct_diff):.1f}% lower {metric_name}"
-                        elif pct_diff > 5:
+                        elif pct_diff > threshold:
                             return f"{config_2_short} has {abs(pct_diff):.1f}% lower {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
@@ -8251,6 +8428,7 @@ def render_compare_configurations_section(
                                 m2_peak_throughput,
                                 True,
                                 "peak output throughput",
+                                "output_tok/sec",
                             ),
                         },
                         {
@@ -8262,6 +8440,7 @@ def render_compare_configurations_section(
                                 m2_total_throughput,
                                 True,
                                 "total throughput",
+                                "total_tok/sec",
                             ),
                         },
                         {
@@ -8269,7 +8448,11 @@ def render_compare_configurations_section(
                             config_1_short: f"{format_value(m1_e2e_latency, 's', 0, round_up=True)}",
                             config_2_short: f"{format_value(m2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
-                                m1_e2e_latency, m2_e2e_latency, False, "E2E latency"
+                                m1_e2e_latency,
+                                m2_e2e_latency,
+                                False,
+                                "E2E latency",
+                                "request_latency_median",
                             ),
                         },
                         {
@@ -8281,7 +8464,7 @@ def render_compare_configurations_section(
                             if pd.notna(m2_ttft)
                             else "N/A",
                             "Difference/Winner": get_winner_text(
-                                m1_ttft, m2_ttft, False, "P95 TTFT"
+                                m1_ttft, m2_ttft, False, "P95 TTFT", "ttft_p95"
                             ),
                         },
                         {
@@ -8289,7 +8472,7 @@ def render_compare_configurations_section(
                             config_1_short: f"{format_value(m1_itl, 'ms', 0, round_up=True)}",
                             config_2_short: f"{format_value(m2_itl, 'ms', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
-                                m1_itl, m2_itl, False, "P95 ITL"
+                                m1_itl, m2_itl, False, "P95 ITL", "itl_p95"
                             ),
                         },
                     ]
