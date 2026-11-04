@@ -1,12 +1,34 @@
-"""Tests for the shared regression threshold policy."""
+"""Tests for the regression threshold policy."""
 
-from thresholds import (
+import ast
+from pathlib import Path
+
+from llmd_dashboard import (
     P50_THRESHOLD_PCT,
     P95_THRESHOLD_PCT,
     is_similar_change,
     p50_regressed,
     pct_threshold_for_column,
 )
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _constant_value(path, name):
+    tree = ast.parse((_REPO_ROOT / path).read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} not found in {path}")
+
+
+def test_dashboard_threshold_copies_match():
+    for name in ("P50_THRESHOLD_PCT", "P95_THRESHOLD_PCT"):
+        assert _constant_value("dashboard.py", name) == _constant_value(
+            "llmd_dashboard.py", name
+        )
 
 
 def test_p50_columns_use_five_percent():
