@@ -193,6 +193,13 @@ OVERVIEW_PARITY_ACCELERATORS = ("H200", "B200", "MI355X")
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    # ── RHAIIS 3.6 release pairs ────────────────────────────────────
+    {
+        "current": "RHAIIS-3.6-GA",
+        "previous": "RHAIIS-3.6-fast2",
+        "upstream": None,
+        "additional": [],
+    },
     # ── RHAIIS 3.5 release pairs ────────────────────────────────────
     {
         "current": "RHAIIS-3.6-fast2",
