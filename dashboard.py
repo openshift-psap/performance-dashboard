@@ -197,7 +197,7 @@ OVERVIEW_RELEASE_PAIRS = [
     {
         "current": "RHAIIS-3.6-GA",
         "previous": "RHAIIS-3.6-fast2",
-        "upstream": None,
+        "upstream": "vLLM-0.31.0",
         "additional": [],
     },
     # ── RHAIIS 3.5 release pairs ────────────────────────────────────
@@ -277,8 +277,26 @@ OVERVIEW_RELEASE_PAIRS = [
     },
     # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
     {
+        "current": "vLLM-0.33.0",
+        "previous": "vLLM-0.31.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
         "current": "vLLM-0.31.0",
         "previous": "vLLM-0.28.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.28.0",
+        "previous": "vLLM-0.26.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.26.0",
+        "previous": "vLLM-0.24.0",
         "upstream": None,
         "additional": [],
     },
