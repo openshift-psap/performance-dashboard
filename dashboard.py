@@ -193,6 +193,13 @@ OVERVIEW_PARITY_ACCELERATORS = ("H200", "B200", "MI355X")
 # Most recent pair first. `upstream` / `additional` can be None / [] when
 # vLLM parity data isn't available for that release.
 OVERVIEW_RELEASE_PAIRS = [
+    # ── RHAIIS 3.6 release pairs ────────────────────────────────────
+    {
+        "current": "RHAIIS-3.6-GA",
+        "previous": "RHAIIS-3.6-fast2",
+        "upstream": "vLLM-0.31.0",
+        "additional": [],
+    },
     # ── RHAIIS 3.5 release pairs ────────────────────────────────────
     {
         "current": "RHAIIS-3.6-fast2",
@@ -269,6 +276,30 @@ OVERVIEW_RELEASE_PAIRS = [
         "additional": [],
     },
     # ── Upstream vLLM-vs-vLLM release pairs ──────────────────────────
+    {
+        "current": "vLLM-0.33.0",
+        "previous": "vLLM-0.31.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.31.0",
+        "previous": "vLLM-0.28.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.28.0",
+        "previous": "vLLM-0.26.0",
+        "upstream": None,
+        "additional": [],
+    },
+    {
+        "current": "vLLM-0.26.0",
+        "previous": "vLLM-0.24.0",
+        "upstream": None,
+        "additional": [],
+    },
     {
         "current": "vLLM-0.24.0",
         "previous": "vLLM-0.18.0",
