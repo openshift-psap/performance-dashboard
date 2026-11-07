@@ -77,6 +77,15 @@ def split_legacy_version(version):
         return raw_version, DEFAULT_LABEL
 
     prefix = _VERSION_PREFIXES[match.group("prefix").lower()]
+    # This run is a distinct build version, not a benchmark label.
+    if (
+        prefix == "vLLM"
+        and match.start() == 0
+        and match.group("release") == "0.24.0"
+        and raw_version[match.end() :].casefold() in {"-warmup-rampup", "-rampup"}
+    ):
+        return "vLLM-0.24.0-rampup", DEFAULT_LABEL
+
     if prefix == "RHAIIS" and tuple(
         int(part) for part in re.findall(r"\d+", match.group("release"))
     ) >= (3, 6):
@@ -243,6 +252,8 @@ def resolve_version_label_pairs(pairs, available_pairs):
     for raw_version, raw_label in pairs:
         pair = (str(raw_version), str(raw_label))
         candidates = [pair]
+        if pair == ("vLLM-0.24.0", "warmup-rampup"):
+            candidates.append(("vLLM-0.24.0-rampup", DEFAULT_LABEL))
         version, inferred_label = split_legacy_version(pair[0])
         if version != pair[0]:
             if pair[1] == DEFAULT_LABEL:

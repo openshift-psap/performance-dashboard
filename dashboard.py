@@ -5021,6 +5021,55 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
 
         plot_x = "turn_index" if _is_turn_view else x_axis
         plot_x_label = "Turn" if _is_turn_view else x_axis_label
+        duplicate_trace_options = []
+        if not plot_df.empty and not (
+            x_axis == "turn_index" and per_turn_plot_df.empty
+        ):
+            duplicate_run_info = (
+                plot_df.loc[
+                    plot_df["line_style"].eq("dot"), ["trace_label", "legend_label"]
+                ]
+                .drop_duplicates("trace_label")
+                .sort_values("trace_label")
+            )
+            duplicate_trace_options = duplicate_run_info["trace_label"].tolist()
+        if duplicate_trace_options:
+            duplicate_trace_labels = duplicate_run_info.set_index("trace_label")[
+                "legend_label"
+            ].to_dict()
+            duplicate_key = hashlib.sha1(
+                "\n".join(duplicate_trace_options).encode(), usedforsecurity=False
+            ).hexdigest()[:12]
+            duplicate_visibility_key = (
+                f"performance_plots_duplicate_runs_{duplicate_key}"
+            )
+            if duplicate_visibility_key not in st.session_state:
+                st.session_state[duplicate_visibility_key] = duplicate_trace_options
+            else:
+                st.session_state[duplicate_visibility_key] = sync_selected_options(
+                    st.session_state[duplicate_visibility_key], duplicate_trace_options
+                )
+            with st.expander(
+                "Individual duplicate runs "
+                f"({len(st.session_state[duplicate_visibility_key])}/"
+                f"{len(duplicate_trace_options)} shown)",
+                expanded=False,
+            ):
+                st.multiselect(
+                    "Dotted runs to show",
+                    duplicate_trace_options,
+                    format_func=lambda trace_key: duplicate_trace_labels[trace_key],
+                    key=duplicate_visibility_key,
+                    help=(
+                        "Remove a run to hide only it; select it again to restore it."
+                    ),
+                )
+            selected_duplicate_traces = st.session_state[duplicate_visibility_key]
+            plot_df = plot_df[
+                ~plot_df["trace_label"].isin(duplicate_trace_options)
+                | plot_df["trace_label"].isin(selected_duplicate_traces)
+            ].copy()
+
         if x_axis == "turn_index" and per_turn_plot_df.empty:
             st.info("No per-turn data available for the current filter selection.")
             plot_df = filtered_df_sorted.iloc[0:0].copy()
@@ -5199,7 +5248,11 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             fig.update_layout(
                 hovermode="closest",
                 legend_title_text=f"Run Details ({_legend_parts})",
-                legend={"font": {"size": 14}, "itemwidth": 42},
+                legend={
+                    "font": {"size": 14},
+                    "itemwidth": 42,
+                    "groupclick": "toggleitem",
+                },
                 title={
                     "font": {"size": 18},
                     "x": 0.02,
@@ -5236,9 +5289,16 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 on_select=_on_plot_selection,
                 selection_mode=("points", "box", "lasso"),
             )
-        st.caption(
-            "Click legend entries to show or hide a series. Dotted runs with the same color are duplicate runs with identical runtime args that differ only by UUID. Dotted runs with different shapes have different runtime args. Hover a point for its label, UUID, and important runtime args."
-        )
+        if duplicate_trace_options:
+            st.caption(
+                "Dotted lines indicate repeated runs. Same-color runs share runtime "
+                "args; different shapes indicate different runtime args."
+            )
+        else:
+            st.caption(
+                "Click a legend entry to show or hide a run. Hover a point for its "
+                "label, UUID, and important runtime args."
+            )
         if fig is not None:
             _render_performance_plot_data(
                 plot_df,
@@ -12998,6 +13058,23 @@ def main():
                         ):
                             raw_version = url_section_filters.get(version_key)
                             if not raw_version:
+                                continue
+                            resolved_pair = resolve_version_label_pairs(
+                                [
+                                    (
+                                        raw_version,
+                                        url_section_filters.get(
+                                            label_key, DEFAULT_LABEL
+                                        ),
+                                    )
+                                ],
+                                all_version_label_pairs,
+                            )
+                            if resolved_pair:
+                                (
+                                    url_section_filters[version_key],
+                                    url_section_filters[label_key],
+                                ) = resolved_pair[0]
                                 continue
                             canonical_version, inferred_label = split_legacy_version(
                                 raw_version
