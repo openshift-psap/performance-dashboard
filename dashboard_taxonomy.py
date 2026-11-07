@@ -82,8 +82,7 @@ def split_legacy_version(version):
         prefix == "vLLM"
         and match.start() == 0
         and match.group("release") == "0.24.0"
-        and raw_version[match.end() :].casefold()
-        in {"-warmup-rampup", "-rampup"}
+        and raw_version[match.end() :].casefold() in {"-warmup-rampup", "-rampup"}
     ):
         return "vLLM-0.24.0-rampup", DEFAULT_LABEL
 

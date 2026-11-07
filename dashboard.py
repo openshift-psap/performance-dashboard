@@ -13071,9 +13071,10 @@ def main():
                                 all_version_label_pairs,
                             )
                             if resolved_pair:
-                                url_section_filters[version_key], url_section_filters[
-                                    label_key
-                                ] = resolved_pair[0]
+                                (
+                                    url_section_filters[version_key],
+                                    url_section_filters[label_key],
+                                ) = resolved_pair[0]
                                 continue
                             canonical_version, inferred_label = split_legacy_version(
                                 raw_version
