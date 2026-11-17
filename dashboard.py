@@ -2840,13 +2840,15 @@ def render_overview_section(df):
     with header_col:
         st.header("Overview")
     with dropdown_col:
-        st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
-        selected_comparison = st.selectbox(
-            "Select release comparison",
-            comparison_options,
-            key=pair_key,
-            label_visibility="collapsed",
-        )
+        _dropdown_spacer, dropdown_control_col = st.columns([1.2, 1], gap="small")
+        with dropdown_control_col:
+            st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
+            selected_comparison = st.selectbox(
+                "Select release comparison",
+                comparison_options,
+                key=pair_key,
+                label_visibility="collapsed",
+            )
 
     if selected_comparison == custom_label:
         if st.session_state.get(version_1_key) not in available_versions:
@@ -2869,8 +2871,8 @@ def render_overview_section(df):
                 st.session_state[version_1_key] = version_2
                 st.session_state[version_2_key] = version_1
 
-        version_1_col, swap_col, version_2_col = st.columns(
-            [1, 0.06, 1], gap="small", vertical_alignment="bottom"
+        _version_spacer, version_1_col, swap_col, version_2_col = st.columns(
+            [2.5, 0.75, 0.12, 0.75], gap="small", vertical_alignment="bottom"
         )
         with version_1_col:
             selected_version_1 = st.selectbox(
