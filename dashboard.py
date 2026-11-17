@@ -14315,24 +14315,33 @@ def main():
                 baseline_pairs = st.session_state.get(
                     "baseline_version_label_pairs", []
                 )
+                baseline_labels = st.session_state.get("baseline_labels", [])
+                unlabeled_default = [
+                    key
+                    for key, (_, label) in pair_values.items()
+                    if display_label(label) == "—"
+                ]
                 if baseline_pairs:
                     label_default = [
                         key
                         for key, pair in pair_values.items()
                         if pair in baseline_pairs
                     ]
-                else:
-                    baseline_labels = st.session_state.get("baseline_labels", [])
+                elif baseline_labels:
                     label_default = [
                         key
                         for key, pair in pair_values.items()
                         if pair[1] in baseline_labels
                     ]
+                else:
+                    label_default = unlabeled_default
                 previous_pairs = st.session_state.get(label_key)
                 if previous_pairs is not None:
                     label_default = [
                         key for key in previous_pairs if key in pair_options
                     ]
+                    if not label_default and not baseline_pairs and not baseline_labels:
+                        label_default = unlabeled_default
                 st.session_state[label_key] = label_default
                 selected_pair_keys = st.multiselect(
                     "Select Label(s) by Release",
