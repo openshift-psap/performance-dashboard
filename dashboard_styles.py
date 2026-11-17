@@ -1492,6 +1492,22 @@ def get_light_mode_css():
         color: #1a1f36 !important;
     }
 
+    .st-key-overview_custom_swap_versions [data-testid="stButton"],
+    .st-key-overview_custom_swap_versions[data-testid="stButton"] {
+        display: flex !important;
+        width: 100% !important;
+        justify-content: center !important;
+        align-items: center !important;
+    }
+    .st-key-overview_custom_swap_versions button {
+        flex: 0 0 2.5rem !important;
+        width: 2.5rem !important;
+        min-width: 2.5rem !important;
+        max-width: 2.5rem !important;
+        height: 2.5rem !important;
+        padding: 0 !important;
+    }
+
     /* Override buttons - comprehensive targeting */
     .stButton > button {
         background-color: #ffffff !important;
