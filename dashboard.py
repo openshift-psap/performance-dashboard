@@ -366,6 +366,17 @@ def _accel_display(name):
     return ACCELERATOR_DISPLAY_NAMES.get(name, name)
 
 
+def _available_overview_versions(versions):
+    """Return the vLLM and RHAIIS versions available for Overview comparisons."""
+    return sorted(
+        {
+            str(version)
+            for version in versions
+            if str(version).startswith(("vLLM-", "RHAIIS-"))
+        }
+    )
+
+
 def read_s3_object(bucket: str, key: str, region: str = "us-east-1") -> bytes:
     """Read an S3 object using configured, IAM, or anonymous access."""
     try:
@@ -1039,12 +1050,17 @@ def _model_family(model_name):
 
 
 def _compute_overview_data(
-    df, current=None, previous=None, upstream=None, additional=None
+    df,
+    current=None,
+    previous=None,
+    upstream=OVERVIEW_UPSTREAM,
+    additional=None,
+    parity_current=None,
 ):
     """Compute overview metrics for a given release pair."""
     CURRENT = current or OVERVIEW_CURRENT
     PREVIOUS = previous or OVERVIEW_PREVIOUS
-    VLLM = upstream or OVERVIEW_UPSTREAM
+    VLLM = upstream
     if additional is None:
         additional = OVERVIEW_ADDITIONAL
 
@@ -1087,7 +1103,8 @@ def _compute_overview_data(
 
     df_curr = df[df["version"] == CURRENT].copy()
     df_prev = df[df["version"] == PREVIOUS].copy()
-    df_vllm = df[df["version"] == VLLM].copy() if VLLM else pd.DataFrame()
+    df_parity = df[df["version"] == (parity_current or CURRENT)].copy()
+    df_vllm = df[df["version"] == VLLM].copy() if VLLM else df.iloc[0:0].copy()
 
     def _combos(d):
         return set(
@@ -1308,7 +1325,7 @@ def _compute_overview_data(
         }
 
     # --- vLLM comparison on supported accelerators with matching data ---
-    common_vllm = sorted(_combos(df_curr) & _combos(df_vllm))
+    common_vllm = sorted(_combos(df_parity) & _combos(df_vllm))
     vllm_results = []
     tput_cfg = metrics_cfg["Throughput"]
     ttft_cfg = metrics_cfg["TTFT P95"]
@@ -1317,15 +1334,15 @@ def _compute_overview_data(
         if accel not in OVERVIEW_PARITY_ACCELERATORS:
             continue
         mask_c = (
-            (df_curr["model"] == model)
-            & (df_curr["TP"] == tp)
-            & (df_curr["accelerator"] == accel)
-            & (df_curr["profile"] == profile)
-            & (df_curr["custom_isl_osl"] == cisl_osl)
-            & (df_curr["dataset"] == dset)
-            & (df_curr["spec_decoding"] == sdec)
-            & (df_curr["prefix_caching"] == pcache)
-            & (df_curr["turns"] == turns)
+            (df_parity["model"] == model)
+            & (df_parity["TP"] == tp)
+            & (df_parity["accelerator"] == accel)
+            & (df_parity["profile"] == profile)
+            & (df_parity["custom_isl_osl"] == cisl_osl)
+            & (df_parity["dataset"] == dset)
+            & (df_parity["spec_decoding"] == sdec)
+            & (df_parity["prefix_caching"] == pcache)
+            & (df_parity["turns"] == turns)
         )
         mask_v = (
             (df_vllm["model"] == model)
@@ -1338,7 +1355,7 @@ def _compute_overview_data(
             & (df_vllm["prefix_caching"] == pcache)
             & (df_vllm["turns"] == turns)
         )
-        cd, vd = df_curr[mask_c], df_vllm[mask_v]
+        cd, vd = df_parity[mask_c], df_vllm[mask_v]
         all_conc = set(cd["intended concurrency"].dropna().unique()) | set(
             vd["intended concurrency"].dropna().unique()
         )
@@ -2778,37 +2795,162 @@ def render_competitive_analysis_section(df):
 @st.fragment
 def render_overview_section(df):
     """Render the Overview page — executive summary of the latest release."""
-    header_col, _spacer, dropdown_col = st.columns([2, 5, 3])
+    available_versions = _available_overview_versions(df["version"].dropna().unique())
+    if len(available_versions) < 2:
+        st.header("Overview")
+        st.warning("Need at least two vLLM or RHAIIS versions to compare.")
+        return
+
+    version_1_key = "overview_baseline_version"
+    version_2_key = "overview_compare_version"
+    default_pair = next(
+        (
+            pair
+            for pair in OVERVIEW_RELEASE_PAIRS
+            if pair["current"] in available_versions
+            and pair["previous"] in available_versions
+        ),
+        None,
+    )
+    default_version_1, default_version_2 = (
+        (default_pair["current"], default_pair["previous"])
+        if default_pair
+        else available_versions[:2]
+    )
+
+    pair_labels = [
+        f"{pair['current']} vs {pair['previous']}" for pair in OVERVIEW_RELEASE_PAIRS
+    ]
+    custom_label = "Custom"
+    comparison_options = [*pair_labels, custom_label]
+    pair_key = "overview_release_pair"
+    legacy_custom_pair = (
+        st.session_state.get(version_1_key) in available_versions
+        and st.session_state.get(version_2_key) in available_versions
+        and st.session_state.get(version_1_key) != st.session_state.get(version_2_key)
+    )
+    if st.session_state.get(pair_key) not in comparison_options:
+        st.session_state[pair_key] = (
+            custom_label
+            if legacy_custom_pair
+            else (pair_labels[0] if pair_labels else custom_label)
+        )
+
+    header_col, _spacer, dropdown_col = st.columns([2, 4.8, 3.2])
     with header_col:
         st.header("Overview")
     with dropdown_col:
         st.markdown("<div style='height: 1.1rem'></div>", unsafe_allow_html=True)
-        pair_labels = [
-            f"{p['current']} vs {p['previous']}" for p in OVERVIEW_RELEASE_PAIRS
-        ]
-        selected_label = st.selectbox(
+        selected_comparison = st.selectbox(
             "Select release comparison",
-            pair_labels,
-            index=0,
-            key="overview_release_pair",
+            comparison_options,
+            key=pair_key,
             label_visibility="collapsed",
         )
-    selected_pair = OVERVIEW_RELEASE_PAIRS[pair_labels.index(selected_label)]
-    ov_current = selected_pair["current"]
-    ov_previous = selected_pair["previous"]
-    ov_upstream = selected_pair.get("upstream")
-    ov_additional = selected_pair.get("additional", [])
-    # True when both sides are upstream vLLM releases (not RHAIIS vs RHAIIS)
-    is_upstream_comparison = ov_current.startswith("vLLM-") and ov_previous.startswith(
-        "vLLM-"
-    )
+
+    if selected_comparison == custom_label:
+        if st.session_state.get(version_1_key) not in available_versions:
+            st.session_state[version_1_key] = default_version_1
+        selected_1 = st.session_state[version_1_key]
+        version_2_options = [
+            version for version in available_versions if version != selected_1
+        ]
+        if st.session_state.get(version_2_key) not in version_2_options:
+            st.session_state[version_2_key] = (
+                default_version_2
+                if default_version_2 in version_2_options
+                else version_2_options[0]
+            )
+
+        def _swap_overview_versions():
+            version_1 = st.session_state.get(version_1_key)
+            version_2 = st.session_state.get(version_2_key)
+            if version_1 and version_2:
+                st.session_state[version_1_key] = version_2
+                st.session_state[version_2_key] = version_1
+
+        _version_spacer, version_1_col, swap_col, version_2_col = st.columns(
+            [1.7, 1.2, 0.12, 1.2], gap="small", vertical_alignment="bottom"
+        )
+        with version_1_col:
+            selected_version_1 = st.selectbox(
+                "Version 1",
+                options=available_versions,
+                key=version_1_key,
+            )
+        with swap_col:
+            st.button(
+                "⇄",
+                key="overview_custom_swap_versions",
+                help="Swap versions",
+                on_click=_swap_overview_versions,
+                width="content",
+            )
+        with version_2_col:
+            selected_version_2 = st.selectbox(
+                "Version 2",
+                options=version_2_options,
+                key=version_2_key,
+            )
+
+        with contextlib.suppress(Exception):
+            st.query_params.update(
+                {
+                    "ov_pair": custom_label,
+                    "ov_baseline": selected_version_1,
+                    "ov_compare": selected_version_2,
+                }
+            )
+
+        version_1_is_vllm = selected_version_1.startswith("vLLM-")
+        version_2_is_vllm = selected_version_2.startswith("vLLM-")
+        is_vllm_pair = version_1_is_vllm and version_2_is_vllm
+        is_cross_family_pair = version_1_is_vllm != version_2_is_vllm
+        ov_current, ov_previous = selected_version_1, selected_version_2
+        ov_parity_current = ov_current
+        if is_cross_family_pair and version_1_is_vllm:
+            ov_parity_current = selected_version_2
+
+        release_info = next(
+            (
+                pair
+                for pair in OVERVIEW_RELEASE_PAIRS
+                if pair["current"] == ov_parity_current
+            ),
+            {},
+        )
+        ov_additional = (
+            release_info.get("additional", []) if not version_1_is_vllm else []
+        )
+        if is_cross_family_pair:
+            ov_upstream = (
+                selected_version_1 if version_1_is_vllm else selected_version_2
+            )
+        elif is_vllm_pair:
+            ov_upstream = None
+        else:
+            ov_upstream = release_info.get("upstream")
+    else:
+        selected_pair = OVERVIEW_RELEASE_PAIRS[pair_labels.index(selected_comparison)]
+        ov_current = selected_pair["current"]
+        ov_previous = selected_pair["previous"]
+        ov_upstream = selected_pair.get("upstream")
+        ov_additional = selected_pair.get("additional", [])
+        ov_parity_current = ov_current
+        is_vllm_pair = ov_current.startswith("vLLM-") and ov_previous.startswith(
+            "vLLM-"
+        )
+
+        with contextlib.suppress(Exception):
+            st.query_params.update({"ov_pair": selected_comparison})
+
     overview_versions = [ov_current, ov_previous, ov_upstream, *ov_additional]
     _render_methodology_note(
         df.loc[df["version"].isin(overview_versions), "version"].unique()
     )
 
     st.markdown(
-        f"Executive summary comparing **{ov_current}** against **{ov_previous}** (previous release)."
+        f"Executive summary comparing **{ov_current}** against **{ov_previous}**."
     )
 
     data = _compute_overview_data(
@@ -2817,6 +2959,7 @@ def render_overview_section(df):
         previous=ov_previous,
         upstream=ov_upstream,
         additional=ov_additional,
+        parity_current=ov_parity_current,
     )
 
     # ── Row 1: Top-level KPI cards ──────────────────────────────────
@@ -2974,12 +3117,11 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
     st.markdown("---")
 
     # ── vLLM Parity Scorecard ───────────────────────────────────────
-    # Not shown for upstream vLLM-vs-vLLM comparisons (no RHAIIS baseline to compare against)
-    if is_upstream_comparison:
+    if is_vllm_pair:
         pass
     elif not ov_upstream:
         st.markdown("### Upstream vLLM Parity")
-        st.info("Upstream vLLM parity data is not available for this release pair.")
+        st.info(f"No upstream vLLM reference is configured for {ov_parity_current}.")
         st.markdown("---")
     else:
         st.markdown("### Upstream vLLM Parity")
@@ -2988,8 +3130,8 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
             _accel_display(accelerator) for accelerator in OVERVIEW_PARITY_ACCELERATORS
         )
         st.caption(
-            f"{ov_current} builds on vLLM {_vllm_ver} — the goal is matching or exceeding upstream "
-            f"performance. Comparisons are shown separately for {_parity_accelerator_names} "
+            f"Comparing {ov_parity_current} against {ov_upstream}. The goal is matching or exceeding "
+            f"the selected vLLM baseline. Comparisons are shown separately for {_parity_accelerator_names} "
             "when matching benchmark configurations are available. "
             f'"At parity" means within ±{P50_THRESHOLD_PCT:.0f} % for throughput and ±{P95_THRESHOLD_PCT:.0f} % for TTFT/ITL P95.'
         )
@@ -3071,7 +3213,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 & (df["spec_decoding"] == r["spec_decoding"])
                 & (df["prefix_caching"] == r["prefix_caching"])
             )
-            df_v1 = df[mask_common & (df["version"] == ov_current)]
+            df_v1 = df[mask_common & (df["version"] == ov_parity_current)]
             df_v2 = df[mask_common & (df["version"] == ov_upstream)]
 
             if df_v1.empty or df_v2.empty:
@@ -3098,15 +3240,18 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 if pct is not None:
                     sign = "+" if pct > 0 else ""
                     status = "🟡" if similar else ("🟢" if better else "🔴")
-                    cell_text = f"{status} {ov_current} ({sign}{pct:.1f}%)"
+                    cell_text = f"{status} {ov_parity_current} ({sign}{pct:.1f}%)"
                 else:
                     cell_text = "N/A"
                 summary_rows.append(
-                    {"Metric": mname, f"{ov_current} vs {ov_upstream}": cell_text}
+                    {
+                        "Metric": mname,
+                        f"{ov_parity_current} vs {ov_upstream}": cell_text,
+                    }
                 )
 
             st.markdown(
-                f"**Comparing:** {ov_current} vs {ov_upstream} &nbsp;|&nbsp; "
+                f"**Comparing:** {ov_parity_current} vs {ov_upstream} &nbsp;|&nbsp; "
                 f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
             )
             st.dataframe(
@@ -3115,8 +3260,8 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 use_container_width=True,
                 column_config={
                     "Metric": st.column_config.TextColumn("Metric"),
-                    f"{ov_current} vs {ov_upstream}": st.column_config.TextColumn(
-                        f"{ov_current} vs {ov_upstream}",
+                    f"{ov_parity_current} vs {ov_upstream}": st.column_config.TextColumn(
+                        f"{ov_parity_current} vs {ov_upstream}",
                     ),
                 },
             )
@@ -3142,7 +3287,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
 
                 st.markdown(f"#### {selected_metric} vs Concurrency")
                 st.markdown(
-                    f"**{ov_current}** vs **{ov_upstream}** &nbsp;|&nbsp; "
+                    f"**{ov_parity_current}** vs **{ov_upstream}** &nbsp;|&nbsp; "
                     f"**{_accel_display(r['accelerator'])}** &nbsp;|&nbsp; ISL/OSL: **{profile_display}**"
                 )
 
@@ -3164,11 +3309,11 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                         x=x_vals,
                         y=v1_vals,
                         mode="lines+markers",
-                        name=f"{short_name} ({ov_current})",
+                        name=f"{short_name} ({ov_parity_current})",
                         line={"color": "#EF553B", "width": 2.5},
                         marker={"size": 8},
                         hovertemplate=(
-                            f"<b>{short_name}</b> — {ov_current}<br>"
+                            f"<b>{short_name}</b> — {ov_parity_current}<br>"
                             "Concurrency: %{x}<br>"
                             "Value: %{y:,.2f}<extra></extra>"
                         ),
@@ -3229,7 +3374,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 st.caption(
                     "💡 **Tip:** Click a legend entry to toggle it. "
                     "Double-click to isolate a single trace. "
-                    f"Warm colors (reds/oranges) = **{ov_current}**, "
+                    f"Warm colors (reds/oranges) = **{ov_parity_current}**, "
                     f"cool colors (blues/greens) = **{ov_upstream}**."
                 )
                 conc_str = ", ".join(str(int(c)) for c in sorted(conc_for_geomean))
@@ -3315,7 +3460,7 @@ Changes within ±{NEUTRAL_THRESHOLD_PCT:.0f} % are not counted as losses.<br><br
                 )
                 st.markdown(
                     f"""<div class="vllm-scorecard vllm-hue-{hue}">
-<div class="vllm-scorecard-title">{ov_current} vs vLLM {_vllm_ver} ({_accel_display(parity_accel)})</div>
+<div class="vllm-scorecard-title">{ov_parity_current} vs vLLM {_vllm_ver} ({_accel_display(parity_accel)})</div>
 <div class="vllm-stat-row">
 <div class="vllm-stat">
 <div class="vllm-stat-label">At or Above Parity</div>
@@ -3405,7 +3550,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     # ── Release Health by Model Family ──────────────────────────────
     st.markdown("### Release Health by Model Family")
     st.caption(
-        "Per-family rollup comparing the current release to the previous one. "
+        f"Per-family rollup comparing **{ov_current}** against **{ov_previous}**. "
         "**Avg Tput** is the mean throughput change across all combinations "
         "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
@@ -3512,7 +3657,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     # ── Per-Accelerator Health Cards ────────────────────────────────
     st.markdown("### Performance by Accelerator")
     st.caption(
-        "Per-accelerator rollup comparing the current release to the previous one. "
+        f"Per-accelerator rollup comparing **{ov_current}** against **{ov_previous}**. "
         "**Avg Tput** is the mean throughput change across all combinations "
         "(model x accelerator x profile). "
         "**Win Rate** is the percentage of combinations where throughput improved. "
@@ -3622,7 +3767,8 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
         unsafe_allow_html=True,
     )
     st.caption(
-        "% delta vs. previous release (geometric mean across concurrency levels). "
+        f"% delta: **{ov_current}** vs. **{ov_previous}** "
+        "(geometric mean across concurrency levels). "
         f"P50 metrics: ±{P50_THRESHOLD_PCT:.0f} % · P95 metrics: ±{P95_THRESHOLD_PCT:.0f} %."
     )
 
@@ -4067,8 +4213,7 @@ Per-model delta (geometric mean, {_accel_display(parity_accel)}):
     st.markdown("---")
 
     # ── New in This Release ─────────────────────────────────────────
-    # Not shown for upstream vLLM-vs-vLLM comparisons ("new in release" is RHAIIS-specific)
-    if is_upstream_comparison:
+    if is_vllm_pair:
         return
     st.markdown("### New in This Release")
     items = ""
@@ -5072,6 +5217,10 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
         customizable_traces = sorted(
             plot_df.loc[plot_df["line_style"].eq("dot"), "trace_label"].unique()
         )
+        duplicate_run_labels = {
+            key: plot_df.loc[plot_df["trace_label"] == key, "legend_label"].iloc[0]
+            for key in customizable_traces
+        }
         saved_colors = {
             key: value
             for key, value in st.session_state.get(
@@ -5199,7 +5348,11 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
             fig.update_layout(
                 hovermode="closest",
                 legend_title_text=f"Run Details ({_legend_parts})",
-                legend={"font": {"size": 14}, "itemwidth": 42},
+                legend={
+                    "font": {"size": 14},
+                    "itemwidth": 42,
+                    "groupclick": "toggleitem",
+                },
                 title={
                     "font": {"size": 18},
                     "x": 0.02,
@@ -5237,7 +5390,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                 selection_mode=("points", "box", "lasso"),
             )
         st.caption(
-            "Click legend entries to show or hide a series. Dotted runs with the same color are duplicate runs with identical runtime args that differ only by UUID. Dotted runs with different shapes have different runtime args. Hover a point for its label, UUID, and important runtime args."
+            "Dotted runs with the same color have identical runtime args and differ only by UUID. Different shapes indicate different runtime args. Hover a point for its label, UUID, and important runtime args."
         )
         if fig is not None:
             _render_performance_plot_data(
@@ -5296,10 +5449,7 @@ def render_performance_plots_section(filtered_df, per_turn_df=None, use_expander
                     custom_colors[selected_series] = selected_color
 
                 trace_labels = {
-                    key: plot_df.loc[
-                        plot_df["trace_label"] == key, "legend_label"
-                    ].iloc[0]
-                    for key in customizable_traces
+                    key: duplicate_run_labels[key] for key in customizable_traces
                 }
                 st.session_state["performance_appearance_run"] = sync_selected_option(
                     st.session_state.get("performance_appearance_run"),
@@ -6906,12 +7056,14 @@ def render_performance_trends_section(df: pd.DataFrame, use_expander=True) -> No
 @st.fragment
 def render_compare_versions_summary_section(df, use_expander=True):
     """⚖️ Compare Versions Section - Generate a summary table comparing two versions across multiple metrics."""
+    key_prefix = "compare_summary"
+    expanded_key = "compare_versions_summary_expanded"
     if use_expander:
-        if "compare_versions_summary_expanded" not in st.session_state:
-            st.session_state.compare_versions_summary_expanded = False
+        if expanded_key not in st.session_state:
+            st.session_state[expanded_key] = False
         ctx = st.expander(
             "⚖️ Compare Versions",
-            expanded=st.session_state.compare_versions_summary_expanded,
+            expanded=st.session_state[expanded_key],
         )
     else:
         ctx = contextlib.nullcontext()
@@ -6937,8 +7089,14 @@ def render_compare_versions_summary_section(df, use_expander=True):
         col1, swap_col, col2, col3, col4 = st.columns([4, 0.4, 4, 4, 4], gap="small")
 
         # Set default versions
+        version_1_options = available_versions
         default_v1 = OVERVIEW_CURRENT
         default_v2 = OVERVIEW_PREVIOUS
+        version_1_key = f"{key_prefix}_v1"
+        version_2_key = f"{key_prefix}_v2"
+        version_1_label_key = f"{key_prefix}_v1_label"
+        version_2_label_key = f"{key_prefix}_v2_label"
+        aic_mode_key = "compare_aic_mode"
 
         def _compare_label_options(version):
             if "label" not in df.columns:
@@ -6964,45 +7122,45 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         # Find index for default version 1
         v1_default_index = 0
-        if default_v1 in available_versions:
-            v1_default_index = available_versions.index(default_v1)
+        if default_v1 in version_1_options:
+            v1_default_index = version_1_options.index(default_v1)
 
         with col1:
             version_1 = st.selectbox(
                 "Select Version 1 (Baseline)",
-                options=available_versions,
+                options=version_1_options,
                 index=v1_default_index,
-                key="compare_summary_v1",
+                key=version_1_key,
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
             )
-            label_1_options = _sync_compare_label("compare_summary_v1_label", version_1)
+            label_1_options = _sync_compare_label(version_1_label_key, version_1)
             compare_label_1 = st.selectbox(
                 "Select Label 1 (Baseline)",
                 options=label_1_options,
                 format_func=display_label,
-                key="compare_summary_v1_label",
+                key=version_1_label_key,
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
             )
             aic_mode = st.toggle(
                 "AIC Mode",
-                key="compare_aic_mode",
+                key=aic_mode_key,
                 help="Enable for AIC comparisons. Swaps metrics to those available in AIC data (e.g. TTFT/TPOT Median instead of P95, removes Total Throughput & ITL P95).",
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
             )
 
         def _swap_versions():
-            v1 = st.session_state.get("compare_summary_v1")
-            v2 = st.session_state.get("compare_summary_v2")
-            v1_label = st.session_state.get("compare_summary_v1_label")
-            v2_label = st.session_state.get("compare_summary_v2_label")
+            v1 = st.session_state.get(version_1_key)
+            v2 = st.session_state.get(version_2_key)
+            v1_label = st.session_state.get(version_1_label_key)
+            v2_label = st.session_state.get(version_2_label_key)
             if v1 and v2:
-                st.session_state["compare_summary_v1"] = v2
-                st.session_state["compare_summary_v2"] = v1
-                st.session_state["compare_summary_v1_label"] = v2_label
-                st.session_state["compare_summary_v2_label"] = v1_label
+                st.session_state[version_1_key] = v2
+                st.session_state[version_2_key] = v1
+                st.session_state[version_1_label_key] = v2_label
+                st.session_state[version_2_label_key] = v1_label
 
         with swap_col:
             st.markdown("<div style='height: 1.65rem'></div>", unsafe_allow_html=True)
@@ -7026,25 +7184,23 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     "Select Version 2 (Comparison)",
                     options=version_2_options,
                     index=v2_default_index if version_2_options else None,
-                    key="compare_summary_v2",
+                    key=version_2_key,
                     on_change=keep_expander_open,
-                    args=("compare_versions_summary_expanded",),
+                    args=(expanded_key,),
                 )
                 if version_2_options
                 else None
             )
             compare_label_2 = DEFAULT_LABEL
             if version_2:
-                label_2_options = _sync_compare_label(
-                    "compare_summary_v2_label", version_2
-                )
+                label_2_options = _sync_compare_label(version_2_label_key, version_2)
                 compare_label_2 = st.selectbox(
                     "Select Label 2 (Comparison)",
                     options=label_2_options,
                     format_func=display_label,
-                    key="compare_summary_v2_label",
+                    key=version_2_label_key,
                     on_change=keep_expander_open,
-                    args=("compare_versions_summary_expanded",),
+                    args=(expanded_key,),
                 )
 
         version_1_rows = df[df["version"] == version_1]
@@ -7065,14 +7221,19 @@ def render_compare_versions_summary_section(df, use_expander=True):
             accel_default_index = 0
             if "H200" in available_accelerators:
                 accel_default_index = available_accelerators.index("H200")
+            accelerator_key = f"{key_prefix}_accelerator"
+            if st.session_state.get(accelerator_key) not in available_accelerators:
+                st.session_state[accelerator_key] = available_accelerators[
+                    accel_default_index
+                ]
 
             selected_accelerator = st.selectbox(
                 "Select GPU",
                 options=available_accelerators,
                 index=accel_default_index,
-                key="compare_summary_accelerator",
+                key=accelerator_key,
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
             )
 
         version_1_accelerator_rows = version_1_rows[
@@ -7093,16 +7254,15 @@ def render_compare_versions_summary_section(df, use_expander=True):
             return
 
         with col4:
-            # Set default profile to "Profile A: Balanced (1k/1k)"
             default_profile = "Profile A: Balanced (1k/1k)"
-            profile_default_index = 0
-            if default_profile in available_profiles:
-                profile_default_index = available_profiles.index(default_profile)
-            if (
-                st.session_state.get("compare_summary_profile")
-                not in available_profiles
-            ):
-                st.session_state["compare_summary_profile"] = available_profiles[
+            profile_key = f"{key_prefix}_profile"
+            profile_default_index = (
+                available_profiles.index(default_profile)
+                if default_profile in available_profiles
+                else 0
+            )
+            if st.session_state.get(profile_key) not in available_profiles:
+                st.session_state[profile_key] = available_profiles[
                     profile_default_index
                 ]
 
@@ -7111,9 +7271,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 options=available_profiles,
                 index=profile_default_index,
                 format_func=_profile_option_label,
-                key="compare_summary_profile",
+                key=profile_key,
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
             )
             _render_profile_guide_popover()
 
@@ -7128,64 +7288,135 @@ def render_compare_versions_summary_section(df, use_expander=True):
         compare_mt_prefix_tokens = None
         compare_mt_prefix_count = None
         if selected_profile == "Multi-turn":
-            mt_temp = df[
-                (df["profile"] == "Multi-turn")
-                & (df["accelerator"].isin(available_accelerators))
+            mt_v1 = version_1_rows[
+                (version_1_rows["profile"] == "Multi-turn")
+                & (version_1_rows["accelerator"] == selected_accelerator)
             ]
-            mt_pairs = sorted(p for p in mt_temp["multiturn_isl_osl"].unique() if p)
+            mt_v2 = version_2_rows[
+                (version_2_rows["profile"] == "Multi-turn")
+                & (version_2_rows["accelerator"] == selected_accelerator)
+            ]
+            mt_pairs = sorted(
+                set(mt_v1["multiturn_isl_osl"].dropna().unique())
+                & set(mt_v2["multiturn_isl_osl"].dropna().unique())
+            )
+            mt_pairs = [pair for pair in mt_pairs if pair]
             if mt_pairs:
                 mt_default_index = (
                     mt_pairs.index("128/128") if "128/128" in mt_pairs else 0
                 )
+                mt_pair_key = f"{key_prefix}_mt_isl_osl"
+                if st.session_state.get(mt_pair_key) not in mt_pairs:
+                    st.session_state[mt_pair_key] = mt_pairs[mt_default_index]
                 compare_mt_isl_osl = st.selectbox(
                     "Select ISL/OSL",
                     options=mt_pairs,
                     index=mt_default_index,
                     format_func=_multiturn_pair_label,
-                    key="compare_summary_mt_isl_osl",
+                    key=mt_pair_key,
                     on_change=keep_expander_open,
-                    args=("compare_versions_summary_expanded",),
+                    args=(expanded_key,),
                 )
-                mt_scoped = mt_temp[mt_temp["multiturn_isl_osl"] == compare_mt_isl_osl]
-                cmp_mt_turns_opts = sorted(mt_scoped["turns"].unique().tolist())
+                mt_v1_scoped = mt_v1[mt_v1["multiturn_isl_osl"] == compare_mt_isl_osl]
+                mt_v2_scoped = mt_v2[mt_v2["multiturn_isl_osl"] == compare_mt_isl_osl]
+                mt_scope = json.dumps(
+                    [
+                        version_1,
+                        compare_label_1,
+                        version_2,
+                        compare_label_2,
+                        selected_accelerator,
+                        compare_mt_isl_osl,
+                    ],
+                    separators=(",", ":"),
+                )
+                cmp_mt_turns_opts = sorted(
+                    set(mt_v1_scoped["turns"].unique())
+                    & set(mt_v2_scoped["turns"].unique())
+                )
                 if cmp_mt_turns_opts:
+                    mt_turns_key = f"{key_prefix}_mt_turns_{mt_scope}"
                     compare_mt_turns = st.multiselect(
                         "Turns",
                         cmp_mt_turns_opts,
-                        default=cmp_mt_turns_opts,
-                        key="compare_summary_mt_turns",
+                        default=[5] if 5 in cmp_mt_turns_opts else cmp_mt_turns_opts,
+                        key=mt_turns_key,
                         on_change=keep_expander_open,
-                        args=("compare_versions_summary_expanded",),
+                        args=(expanded_key,),
                     )
-                pt_scoped = mt_scoped
-                if compare_mt_turns is not None:
+                pt_scoped = pd.concat([mt_v1_scoped, mt_v2_scoped], ignore_index=True)
+                if cmp_mt_turns_opts and compare_mt_turns is not None:
                     pt_scoped = pt_scoped[pt_scoped["turns"].isin(compare_mt_turns)]
+                elif not cmp_mt_turns_opts:
+                    pt_scoped = pt_scoped.iloc[0:0]
                 cmp_pt_opts = sorted(
-                    v for v in pt_scoped["prefix_tokens"].unique() if v
+                    set(
+                        pt_scoped.loc[
+                            pt_scoped["version"] == version_1, "prefix_tokens"
+                        ]
+                        .dropna()
+                        .unique()
+                    )
+                    & set(
+                        pt_scoped.loc[
+                            pt_scoped["version"] == version_2, "prefix_tokens"
+                        ]
+                        .dropna()
+                        .unique()
+                    )
                 )
+                cmp_pt_opts = [value for value in cmp_pt_opts if value]
                 if cmp_pt_opts:
+                    mt_prefix_scope = json.dumps(
+                        [mt_scope, compare_mt_turns], default=int, separators=(",", ":")
+                    )
+                    mt_prefix_tokens_key = (
+                        f"{key_prefix}_mt_prefix_tokens_{mt_prefix_scope}"
+                    )
                     compare_mt_prefix_tokens = st.multiselect(
                         "Prefix Tokens",
                         cmp_pt_opts,
                         default=cmp_pt_opts,
-                        key="compare_summary_mt_prefix_tokens",
+                        key=mt_prefix_tokens_key,
                         on_change=keep_expander_open,
-                        args=("compare_versions_summary_expanded",),
+                        args=(expanded_key,),
                     )
                 pc_scoped = pt_scoped
                 if compare_mt_prefix_tokens is not None:
                     pc_scoped = pc_scoped[
                         pc_scoped["prefix_tokens"].isin(compare_mt_prefix_tokens)
                     ]
-                cmp_pc_opts = sorted(v for v in pc_scoped["prefix_count"].unique() if v)
+                elif not cmp_pt_opts:
+                    pc_scoped = pc_scoped.iloc[0:0]
+                cmp_pc_opts = sorted(
+                    set(
+                        pc_scoped.loc[pc_scoped["version"] == version_1, "prefix_count"]
+                        .dropna()
+                        .unique()
+                    )
+                    & set(
+                        pc_scoped.loc[pc_scoped["version"] == version_2, "prefix_count"]
+                        .dropna()
+                        .unique()
+                    )
+                )
+                cmp_pc_opts = [value for value in cmp_pc_opts if value]
                 if cmp_pc_opts:
+                    mt_prefix_count_scope = json.dumps(
+                        [mt_prefix_scope, compare_mt_prefix_tokens],
+                        default=int,
+                        separators=(",", ":"),
+                    )
+                    mt_prefix_count_key = (
+                        f"{key_prefix}_mt_prefix_count_{mt_prefix_count_scope}"
+                    )
                     compare_mt_prefix_count = st.multiselect(
                         "Prefix Count",
                         cmp_pc_opts,
                         default=cmp_pc_opts,
-                        key="compare_summary_mt_prefix_count",
+                        key=mt_prefix_count_key,
                         on_change=keep_expander_open,
-                        args=("compare_versions_summary_expanded",),
+                        args=(expanded_key,),
                     )
         if selected_profile == "Custom ISL/OSL" and "custom_isl_osl" in df.columns:
             custom_temp = df[
@@ -7199,9 +7430,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     "Select Custom ISL/OSL Pair",
                     options=custom_pairs,
                     format_func=format_custom_isl_osl,
-                    key="compare_summary_custom_isl_osl",
+                    key=f"{key_prefix}_custom_isl_osl",
                     on_change=keep_expander_open,
-                    args=("compare_versions_summary_expanded",),
+                    args=(expanded_key,),
                 )
 
                 if selected_custom_pair == "0/0":
@@ -7211,9 +7442,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         compare_dataset_filter = st.selectbox(
                             "Select Dataset",
                             cmp_datasets,
-                            key="compare_summary_dataset",
+                            key=f"{key_prefix}_dataset",
                             on_change=keep_expander_open,
-                            args=("compare_versions_summary_expanded",),
+                            args=(expanded_key,),
                         )
                         spec_temp = real_temp[
                             real_temp["dataset"] == compare_dataset_filter
@@ -7229,9 +7460,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                                 cmp_spec_options,
                                 default=cmp_spec_options,
                                 format_func=lambda x: x if x else "None (Baseline)",
-                                key="compare_summary_spec_decoding",
+                                key=f"{key_prefix}_spec_decoding",
                                 on_change=keep_expander_open,
-                                args=("compare_versions_summary_expanded",),
+                                args=(expanded_key,),
                             )
 
                         # Prefix caching filter — scoped to dataset + spec_decoding
@@ -7252,9 +7483,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                                 "Prefix Caching",
                                 cmp_pc_options,
                                 default=cmp_pc_options,
-                                key="compare_summary_prefix_caching",
+                                key=f"{key_prefix}_prefix_caching",
                                 on_change=keep_expander_open,
-                                args=("compare_versions_summary_expanded",),
+                                args=(expanded_key,),
                             )
 
                         # Turns filter — scoped to dataset + spec_decoding + prefix_caching
@@ -7282,9 +7513,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
                                 cmp_turns_options,
                                 default=cmp_turns_options,
                                 format_func=lambda x: str(x),
-                                key="compare_summary_turns",
+                                key=f"{key_prefix}_turns",
                                 on_change=keep_expander_open,
-                                args=("compare_versions_summary_expanded",),
+                                args=(expanded_key,),
                             )
 
         if not version_2:
@@ -7531,7 +7762,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if all_common_concurrencies_sorted:
             # Key includes filter selections so the widget resets when filters change
             conc_key = (
-                f"compare_summary_conc_{version_1}_{compare_label_1}_{version_2}_"
+                f"{key_prefix}_conc_{version_1}_{compare_label_1}_{version_2}_"
                 f"{compare_label_2}_{selected_accelerator}_{selected_profile}"
             )
             default_concurrencies = [
@@ -7543,11 +7774,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 default=default_concurrencies or all_common_concurrencies_sorted,
                 key=conc_key,
                 on_change=keep_expander_open,
-                args=("compare_versions_summary_expanded",),
+                args=(expanded_key,),
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both versions are shown. "
-                    "Concurrency 1 is excluded by default (not representative of production workloads). "
+                    "Concurrency 1 is excluded by default when other common levels "
+                    "are available. "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -7558,8 +7790,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
                 f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
-                f"(C=1 excluded by default — not representative of production workloads). "
-                f"Peak throughput uses all common concurrency levels."
+                "(C=1 excluded by default when other common levels are available). "
+                "Filtered data and peak throughput include all common concurrency levels."
             )
         else:
             selected_conc_set = set()
@@ -8102,11 +8334,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     )
                     if st.button(
                         f"📊 {short}",
-                        key=f"cmp_btn_{i}",
+                        key=f"{key_prefix}_metric_btn_{i}",
                         use_container_width=True,
                         type="primary",
                     ):
-                        st.session_state.compare_versions_summary_expanded = True
+                        st.session_state[expanded_key] = True
                         _show_metric_dialog(m_name)
 
             st.markdown("")
@@ -8195,12 +8427,15 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
             # Show only source rows represented by the model/config pairs in the
             # comparison table, using the same latest-run slices as its metrics.
+            filtered_data_concurrencies = selected_conc_set | (
+                {1} if 1 in all_common_concurrencies_sorted else set()
+            )
             filtered_data = build_compare_filtered_rows(
                 df_v1,
                 df_v2,
                 comparison_pairs,
                 _slice_by_config,
-                selected_conc_set,
+                filtered_data_concurrencies,
                 label_1=compare_label_1,
                 label_2=compare_label_2,
             )
@@ -8288,6 +8523,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.caption(
                 f"{len(filtered_data):,} rows match the selected Compare Versions filters."
             )
+            if 1 in filtered_data_concurrencies and 1 not in selected_conc_set:
+                st.caption(
+                    "Concurrency 1 rows are included in this table when available; "
+                    "they are excluded from the geometric mean unless selected."
+                )
             st.dataframe(
                 filtered_data,
                 use_container_width=True,
@@ -8308,26 +8548,26 @@ def render_compare_versions_summary_section(df, use_expander=True):
         # Sync Compare Versions filters to URL (runs inside @st.fragment)
         _cv_url_params = {}
         _cv_keys = {
-            "cv_v1": "compare_summary_v1",
-            "cv_v1_label": "compare_summary_v1_label",
-            "cv_v2": "compare_summary_v2",
-            "cv_v2_label": "compare_summary_v2_label",
-            "cv_gpu": "compare_summary_accelerator",
-            "cv_profile": "compare_summary_profile",
+            "cv_v1": version_1_key,
+            "cv_v1_label": version_1_label_key,
+            "cv_v2": version_2_key,
+            "cv_v2_label": version_2_label_key,
+            "cv_gpu": accelerator_key,
+            "cv_profile": profile_key,
         }
         for url_key, ss_key in _cv_keys.items():
             val = st.session_state.get(ss_key)
             if val is not None:
                 _cv_url_params[url_key] = str(val)
-        cv_v1 = st.session_state.get("compare_summary_v1")
-        cv_v1_label = st.session_state.get("compare_summary_v1_label")
-        cv_v2 = st.session_state.get("compare_summary_v2")
-        cv_v2_label = st.session_state.get("compare_summary_v2_label")
-        cv_gpu = st.session_state.get("compare_summary_accelerator")
-        cv_prof = st.session_state.get("compare_summary_profile")
+        cv_v1 = st.session_state.get(version_1_key)
+        cv_v1_label = st.session_state.get(version_1_label_key)
+        cv_v2 = st.session_state.get(version_2_key)
+        cv_v2_label = st.session_state.get(version_2_label_key)
+        cv_gpu = st.session_state.get(accelerator_key)
+        cv_prof = st.session_state.get(profile_key)
         if all([cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]):
             conc_key = (
-                f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                f"{key_prefix}_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
                 f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
             )
             conc_val = st.session_state.get(conc_key)
@@ -8504,7 +8744,7 @@ def render_compare_configurations_section(
                 help=(
                     "Choose which concurrency levels to include in geometric mean calculations. "
                     "Only concurrency levels common to both models are shown. "
-                    "Concurrency 1 is excluded by default (not representative of production workloads). "
+                    "Concurrency 1 is excluded by default when other common levels are available. "
                     "Peak throughput always uses all available concurrency levels."
                 ),
             )
@@ -8515,7 +8755,7 @@ def render_compare_configurations_section(
             st.caption(
                 f"ℹ️ Geometric mean metrics use concurrency levels: "
                 f"{', '.join(str(c) for c in sorted(selected_concurrencies))} "
-                f"(C=1 excluded by default — not representative of production workloads). "
+                f"(C=1 excluded by default when other common levels are available). "
                 f"Peak throughput uses all common concurrency levels."
             )
         else:
@@ -12653,6 +12893,8 @@ def main():
         SECTION_FILTER_KEYS = {
             "overview": {
                 "ov_pair": "overview_release_pair",
+                "ov_baseline": "overview_baseline_version",
+                "ov_compare": "overview_compare_version",
             },
             "performance_plots": {
                 "pp_x": "perf_plots_x_axis",
@@ -13667,6 +13909,10 @@ def main():
             selected_profiles = (
                 [selected_profile] if selected_profile is not None else []
             )
+            entering_multiturn = (
+                selected_profile == "Multi-turn"
+                and st.session_state.get("baseline_profile") != "Multi-turn"
+            )
 
             # Secondary filter: specific ISL/OSL pair when Custom is selected
             selected_custom_isl_osl = None
@@ -13808,16 +14054,21 @@ def main():
                 mt_pairs = sorted(mt_temp["multiturn_isl_osl"].unique().tolist())
                 mt_pairs = [p for p in mt_pairs if p]
                 if mt_pairs:
+                    default_mt_pair = (
+                        "128/128" if "128/128" in mt_pairs else mt_pairs[0]
+                    )
                     mt_isl_key = (
                         f"mt_isl_osl_filter_{st.session_state.filter_change_key}"
                     )
-                    if mt_isl_key not in st.session_state:
+                    if entering_multiturn:
+                        st.session_state[mt_isl_key] = default_mt_pair
+                    elif mt_isl_key not in st.session_state:
                         url_mt = st.session_state.get("selected_multiturn_isl_osl")
                         st.session_state[mt_isl_key] = (
-                            url_mt if url_mt and url_mt in mt_pairs else mt_pairs[0]
+                            url_mt if url_mt and url_mt in mt_pairs else default_mt_pair
                         )
                     elif st.session_state.get(mt_isl_key) not in mt_pairs:
-                        st.session_state[mt_isl_key] = mt_pairs[0]
+                        st.session_state[mt_isl_key] = default_mt_pair
                     selected_multiturn_isl_osl = st.selectbox(
                         "Select ISL/OSL",
                         mt_pairs,
@@ -13834,33 +14085,41 @@ def main():
                     ]
                     turns_opts = sorted(turns_temp["turns"].unique().tolist())
                     if turns_opts:
-                        turns_key = (
-                            f"mt_turns_filter_{st.session_state.filter_change_key}"
+                        mt_filter_scope = json.dumps(
+                            [
+                                st.session_state.filter_change_key,
+                                selected_accelerators,
+                                selected_multiturn_isl_osl,
+                            ],
+                            separators=(",", ":"),
                         )
-                        if turns_key not in st.session_state:
+                        turns_key = f"mt_turns_filter_{mt_filter_scope}"
+                        default_turns = [5] if 5 in turns_opts else turns_opts
+                        if entering_multiturn:
+                            st.session_state[turns_key] = default_turns
+                        elif turns_key not in st.session_state:
                             _url_mt_turns = st.session_state.pop(
                                 "baseline_mt_turns", None
-                            )
-                            _persisted_mt_turns = st.session_state.get(
-                                "_persisted_mt_turns"
                             )
                             if _url_mt_turns is not None:
                                 turns_default = [
                                     t for t in _url_mt_turns if t in turns_opts
                                 ]
-                            elif _persisted_mt_turns is not None:
-                                turns_default = [
-                                    t for t in _persisted_mt_turns if t in turns_opts
-                                ]
                             else:
-                                turns_default = []
-                            st.session_state[turns_key] = turns_default
+                                turns_default = default_turns
+                            st.session_state[turns_key] = turns_default or default_turns
+                        elif not set(st.session_state[turns_key]).issubset(turns_opts):
+                            valid_turns = [
+                                turn
+                                for turn in st.session_state[turns_key]
+                                if turn in turns_opts
+                            ]
+                            st.session_state[turns_key] = valid_turns or default_turns
                         selected_mt_turns = st.multiselect(
                             "Turns",
                             turns_opts,
                             key=turns_key,
                         )
-                        st.session_state._persisted_mt_turns = list(selected_mt_turns)
 
                     # Prefix tokens filter — scoped to ISL/OSL + turns
                     if selected_mt_turns:
@@ -13871,30 +14130,34 @@ def main():
                             v for v in pt_temp["prefix_tokens"].unique() if v
                         )
                         if pt_opts:
-                            pt_key = f"mt_prefix_tokens_filter_{st.session_state.filter_change_key}"
+                            pt_scope = json.dumps(
+                                [mt_filter_scope, selected_mt_turns],
+                                default=int,
+                                separators=(",", ":"),
+                            )
+                            pt_key = f"mt_prefix_tokens_filter_{pt_scope}"
                             if pt_key not in st.session_state:
                                 _url_mt_pt = st.session_state.pop(
                                     "baseline_mt_prefix_tokens", None
                                 )
-                                _persisted_mt_pt = st.session_state.get(
-                                    "_persisted_mt_prefix_tokens"
-                                )
                                 if _url_mt_pt is not None:
                                     pt_default = [v for v in _url_mt_pt if v in pt_opts]
-                                elif _persisted_mt_pt is not None:
-                                    pt_default = [
-                                        v for v in _persisted_mt_pt if v in pt_opts
-                                    ]
                                 else:
                                     pt_default = pt_opts
                                 st.session_state[pt_key] = pt_default or pt_opts
+                            elif not set(st.session_state[pt_key]).issubset(pt_opts):
+                                valid_prefix_tokens = [
+                                    token
+                                    for token in st.session_state[pt_key]
+                                    if token in pt_opts
+                                ]
+                                st.session_state[pt_key] = (
+                                    valid_prefix_tokens or pt_opts
+                                )
                             selected_mt_prefix_tokens = st.multiselect(
                                 "Prefix Tokens",
                                 pt_opts,
                                 key=pt_key,
-                            )
-                            st.session_state._persisted_mt_prefix_tokens = list(
-                                selected_mt_prefix_tokens
                             )
 
                     # Prefix count filter — scoped to ISL/OSL + turns + prefix_tokens
@@ -13906,30 +14169,34 @@ def main():
                             v for v in pc_temp["prefix_count"].unique() if v
                         )
                         if pc_opts:
-                            pc_mt_key = f"mt_prefix_count_filter_{st.session_state.filter_change_key}"
+                            pc_scope = json.dumps(
+                                [pt_scope, selected_mt_prefix_tokens],
+                                default=int,
+                                separators=(",", ":"),
+                            )
+                            pc_mt_key = f"mt_prefix_count_filter_{pc_scope}"
                             if pc_mt_key not in st.session_state:
                                 _url_mt_pc = st.session_state.pop(
                                     "baseline_mt_prefix_count", None
                                 )
-                                _persisted_mt_pc = st.session_state.get(
-                                    "_persisted_mt_prefix_count"
-                                )
                                 if _url_mt_pc is not None:
                                     pc_default = [v for v in _url_mt_pc if v in pc_opts]
-                                elif _persisted_mt_pc is not None:
-                                    pc_default = [
-                                        v for v in _persisted_mt_pc if v in pc_opts
-                                    ]
                                 else:
                                     pc_default = pc_opts
                                 st.session_state[pc_mt_key] = pc_default or pc_opts
+                            elif not set(st.session_state[pc_mt_key]).issubset(pc_opts):
+                                valid_prefix_counts = [
+                                    count
+                                    for count in st.session_state[pc_mt_key]
+                                    if count in pc_opts
+                                ]
+                                st.session_state[pc_mt_key] = (
+                                    valid_prefix_counts or pc_opts
+                                )
                             selected_mt_prefix_count = st.multiselect(
                                 "Prefix Count",
                                 pc_opts,
                                 key=pc_mt_key,
-                            )
-                            st.session_state._persisted_mt_prefix_count = list(
-                                selected_mt_prefix_count
                             )
 
             # Update baseline_profile to remember user's current selection
@@ -14046,24 +14313,33 @@ def main():
                 baseline_pairs = st.session_state.get(
                     "baseline_version_label_pairs", []
                 )
+                baseline_labels = st.session_state.get("baseline_labels", [])
+                unlabeled_default = [
+                    key
+                    for key, (_, label) in pair_values.items()
+                    if display_label(label) == "—"
+                ]
                 if baseline_pairs:
                     label_default = [
                         key
                         for key, pair in pair_values.items()
                         if pair in baseline_pairs
                     ]
-                else:
-                    baseline_labels = st.session_state.get("baseline_labels", [])
+                elif baseline_labels:
                     label_default = [
                         key
                         for key, pair in pair_values.items()
                         if pair[1] in baseline_labels
                     ]
+                else:
+                    label_default = unlabeled_default
                 previous_pairs = st.session_state.get(label_key)
                 if previous_pairs is not None:
                     label_default = [
                         key for key in previous_pairs if key in pair_options
                     ]
+                    if not label_default and not baseline_pairs and not baseline_labels:
+                        label_default = unlabeled_default
                 st.session_state[label_key] = label_default
                 selected_pair_keys = st.multiselect(
                     "Select Label(s) by Release",
@@ -14706,6 +14982,11 @@ def main():
                         use_container_width=True,
                         type=btn_type,
                     ):
+                        if section_name == "🏠 Overview":
+                            first_pair = OVERVIEW_RELEASE_PAIRS[0]
+                            st.session_state["overview_release_pair"] = (
+                                f"{first_pair['current']} vs {first_pair['previous']}"
+                            )
                         st.session_state.active_section = section_name
                         st.rerun()
 
