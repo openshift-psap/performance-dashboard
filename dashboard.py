@@ -2836,7 +2836,7 @@ def render_overview_section(df):
             else (pair_labels[0] if pair_labels else custom_label)
         )
 
-    header_col, _spacer, dropdown_col = st.columns([2, 5, 3])
+    header_col, _spacer, dropdown_col = st.columns([2, 4.8, 3.2])
     with header_col:
         st.header("Overview")
     with dropdown_col:
@@ -2870,7 +2870,7 @@ def render_overview_section(df):
                 st.session_state[version_2_key] = version_1
 
         _version_spacer, version_1_col, swap_col, version_2_col = st.columns(
-            [2.5, 0.75, 0.12, 0.75], gap="small", vertical_alignment="bottom"
+            [1.7, 1.2, 0.12, 1.2], gap="small", vertical_alignment="bottom"
         )
         with version_1_col:
             selected_version_1 = st.selectbox(
